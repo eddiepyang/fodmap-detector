@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"log"
 	"os"
+	"text/template"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/jessevdk/go-flags"
@@ -18,11 +20,9 @@ var prompt string
 
 var model string = "gemini-1.5-flash"
 
-// var opts struct {
-
-// 	// Example of a callback, called each time the option is found.
-// 	Model string `short:"m" long:"model" description:"model to use"`
-// }
+type Inventory struct {
+	Review string
+}
 
 func main() {
 	ctx := context.Background()
@@ -38,16 +38,45 @@ func main() {
 		log.Fatal(err)
 	}
 	defer client.Close()
+
 	if Opts.Model != "" {
 		model = Opts.Model
 	}
 	fmt.Printf("running with model %v \n\n", model)
-	llm := client.GenerativeModel(model)
 
-	iter := llm.GenerateContentStream(ctx, genai.Text(prompt))
+	sweaters := Inventory{"pizza was ok"}
+	tmpl, err := template.New("review").Parse(prompt)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
+	buffer := new(bytes.Buffer)
+	err = tmpl.Execute(buffer, sweaters)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(buffer)
+
+	llm := client.GenerativeModel(model)
+	llm.SafetySettings = []*genai.SafetySetting{
+		{
+			Category:  genai.HarmCategoryHarassment,
+			Threshold: genai.HarmBlockOnlyHigh,
+		},
+		{
+			Category:  genai.HarmCategoryDangerousContent,
+			Threshold: genai.HarmBlockOnlyHigh,
+		},
+		{
+			Category:  genai.HarmCategoryHateSpeech,
+			Threshold: genai.HarmBlockOnlyHigh,
+		},
+		{
+			Category:  genai.HarmCategorySexuallyExplicit,
+			Threshold: genai.HarmBlockOnlyHigh,
+		},
+	}
+	iter := llm.GenerateContentStream(ctx, genai.Text(buffer.String()))
+
 	for {
 		item, err := iter.Next()
 		if err == iterator.Done {
