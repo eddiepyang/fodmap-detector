@@ -34,7 +34,7 @@ const (
 	]
 }
 `
-	archive  = "../torch-sentiment/torch_sentiment/data/archive.zip"
+	archive  = "../data/archive.zip" //todo: move this to config
 	fileName = "test1.parquet"
 	stop     = 500000
 )
@@ -51,7 +51,7 @@ type ReviewSchema struct {
 }
 
 type CompressedFileReader interface {
-	read() (fs.File, error)
+	getReader() (zip.ReadCloser, error) //todo: fix this
 	close() float64
 }
 
@@ -69,8 +69,11 @@ func read(ch chan ReviewSchema, doneCh chan struct{}, z CompressedFileReader) {
 	defer close(doneCh)
 
 	pattern := regexp.MustCompile(`[a-z0-9'-]+`)
-
-	for _, file := range z.File {
+	f, err := z.getReader()
+	if err != nil {
+		log.Panic(err)
+	}
+	for _, file := range f.Reader.File { //todo: fix this
 		if strings.Contains(file.FileHeader.Name, "review") {
 			spew.Dump(file.FileHeader)
 			rc, err := file.Open()
