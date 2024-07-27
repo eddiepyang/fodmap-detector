@@ -25,4 +25,4 @@ Your response will follow this format:
 }
 
 These are the reviews to be examined:
-{{.Review}}
+{{.Text}}

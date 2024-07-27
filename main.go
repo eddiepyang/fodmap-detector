@@ -20,8 +20,14 @@ var prompt string
 
 var model string = "gemini-1.5-flash"
 
-type Inventory struct {
-	Review string
+type Review struct {
+	Business_id string
+	Reviewer_id string
+	Text        string
+}
+
+func getReview() Review {
+	return Review{Text: "pizza was ok"}
 }
 
 func main() {
@@ -44,13 +50,12 @@ func main() {
 	}
 	fmt.Printf("running with model %v \n\n", model)
 
-	review := Inventory{"pizza was ok"}
 	tmpl, err := template.New("review").Parse(prompt)
 	if err != nil {
 		panic(err)
 	}
 	buffer := new(bytes.Buffer)
-	err = tmpl.Execute(buffer, review)
+	err = tmpl.Execute(buffer, getReview())
 	if err != nil {
 		panic(err)
 	}
