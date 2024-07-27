@@ -49,7 +49,7 @@ func main() {
 		log.Fatal("error loading flag")
 	}
 
-	// Access your API key as an environment variable (see "Set up your API key" above)
+	//todo: wrap this in function and add goroutines
 	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_KEY")))
 	if err != nil {
 		log.Fatal(err)
