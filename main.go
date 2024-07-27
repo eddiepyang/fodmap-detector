@@ -30,6 +30,17 @@ func getReview() Review {
 	return Review{Text: "pizza was ok"}
 }
 
+func printResponse(resp *genai.GenerateContentResponse) {
+	for _, cand := range resp.Candidates {
+		if cand.Content != nil {
+			for _, part := range cand.Content.Parts {
+				fmt.Print(part)
+			}
+		}
+	}
+	fmt.Println("---")
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -98,15 +109,4 @@ func main() {
 		printResponse(item)
 	}
 
-}
-
-func printResponse(resp *genai.GenerateContentResponse) {
-	for _, cand := range resp.Candidates {
-		if cand.Content != nil {
-			for _, part := range cand.Content.Parts {
-				fmt.Print(part)
-			}
-		}
-	}
-	fmt.Println("---")
 }
