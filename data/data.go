@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"regexp"
@@ -49,7 +50,21 @@ type ReviewSchema struct {
 	ParsedText  []string `parquet:"name=parsed_text, type=MAP, convertedtype=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8"`
 }
 
-func read(ch chan ReviewSchema, doneCh chan struct{}, z zip.ReadCloser) {
+type CompressedFileReader interface {
+	read() (fs.File, error)
+	close() float64
+}
+
+type ZipReader struct {
+	File         zip.File
+	readerCloser zip.ReadCloser
+}
+
+func (z *ZipReader) read(f string) (fs.File, error) {
+	return z.readerCloser.Reader.Open(f)
+}
+
+func read(ch chan ReviewSchema, doneCh chan struct{}, z CompressedFileReader) {
 	defer close(ch)
 	defer close(doneCh)
 
@@ -115,7 +130,7 @@ func process() {
 		return
 	}
 
-	ch := make(chan ReviewSchema, 100)
+	ch := make(chan ReviewSchema, 10)
 	doneCh := make(chan struct{})
 
 	go func() {

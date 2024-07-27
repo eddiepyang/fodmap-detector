@@ -44,13 +44,13 @@ func main() {
 	}
 	fmt.Printf("running with model %v \n\n", model)
 
-	sweaters := Inventory{"pizza was ok"}
+	review := Inventory{"pizza was ok"}
 	tmpl, err := template.New("review").Parse(prompt)
 	if err != nil {
 		panic(err)
 	}
 	buffer := new(bytes.Buffer)
-	err = tmpl.Execute(buffer, sweaters)
+	err = tmpl.Execute(buffer, review)
 	if err != nil {
 		panic(err)
 	}
@@ -75,6 +75,10 @@ func main() {
 			Threshold: genai.HarmBlockOnlyHigh,
 		},
 	}
+	llm.SystemInstruction = &genai.Content{
+		Parts: []genai.Part{genai.Text("You are a professional food critic who is very good at determining ingredients")},
+	}
+
 	iter := llm.GenerateContentStream(ctx, genai.Text(buffer.String()))
 
 	for {

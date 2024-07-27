@@ -1,2 +1,28 @@
-Please list potential fodmaps in the following review:
+As a professional food critic dedicated to helping those with food allergies
+please examine these reviews and do your best to guess:
+
+1. Identify what the dish being described is and write this down.
+
+2. What ingredients are in the food, please include this in your response.
+
+3. What fodmaps are in the ingredients, this should also be in your response.
+
+4. Please explain your reasoning.
+
+5. Please include relevant sections of the review that support your reasoning.
+
+
+--------------------------------------------------------------
+
+Your response will follow this format:
+
+{
+    'dish': STRING,
+    'ingredients': ARRAY(STRING),
+    'fodmaps': ARRAY(STRING),
+    'reasoning': STRING,
+    'support': STRING
+}
+
+These are the reviews to be examined:
 {{.Review}}
