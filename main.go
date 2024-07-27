@@ -27,7 +27,14 @@ type Review struct {
 }
 
 func getReview() Review {
-	return Review{Text: "pizza was ok"}
+	return Review{Text: `Don’t expect fireworks from Le Rock’s shellfish program: 
+	Razor clams arrive in their shells, predictably chopped up and garnished with a touch of lime. 
+	Raw scallops taste like nothing. In the mood for a maritime sugar high without much complexity? 
+	Capers and eggs (marginally) boost the flavor of one-note Dungeness crab ($68). 
+	Things get more interesting with the otherwise ordinary shrimp cocktail. 
+	The kitchen serves the crustaceans as they are, plump and sweet, packing a touch of court-bouillon aroma. 
+	But right after you gobble them, a waiter magically arrives with something that too many brasseries like to discard: 
+	the heads. They’re fried to a golden hue, packing a satisfying crunch and a whisper of funk.`}
 }
 
 func printResponse(resp *genai.GenerateContentResponse) {
@@ -92,7 +99,8 @@ func main() {
 		},
 	}
 	llm.SystemInstruction = &genai.Content{
-		Parts: []genai.Part{genai.Text("You are a professional food critic who is very good at determining ingredients")},
+		Parts: []genai.Part{genai.Text(
+			"You are a professional food critic and board certified nutritionist who is very good at determining ingredients")},
 	}
 
 	iter := llm.GenerateContentStream(ctx, genai.Text(buffer.String()))
