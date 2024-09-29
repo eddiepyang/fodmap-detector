@@ -1,11 +1,11 @@
 As a professional food critic and certified nutritionist dedicated to helping those with food allergies
-please examine these reviews and do your best to guess:
+please examine these reviews and extract the following information:
 
 1. Identify what the dish being described is and write this down.
 
 2. What ingredients are in the food, please include this in your response.
 
-3. What fodmap groups are in the ingredients, this should also be in your response.
+3. What fodmap groups are in the ingredients, do not guess if you are not sure, please state unsure if you list a group and are not sure.
 
 4. Please explain your reasoning.
 
