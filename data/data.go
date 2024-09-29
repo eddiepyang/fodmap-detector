@@ -1,12 +1,13 @@
 package data
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"log"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -34,9 +35,9 @@ const (
 	]
 }
 `
-	archive  = "../data/archive.zip" //todo: move this to config
-	fileName = "test1.parquet"
-	stop     = 500000
+	archive      = "../../data/yelp_dataset.tar" //todo: move this to config
+	reivewFile   = "yelp_academic_dataset_review.json"
+	writeStopRow = 500000
 )
 
 type ReviewSchema struct {
@@ -50,77 +51,102 @@ type ReviewSchema struct {
 	ParsedText  []string `parquet:"name=parsed_text, type=MAP, convertedtype=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8"`
 }
 
-type CompressedFileReader interface {
-	getReader() (zip.ReadCloser, error) //todo: fix this
+type CompressedFileReader[R zip.Reader | tar.Reader] interface {
+	getReader() (R, error)
 	close() float64
 }
 
-type ZipReader struct {
-	File         zip.File
+type ZipReader struct { //todo: define methods for zip
+	File         os.File
 	readerCloser zip.ReadCloser
 }
 
-func (z *ZipReader) read(f string) (fs.File, error) {
-	return z.readerCloser.Reader.Open(f)
+type TarReader struct { //todo: define methods for tar
+	file       os.File
+	readCloser tar.Reader
 }
 
-func read(ch chan ReviewSchema, doneCh chan struct{}, z CompressedFileReader) {
-	defer close(ch)
-	defer close(doneCh)
-
-	pattern := regexp.MustCompile(`[a-z0-9'-]+`)
-	f, err := z.getReader()
-	if err != nil {
-		log.Panic(err)
-	}
-	for _, file := range f.Reader.File { //todo: fix this
-		if strings.Contains(file.FileHeader.Name, "review") {
+func (z *ZipReader) read(fileName string) (*bufio.Scanner, error) {
+	for _, file := range z.readerCloser.File { //todo: fix this
+		if strings.Contains(file.FileHeader.Name, fileName) {
 			spew.Dump(file.FileHeader)
 			rc, err := file.Open()
 			if err != nil {
 				log.Panic(err)
 			}
 			defer rc.Close()
-			scanner := bufio.NewScanner(rc)
-
-			for counter := 0; scanner.Scan(); counter++ {
-				var jsonl ReviewSchema
-				if err := json.Unmarshal(scanner.Bytes(), &jsonl); err != nil {
-					log.Panic(err, "unmarshalling err")
-				}
-				jsonl.ParsedText = pattern.FindAllString(jsonl.Text, -1)
-				ch <- jsonl
-				// spew.Dump(jsonl)
-				if err != nil {
-					log.Panic(err)
-				}
-
-				if counter >= stop && stop != 0 {
-					doneCh <- struct{}{}
-					return
-				}
-			}
-
-			if err := scanner.Err(); err != nil {
-				fmt.Fprintln(os.Stderr, "reading standard input:", err)
-			}
+			return bufio.NewScanner(rc), nil
 		}
-
 	}
+	return nil, fmt.Errorf("error loading file")
+}
+
+func read(ch chan ReviewSchema, doneCh chan struct{}, s *bufio.Scanner, stop int) {
+	defer close(ch)
+	defer close(doneCh)
+
+	pattern := regexp.MustCompile(`[a-z0-9'-]+`)
+
+	for counter := 0; s.Scan(); counter++ {
+		var jsonl ReviewSchema
+		if err := json.Unmarshal(s.Bytes(), &jsonl); err != nil {
+			log.Panic(err, "unmarshalling err")
+		}
+		jsonl.ParsedText = pattern.FindAllString(jsonl.Text, 0)
+		ch <- jsonl
+		// spew.Dump(jsonl)
+		if counter >= stop && stop != 0 {
+			doneCh <- struct{}{}
+			return
+		}
+	}
+
+	if err := s.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "reading standard input:", err)
+	}
+
 	doneCh <- struct{}{}
 
 }
 
-func process() {
-	start := time.Now()
-	zipFile, err := zip.OpenReader(archive)
+func GetArchive(fileName string) *bufio.Scanner {
+	files, err := os.Open(archive)
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
-	defer zipFile.Close()
+
+	archiveFiles := tar.NewReader(files)
+
+	for {
+		file, err := archiveFiles.Next()
+		if err != nil {
+			os.Exit(0)
+		}
+		fmt.Println()
+		spew.Dump(file)
+		if strings.Contains(file.Name, fileName) {
+			return bufio.NewScanner(archiveFiles)
+		}
+
+	}
+}
+
+func ListDir() {
+	files, err := os.ReadDir("../../data/")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, file := range files {
+		fmt.Printf("listing files: %v, directory?: %v \n", file.Name(), file.IsDir())
+	}
+}
+
+func Process(outFile string, fileScanner *bufio.Scanner) {
+	start := time.Now()
 
 	//write
-	fw, err := local.NewLocalFileWriter(fileName)
+	fw, err := local.NewLocalFileWriter(outFile)
 	if err != nil {
 		log.Println("Can't create file", err)
 		return
@@ -137,7 +163,7 @@ func process() {
 	doneCh := make(chan struct{})
 
 	go func() {
-		read(ch, doneCh, *zipFile)
+		read(ch, doneCh, fileScanner, writeStopRow)
 	}()
 
 L:
@@ -145,10 +171,11 @@ L:
 
 		select {
 		case <-doneCh:
-			if err := pw.WriteStop(); err != nil {
-				log.Panic(err)
+			if pw.WriteStop() != nil {
+				fmt.Println("write completed")
+				break L
 			}
-			break L
+
 		case item := <-ch:
 			err = pw.Write(item)
 			if err != nil {
@@ -158,13 +185,13 @@ L:
 
 	}
 
-	fmt.Printf("process completed in %v", time.Since(start))
+	fmt.Printf("process completed in %v\n", time.Since(start))
 }
 
-func ReadParquet(filename string) {
+func ReadParquet(fileName string, earlyStop int64) {
 	fr, err := local.NewLocalFileReader(fileName)
 	if err != nil {
-		log.Println("Can't open file")
+		log.Println("Can't open file", err.Error())
 		return
 	}
 	defer fr.Close()
@@ -177,14 +204,15 @@ func ReadParquet(filename string) {
 	}
 
 	n := pr.GetNumRows()
-	for i := int64(0); i < n; i++ {
-		s := make([]ReviewSchema, 1)
-		err = pr.Read(&s)
-		if err != nil {
-			log.Println("Can't read", err)
-			return
-		}
-
-		spew.Dump("read files", s)
+	stop := int64(
+		math.Min(float64(n), float64(earlyStop)),
+	)
+	s := make([]ReviewSchema, stop)
+	err = pr.Read(&s)
+	if err != nil {
+		log.Println("Can't read", err)
+		return
 	}
+
+	spew.Dump("read files", s)
 }
