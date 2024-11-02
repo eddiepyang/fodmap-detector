@@ -7,6 +7,7 @@ toolchain go1.22.5
 require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/jessevdk/go-flags v1.6.1
+	github.com/linkedin/goavro v2.1.0+incompatible
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20240122235623-d6294584ab18
 )
@@ -45,6 +46,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20240617180043-68d350f18fd4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240708141625-4ad9e859172b // indirect
 	google.golang.org/grpc v1.64.1 // indirect
+	gopkg.in/linkedin/goavro.v1 v1.0.5 // indirect
 )
 
 require (
