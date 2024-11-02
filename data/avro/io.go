@@ -82,8 +82,8 @@ func WriteAvroFile(scanner *bufio.Scanner, writePath string, outputSchema string
 }
 
 func ReadFile(filePath string) error {
-	// Read and verify the written data
-	avroFile, err := os.Open("outfile.avro")
+
+	avroFile, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,6 @@ func ReadFile(filePath string) error {
 		return err
 	}
 
-	fmt.Println("\nReading back the data:")
 	for ocfReader.Scan() {
 		datum, err := ocfReader.Read()
 		if err != nil {
