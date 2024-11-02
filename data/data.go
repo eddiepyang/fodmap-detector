@@ -35,7 +35,7 @@ const (
 	]
 }
 `
-	archive      = "../../data/yelp_dataset.tar" //todo: move this to config
+	archive      = "../../../data/yelp_dataset.tar" //todo: move this to config
 	reivewFile   = "yelp_academic_dataset_review.json"
 	writeStopRow = 500000
 )
@@ -132,7 +132,7 @@ func GetArchive(fileName string) *bufio.Scanner {
 }
 
 func ListDir() {
-	files, err := os.ReadDir("../../data/")
+	files, err := os.ReadDir("../../../data/")
 	if err != nil {
 		log.Fatal(err)
 	}
