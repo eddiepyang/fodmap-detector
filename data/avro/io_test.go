@@ -22,7 +22,7 @@ func setUp() {
 
 func TestReadFile(t *testing.T) {
 	setUp()
-	err := ReadFile("outfile.avro")
+	err := ReadFile(outfile)
 	if err != nil {
 		log.Fatal(err)
 	}
