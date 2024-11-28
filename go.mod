@@ -1,4 +1,4 @@
-module test-server
+module fodmap
 
 go 1.21
 

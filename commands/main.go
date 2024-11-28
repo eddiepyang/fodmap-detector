@@ -1,7 +1,7 @@
 package main
 
 import (
-	"io/data"
+	"fodmap/data/io"
 )
 
 func main() {
@@ -10,7 +10,7 @@ func main() {
 	// fileScanner := data.GetArchive("review")
 
 	// data.Process("test.parquet", fileScanner)
-	data.ReadParquet("test.parquet", 5)
+	io.ReadParquet("test.parquet", 5)
 	// files, err := os.ReadDir("../data")
 	// if err != nil {
 	// 	log.Fatal(err)
