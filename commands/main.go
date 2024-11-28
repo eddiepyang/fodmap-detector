@@ -1,7 +1,7 @@
 package main
 
 import (
-	"test-server/data"
+	"io/data"
 )
 
 func main() {
