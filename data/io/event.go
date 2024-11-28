@@ -1,4 +1,4 @@
-package avro
+package io
 
 import (
 	"bufio"
