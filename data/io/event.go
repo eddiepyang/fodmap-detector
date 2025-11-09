@@ -3,7 +3,6 @@ package io
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 
@@ -11,22 +10,7 @@ import (
 	"github.com/linkedin/goavro"
 )
 
-var Schema = `{
-	"type": "record",
-	"name": "yelp_reviews",
-	"fields": [
-		{"name": "review_id", "type": "string"},
-		{"name": "user_id", "type": "string"},
-		{"name": "business_id", "type": "string"},
-		{"name": "stars", "type": "float"},
-		{"name": "useful", "type": "float"},
-		{"name": "funny", "type": "float"},
-		{"name": "cool", "type": "float"},
-		{"name": "text", "type": "string"}
-	]
-}`
-
-func WriteAvroFile(scanner *bufio.Scanner, writePath string, outputSchema string) {
+func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema string) {
 
 	codec, err := goavro.NewCodec(outputSchema)
 	if err != nil {
@@ -67,7 +51,7 @@ func WriteAvroFile(scanner *bufio.Scanner, writePath string, outputSchema string
 		}
 
 		// Debug print the map
-		fmt.Println("Record to be written:")
+		log.Println("Record to be written:")
 		spew.Dump(avroMap)
 
 		// Append the record

@@ -14,8 +14,8 @@ const outfile = "outfile.avro"
 func setUp() {
 	_, err := os.OpenFile(outfile, os.O_RDWR|os.O_CREATE, 0644)
 	if errors.Is(err, os.ErrNotExist) {
-		scanner := GetArchive("review")
-		WriteAvroFile(scanner, outfile, Schema)
+		// scanner := data.GetArchive("review")
+		// WriteAvroFile(scanner, outfile, Schema)
 	}
 
 }

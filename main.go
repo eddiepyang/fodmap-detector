@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"fmt"
 	"log"
 	"os"
 	"text/template"
@@ -41,11 +40,11 @@ func printResponse(resp *genai.GenerateContentResponse) {
 	for _, cand := range resp.Candidates {
 		if cand.Content != nil {
 			for _, part := range cand.Content.Parts {
-				fmt.Print(part)
+				log.Print(part)
 			}
 		}
 	}
-	fmt.Println("---")
+	log.Println("---")
 }
 
 func main() {
@@ -66,7 +65,7 @@ func main() {
 	if Opts.Model != "" {
 		model = Opts.Model
 	}
-	fmt.Printf("running with model %v \n\n", model)
+	log.Printf("running with model %v \n\n", model)
 
 	tmpl, err := template.New("review").Parse(prompt)
 	if err != nil {
@@ -77,7 +76,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(buffer)
+	log.Println(buffer)
 
 	llm := client.GenerativeModel(model)
 	llm.SafetySettings = []*genai.SafetySetting{
