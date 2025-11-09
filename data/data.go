@@ -173,9 +173,8 @@ func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
 	stop := int(math.Min(float64(n), float64(earlyStop)))
 	log.Printf("reading %v rows", stop)
 	var rows = make([]schemas.ReviewSchemaS, stop)
-	output := pr.Read(&rows)
-	if output != nil {
-		return nil, output
+	if err := pr.Read(&rows); err != nil {
+		return nil, err
 	}
 	// Create a slice to hold the results
 	// s := make([]*map[string]interface{}, 0, stop)
