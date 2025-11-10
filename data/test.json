@@ -1,0 +1,16 @@
+{
+	"Tag":"name=yelp-reviews",
+	"Fields":[
+		{"Tag":"name=review_id, inname=Review_id, type=BYTE_ARRAY, repetitiontype=REQUIRED"},
+		{"Tag":"name=user_id, inname=User_id, type=BYTE_ARRAY, repetitiontype=REQUIRED"},
+		{"Tag":"name=business_id, inname=Business_id, type=BYTE_ARRAY, repetitiontype=REQUIRED"},
+		{"Tag":"name=stars, inname=Stars, type=FLOAT, repetitiontype=REQUIRED"},
+		{"Tag":"name=useful, inname=Useful, type=FLOAT, repetitiontype=REQUIRED"},
+		{"Tag":"name=cool, inname=Cool, type=FLOAT, repetitiontype=REQUIRED"},
+		{"Tag":"name=funny, inname=Funny, type=FLOAT, repetitiontype=REQUIRED"},
+		{"Tag":"name=text, inname=Text, type=BYTE_ARRAY, repetitiontype=REQUIRED"},
+		{"Tag": "name=parsed_text, inname=Parsed_text, type=LIST, repetitiontype=OPTIONAL",
+     		"Fields": [{"Tag": "name=element, type=BYTE_ARRAY, convertedtype=UTF8, repetitiontype=OPTIONAL"}]
+    	}
+    ]
+}
