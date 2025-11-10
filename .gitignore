@@ -4,3 +4,7 @@
 
 vendor
 *.parquet
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/

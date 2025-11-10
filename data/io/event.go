@@ -7,16 +7,10 @@ import (
 	"os"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/linkedin/goavro"
+	"github.com/hamba/avro/v2/ocf"
 )
 
 func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema string) {
-
-	codec, err := goavro.NewCodec(outputSchema)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Create output file
 	outFile, err := os.Create(writePath)
 	if err != nil {
@@ -24,27 +18,14 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 	}
 	defer outFile.Close()
 
-	writer := bufio.NewWriter(outFile)
-
+	encoder, err := ocf.NewEncoder(outputSchema, outFile)
 	if err != nil {
-		log.Fatal(err)
-	}
-	// Create OCF writer
-	ocfWriter, err := goavro.NewOCFWriter(goavro.OCFConfig{
-		W:     writer,
-		Codec: codec,
-	})
-	if err != nil {
-		log.Fatal("Failed to create OCF writer:", err)
+		log.Fatal("Failed to create OCF encoder:", err)
 	}
 
-	for i := 0; i <= 1; i++ {
-		if !scanner.Scan() {
-			break
-		}
-
+	for scanner.Scan() {
 		// Create a new map for each record
-		avroMap := make(map[string]interface{})
+		var avroMap interface{}
 
 		if err := json.Unmarshal(scanner.Bytes(), &avroMap); err != nil {
 			log.Fatal("Failed to unmarshal:", err)
@@ -55,36 +36,35 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 		spew.Dump(avroMap)
 
 		// Append the record
-		if err := ocfWriter.Append([]interface{}{avroMap}); err != nil {
+		if err := encoder.Encode(avroMap); err != nil {
 			log.Fatal("Failed to append record:", err)
 		}
 	}
 
-	// Flush and close before reading
-	writer.Flush()
-	outFile.Close()
+	if err := scanner.Err(); err != nil {
+		log.Fatal("Scanner error:", err)
+	}
 }
 
 func ReadFile(filePath string) error {
-
 	avroFile, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
 	defer avroFile.Close()
 
-	ocfReader, err := goavro.NewOCFReader(avroFile)
+	decoder, err := ocf.NewDecoder(avroFile)
 	if err != nil {
 		return err
 	}
 
-	for ocfReader.Scan() {
-		datum, err := ocfReader.Read()
-		if err != nil {
+	for decoder.HasNext() {
+		var datum interface{}
+		if err := decoder.Decode(&datum); err != nil {
 			return err
 		}
 		spew.Dump(datum)
 	}
 
-	return nil
+	return decoder.Error()
 }

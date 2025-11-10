@@ -18,6 +18,12 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/reader"
+	"github.com/xitongsys/parquet-go/writer"
+)
+
+const (
+	archiveGz         = "./data/archive.tar.gz"
+	writeStopRowBatch = 100
 )
 
 type CompressedFileReader[R zip.Reader | tar.Reader] interface {
@@ -74,7 +80,7 @@ func (z *ZipReader) read(fileName string) (*bufio.Scanner, error) {
 }
 
 func GetArchive(fileName string) *bufio.Scanner {
-	files, err := os.Open(archive)
+	files, err := os.Open(archiveGz)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,54 +112,53 @@ func ListDir() {
 	}
 }
 
-func Process(outFile string, fileScanner *bufio.Scanner) {
+func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
 	start := time.Now()
 
 	//write
-	// fw, err := local.NewLocalFileWriter(outFile)
-	// if err != nil {
-	// 	log.Println("Can't create file", err)
-	// 	return
-	// }
-	// defer fw.Close()
-	// pw, err := writer.NewJSONWriter(YelpSchema, fw, 20)
-	// pw, err := writer.NewParquetWriter(fw, new(schemas.ReviewSchemaS), 20)
-	// if err != nil {
-	// 	log.Println("Can't create writer", err)
-	// 	return
-	// }
-	// defer pw.Flush(true)
+	fw, err := local.NewLocalFileWriter(outFile)
+	if err != nil {
+		log.Println("Can't create file", err)
+		return
+	}
+	defer fw.Close()
+	pw, err := writer.NewParquetWriter(fw, new(schemas.ReviewSchemaS), 20)
+	if err != nil {
+		log.Println("Can't create writer", err)
+		return
+	}
+	defer pw.Flush(true)
 
-	// 	inChan := make(chan schemas.ReviewSchemaS, 3)
-	// 	doneCh := make(chan struct{})
+	inChan := make(chan schemas.ReviewSchemaS, 3)
+	doneCh := make(chan struct{})
 
-	// 	go func() {
-	// 		io.ReadToChan(UnmarshalReview, inChan, doneCh, fileScanner, WriteStopRow)
-	// 	}()
+	go func() {
+		io.ReadToChan(UnmarshalReview, inChan, doneCh, fileScanner, writeStopRowBatch)
+	}()
 
-	// L:
-	// 	for {
+L:
+	for {
 
-	// 		select {
-	// 		case <-doneCh:
-	// 			if pw.WriteStop() != nil {
-	// 				log.Println("write completed")
-	// 				break L
-	// 			}
+		select {
+		case <-doneCh:
+			if pw.WriteStop() != nil {
+				log.Println("write completed")
+				break L
+			}
 
-	// 		case item := <-inChan:
-	// 			spew.Dump("item is", item)
-	// 			err = pw.Write(item)
-	// 			if err != nil {
-	// 				log.Panicf("Error writing to Parquet: %v", err)
-	// 			}
-	// 		}
+		case item := <-inChan:
+			spew.Dump("item is", item)
+			err = pw.Write(item)
+			if err != nil {
+				log.Panicf("Error writing to Parquet: %v", err)
+			}
+		}
 
-	// 	}
-	io.WriteEventFile(fileScanner, outFile, schemas.EventSchema)
+	}
 
 	log.Printf("process completed in %v, file in %v.\n", time.Since(start), outFile)
 }
+
 
 func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
 	fr, err := local.NewLocalFileReader(fileName)
