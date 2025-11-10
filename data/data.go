@@ -157,7 +157,6 @@ L:
 	log.Printf("process completed in %v, file in %v.\n", time.Since(start), outFile)
 }
 
-
 func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
 	fr, err := local.NewLocalFileReader(fileName)
 	if err != nil {
