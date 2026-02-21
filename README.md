@@ -131,12 +131,3 @@ Place the Yelp dataset archive at:
 ```
 
 The archive must contain a file whose name includes `"review"` (e.g. `yelp_academic_dataset_review.json`), formatted as newline-delimited JSON (JSONL).
-
----
-
-## Status
-
-- [x] Avro write/read pipeline
-- [x] Parquet write pipeline
-- [ ] Parquet read (in progress on `fix/read-parquet` branch)
-- [ ] LLM-based FODMAP analysis (prompt defined in `prompt.txt`, not yet wired to CLI)
