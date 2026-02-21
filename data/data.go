@@ -127,8 +127,6 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
 		log.Println("Can't create writer", err)
 		return
 	}
-	defer pw.Flush(true)
-
 	inChan := make(chan schemas.ReviewSchemaS, 3)
 	doneCh := make(chan struct{})
 
@@ -141,10 +139,10 @@ L:
 
 		select {
 		case <-doneCh:
-			if pw.WriteStop() != nil {
-				log.Println("write completed")
-				break L
+			if err := pw.WriteStop(); err != nil {
+				log.Printf("WriteStop error: %v", err)
 			}
+			break L
 
 		case item := <-inChan:
 			spew.Dump("item is", item)
