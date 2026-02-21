@@ -25,10 +25,18 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 
 	for scanner.Scan() {
 		// Create a new map for each record
-		var avroMap interface{}
+		var avroMap map[string]interface{}
 
 		if err := json.Unmarshal(scanner.Bytes(), &avroMap); err != nil {
 			log.Fatal("Failed to unmarshal:", err)
+		}
+
+		// hamba/avro requires float32 for Avro float fields; json.Unmarshal
+		// decodes all JSON numbers as float64, so we convert them here.
+		for k, v := range avroMap {
+			if f, ok := v.(float64); ok {
+				avroMap[k] = float32(f)
+			}
 		}
 
 		// Debug print the map

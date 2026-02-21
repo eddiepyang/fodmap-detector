@@ -19,7 +19,9 @@ var batchCmd = &cobra.Command{
 		log.Printf("created fileScanner")
 		data.WriteBatchParquet(outputFile, fileScanner)
 		log.Printf("created file")
-		data.ReadParquet(outputFile, 5)
+		if _, err := data.ReadParquet(outputFile, 5); err != nil {
+			log.Printf("Error reading parquet: %v", err)
+		}
 	},
 }
 

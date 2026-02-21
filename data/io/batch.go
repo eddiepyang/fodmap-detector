@@ -29,7 +29,7 @@ func ReadToChan(parserFunc parseSchemaFunc, inChan chan schemas.ReviewSchemaS, d
 	}
 
 	if err := s.Err(); err != nil {
-		log.Printf("reading standard input:", err)
+		log.Printf("reading standard input: %v", err)
 	}
 
 	doneCh <- struct{}{}
