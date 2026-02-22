@@ -8,4 +8,6 @@ vendor
 # Jupyter notebooks
 *.ipynb
 .ipynb_checkpoints/
+
+# VS Code settings
 .vscode
