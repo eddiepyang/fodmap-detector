@@ -3,7 +3,7 @@ package io
 import (
 	"bufio"
 	"fodmap/data/schemas"
-	"log"
+	"log/slog"
 	"regexp"
 
 	"github.com/davecgh/go-spew/spew"
@@ -29,7 +29,7 @@ func ReadToChan(parserFunc parseSchemaFunc, inChan chan schemas.ReviewSchemaS, d
 	}
 
 	if err := s.Err(); err != nil {
-		log.Printf("reading standard input: %v", err)
+		slog.Error("reading standard input", "error", err)
 	}
 
 	doneCh <- struct{}{}
