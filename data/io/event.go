@@ -3,7 +3,7 @@ package io
 import (
 	"bufio"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/davecgh/go-spew/spew"
@@ -14,13 +14,15 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 	// Create output file
 	outFile, err := os.Create(writePath)
 	if err != nil {
-		log.Fatal("Failed to create file:", err)
+		slog.Error("failed to create file", "error", err)
+		os.Exit(1)
 	}
 	defer outFile.Close()
 
 	encoder, err := ocf.NewEncoder(outputSchema, outFile)
 	if err != nil {
-		log.Fatal("Failed to create OCF encoder:", err)
+		slog.Error("failed to create OCF encoder", "error", err)
+		os.Exit(1)
 	}
 
 	for scanner.Scan() {
@@ -28,7 +30,8 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 		var avroMap map[string]interface{}
 
 		if err := json.Unmarshal(scanner.Bytes(), &avroMap); err != nil {
-			log.Fatal("Failed to unmarshal:", err)
+			slog.Error("failed to unmarshal record", "error", err)
+			os.Exit(1)
 		}
 
 		// hamba/avro requires float32 for Avro float fields; json.Unmarshal
@@ -40,17 +43,19 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 		}
 
 		// Debug print the map
-		log.Println("Record to be written:")
+		slog.Debug("record to be written")
 		spew.Dump(avroMap)
 
 		// Append the record
 		if err := encoder.Encode(avroMap); err != nil {
-			log.Fatal("Failed to append record:", err)
+			slog.Error("failed to append record", "error", err)
+			os.Exit(1)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Fatal("Scanner error:", err)
+		slog.Error("scanner error", "error", err)
+		os.Exit(1)
 	}
 }
 

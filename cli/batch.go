@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fodmap/data"
-	"log"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 )
@@ -16,11 +16,11 @@ var batchCmd = &cobra.Command{
 			outputFile = "test.parquet"
 		}
 		fileScanner := data.GetArchive("review")
-		log.Printf("created fileScanner")
+		slog.Info("created fileScanner")
 		data.WriteBatchParquet(outputFile, fileScanner)
-		log.Printf("created file")
+		slog.Info("created file")
 		if _, err := data.ReadParquet(outputFile, 5); err != nil {
-			log.Printf("Error reading parquet: %v", err)
+			slog.Error("error reading parquet", "error", err)
 		}
 	},
 }

@@ -4,7 +4,8 @@ import (
 	"fodmap/data"
 	"fodmap/data/io"
 	"fodmap/data/schemas"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -23,9 +24,9 @@ var eventWriteCmd = &cobra.Command{
 			outputFile = "test.avro"
 		}
 		fileScanner := data.GetArchive("review")
-		log.Printf("created fileScanner")
+		slog.Info("created fileScanner")
 		io.WriteEventFile(fileScanner, outputFile, schemas.EventSchema)
-		log.Printf("created file")
+		slog.Info("created file")
 	},
 }
 
@@ -35,11 +36,13 @@ var eventReadCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile, _ := cmd.Flags().GetString("input")
 		if inputFile == "" {
-			log.Fatal("Input file path is required.")
+			slog.Error("input file path is required")
+			os.Exit(1)
 		}
 		err := io.ReadFile(inputFile)
 		if err != nil {
-			log.Fatalf("Error reading file: %v", err)
+			slog.Error("error reading file", "error", err)
+			os.Exit(1)
 		}
 	},
 }
