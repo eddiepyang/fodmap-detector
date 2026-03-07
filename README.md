@@ -29,14 +29,24 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 ```
 .
-├── main.go                  # Entry point
+├── main.go                  # Server entry point
+├── cmd/
+│   └── cli/
+│       └── main.go          # CLI entry point
 ├── flags.go                 # Global CLI flags (--model)
 ├── prompt.txt               # LLM prompt for FODMAP extraction (WIP)
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
 │   ├── event.go             # Avro subcommand (event write / event read)
-│   └── batch.go             # Parquet subcommand (batch)
+│   ├── batch.go             # Parquet subcommand (batch)
+│   └── serve.go             # Serve subcommand (starts the HTTP server)
+│
+├── server/
+│   ├── server.go            # HTTP server setup and routes
+│   ├── handlers.go          # HTTP request handlers
+│   ├── jobs.go              # Background job store
+│   └── llm.go               # Gemini LLM client
 │
 ├── data/
 │   ├── data.go              # Core pipeline: archive reading, Parquet write/read
@@ -95,16 +105,44 @@ WriteEventFile()        WriteBatchParquet()
 
 ---
 
-## CLI Commands
+## Running
 
-### Parquet (batch)
+### Server
+
+Start the HTTP analysis server:
+
+```sh
+go run .
+```
+
+Default port is `8080`. Default prompt path is `./prompt.txt`.
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
+| `GET` | `/results/{job_id}` | Poll analysis results |
+| `GET` | `/reviews` | List available reviews |
+
+### CLI
+
+Run the CLI with:
+
+```sh
+go run ./cmd/cli
+```
+
+#### Commands
+
+##### Parquet (batch)
 
 ```sh
 # Write reviews from archive to Parquet, then read back 5 rows
 fodmap-detector batch -o output.parquet
 ```
 
-### Avro (event)
+##### Avro (event)
 
 ```sh
 # Write reviews from archive to Avro OCF
@@ -114,7 +152,7 @@ fodmap-detector event write -o output.avro
 fodmap-detector event read -i output.avro
 ```
 
-### Global flag
+##### Global flag
 
 ```sh
 -m, --model <string>   Model name (for future LLM integration)
