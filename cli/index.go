@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
-	"os"
 
 	"fodmap/data"
 	"fodmap/data/schemas"
@@ -16,7 +16,7 @@ import (
 var indexCmd = &cobra.Command{
 	Use:   "index",
 	Short: "Index all reviews into Weaviate for semantic search.",
-	Run:   runIndex,
+	RunE:  runIndex,
 }
 
 func init() {
@@ -25,37 +25,36 @@ func init() {
 	indexCmd.Flags().Int("batch-size", 100, "Number of reviews per Weaviate batch")
 }
 
-func runIndex(cmd *cobra.Command, _ []string) {
+func runIndex(cmd *cobra.Command, _ []string) error {
 	host, _ := cmd.Flags().GetString("weaviate")
 	batchSize, _ := cmd.Flags().GetInt("batch-size")
 	ctx := context.Background()
 
 	client, err := search.NewClient(host)
 	if err != nil {
-		slog.Error("weaviate client", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("weaviate client: %w", err)
 	}
 
 	if err := client.EnsureSchema(ctx); err != nil {
-		slog.Error("schema init", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("schema init: %w", err)
 	}
 
 	slog.Info("loading business metadata")
 	businessMap, err := data.GetBusinessMap()
 	if err != nil {
-		slog.Error("loading business map", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("loading business map: %w", err)
 	}
 	slog.Info("business metadata loaded", "count", len(businessMap))
 
-	scanner, err := data.GetArchive("review")
+	scanner, closer, err := data.GetArchive("review")
 	if err != nil {
-		slog.Error("opening archive", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("opening archive: %w", err)
 	}
-	// GetArchive returns a plain bufio.Scanner with the default 64 KB buffer.
-	// Yelp reviews can be several KB; use a 4 MB buffer to match GetReviewsByBusiness.
+	defer func() {
+		if err := closer.Close(); err != nil {
+			slog.Error("close error", "error", err)
+		}
+	}()
 	buf := make([]byte, 4*1024*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 
@@ -64,14 +63,14 @@ func runIndex(cmd *cobra.Command, _ []string) {
 	batch := make([]search.IndexItem, 0, batchSize)
 	total := 0
 
-	flush := func() {
+	flush := func() error {
 		if err := client.BatchUpsert(ctx, batch); err != nil {
-			slog.Error("batch upsert failed", "error", err, "total_so_far", total)
-			os.Exit(1)
+			return fmt.Errorf("batch upsert failed (total so far: %d): %w", total, err)
 		}
 		total += len(batch)
 		slog.Info("indexed batch", "total", total)
 		batch = batch[:0]
+		return nil
 	}
 
 	for scanner.Scan() {
@@ -90,18 +89,22 @@ func runIndex(cmd *cobra.Command, _ []string) {
 
 		batch = append(batch, item)
 		if len(batch) >= batchSize {
-			flush()
+			if err := flush(); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(batch) > 0 {
-		flush()
+		if err := flush(); err != nil {
+			return err
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		slog.Error("scanner error", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("scanner error: %w", err)
 	}
 
 	slog.Info("indexing complete", "total_reviews", total)
+	return nil
 }

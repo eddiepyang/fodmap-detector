@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"fodmap/data"
 	dataio "fodmap/data/io"
 	"fodmap/data/schemas"
@@ -19,27 +20,29 @@ var eventCmd = &cobra.Command{
 var eventWriteCmd = &cobra.Command{
 	Use:   "write",
 	Short: "Write event data to an Avro file.",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		outputFile, _ := cmd.Flags().GetString("output")
 		if outputFile == "" {
 			outputFile = "test.avro"
 		}
-		fileScanner, err := data.GetArchive("review")
+		fileScanner, closer, err := data.GetArchive("review")
 		if err != nil {
-			slog.Error("opening archive", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("opening archive: %w", err)
 		}
+		defer func() {
+			if err := closer.Close(); err != nil {
+				slog.Error("close error", "error", err)
+			}
+		}()
 		slog.Info("created fileScanner")
 
 		f, err := os.Create(outputFile)
 		if err != nil {
-			slog.Error("creating output file", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("creating output file: %w", err)
 		}
 		w, err := dataio.NewEventWriter(f, schemas.EventSchema)
 		if err != nil {
-			slog.Error("creating event writer", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("creating event writer: %w", err)
 		}
 		defer func() {
 			if err := w.Close(); err != nil {
@@ -50,36 +53,32 @@ var eventWriteCmd = &cobra.Command{
 		for fileScanner.Scan() {
 			var record map[string]any
 			if err := json.Unmarshal(fileScanner.Bytes(), &record); err != nil {
-				slog.Error("unmarshal record", "error", err)
-				os.Exit(1)
+				return fmt.Errorf("unmarshal record: %w", err)
 			}
 			if err := w.Write(record); err != nil {
-				slog.Error("write record", "error", err)
-				os.Exit(1)
+				return fmt.Errorf("write record: %w", err)
 			}
 		}
 		if err := fileScanner.Err(); err != nil {
-			slog.Error("scanner error", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("scanner error: %w", err)
 		}
 		slog.Info("created file")
+		return nil
 	},
 }
 
 var eventReadCmd = &cobra.Command{
 	Use:   "read",
 	Short: "Read event data from an Avro file.",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		inputFile, _ := cmd.Flags().GetString("input")
 		if inputFile == "" {
-			slog.Error("input file path is required")
-			os.Exit(1)
+			return fmt.Errorf("input file path is required")
 		}
-		err := dataio.ReadFile(inputFile)
-		if err != nil {
-			slog.Error("error reading file", "error", err)
-			os.Exit(1)
+		if err := dataio.ReadFile(inputFile); err != nil {
+			return fmt.Errorf("reading file: %w", err)
 		}
+		return nil
 	},
 }
 
