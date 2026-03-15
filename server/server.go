@@ -13,7 +13,7 @@ import (
 // Analyzer is the interface satisfied by LLMClient. Extracted so the server
 // can be constructed with a stub in tests.
 type Analyzer interface {
-	Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS) (string, error)
+	Analyze(ctx context.Context, reviews []schemas.Review) (string, error)
 }
 
 // Searcher is the interface satisfied by search.Client. Extracted so the server
@@ -74,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /analyze", s.analyzeHandler)
 	mux.HandleFunc("GET /results/{job_id}", s.resultsHandler)
 	mux.HandleFunc("GET /reviews", s.reviewsHandler)
-	mux.HandleFunc("GET /search", s.searchHandler)
+	mux.HandleFunc("GET /search/{query...}", s.searchHandler)
 	return mux
 }
 

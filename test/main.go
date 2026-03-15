@@ -141,7 +141,9 @@ func main() {
 		return
 	}
 	log.Println("Write Finished")
-	fw.Close()
+	if err = fw.Close(); err != nil {
+		log.Println("Close error", err)
+	}
 
 	///read
 	fr, err := local.NewLocalFileReader("json_schema.parquet")
@@ -166,6 +168,8 @@ func main() {
 	}
 
 	pr.ReadStop()
-	fr.Close()
+	if err = fr.Close(); err != nil {
+		log.Println("Close error", err)
+	}
 
 }

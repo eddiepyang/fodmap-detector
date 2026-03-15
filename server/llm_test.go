@@ -7,10 +7,10 @@ import (
 	"fodmap/data/schemas"
 )
 
-func makeReviews(n int) []schemas.ReviewSchemaS {
-	out := make([]schemas.ReviewSchemaS, n)
+func makeReviews(n int) []schemas.Review {
+	out := make([]schemas.Review, n)
 	for i := range out {
-		out[i] = schemas.ReviewSchemaS{ReviewId: fmt.Sprintf("r%d", i)}
+		out[i] = schemas.Review{ReviewID: fmt.Sprintf("r%d", i)}
 	}
 	return out
 }
@@ -75,13 +75,13 @@ func TestChunkReviews_PreservesOrder(t *testing.T) {
 	if len(chunks) != 3 {
 		t.Fatalf("got %d chunks, want 3", len(chunks))
 	}
-	if chunks[0][0].ReviewId != "r0" {
-		t.Errorf("chunks[0][0].ReviewId = %q, want r0", chunks[0][0].ReviewId)
+	if chunks[0][0].ReviewID != "r0" {
+		t.Errorf("chunks[0][0].ReviewID = %q, want r0", chunks[0][0].ReviewID)
 	}
-	if chunks[1][0].ReviewId != "r3" {
-		t.Errorf("chunks[1][0].ReviewId = %q, want r3", chunks[1][0].ReviewId)
+	if chunks[1][0].ReviewID != "r3" {
+		t.Errorf("chunks[1][0].ReviewID = %q, want r3", chunks[1][0].ReviewID)
 	}
-	if chunks[2][0].ReviewId != "r6" {
-		t.Errorf("chunks[2][0].ReviewId = %q, want r6", chunks[2][0].ReviewId)
+	if chunks[2][0].ReviewID != "r6" {
+		t.Errorf("chunks[2][0].ReviewID = %q, want r6", chunks[2][0].ReviewID)
 	}
 }
