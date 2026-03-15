@@ -29,11 +29,7 @@ var eventWriteCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("opening archive: %w", err)
 		}
-		defer func() {
-			if err := closer.Close(); err != nil {
-				slog.Error("close error", "error", err)
-			}
-		}()
+		defer closer.Close()
 		slog.Info("created fileScanner")
 
 		f, err := os.Create(outputFile)
@@ -44,11 +40,7 @@ var eventWriteCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("creating event writer: %w", err)
 		}
-		defer func() {
-			if err := w.Close(); err != nil {
-				slog.Error("close error", "error", err)
-			}
-		}()
+		defer w.Close()
 
 		for fileScanner.Scan() {
 			var record map[string]any

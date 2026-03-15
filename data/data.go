@@ -69,11 +69,7 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer func() {
-		if err := files.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer files.Close()
 
 	archiveFiles := tar.NewReader(files)
 	for {
@@ -117,11 +113,7 @@ func GetBusinessMap() (map[string]schemas.Business, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer func() {
-		if err := files.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer files.Close()
 
 	archiveFiles := tar.NewReader(files)
 	for {
@@ -178,11 +170,7 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer func() {
-		if err := fw.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer fw.Close()
 
 	pw, err := writer.NewParquetWriter(fw, new(schemas.Review), 20)
 	if err != nil {
@@ -218,11 +206,7 @@ func ReadParquet(fileName string, earlyStop int64) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
-	defer func() {
-		if err := fr.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer fr.Close()
 
 	pr, err := reader.NewParquetReader(fr, new(schemas.Review), 4)
 	if err != nil {

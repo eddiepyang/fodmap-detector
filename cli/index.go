@@ -50,11 +50,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
 	}
-	defer func() {
-		if err := closer.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer closer.Close()
 	buf := make([]byte, 4*1024*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 
