@@ -15,6 +15,6 @@ const (
     ]
 }`
 	archive      = "../../data/yelp_dataset.tar" //todo: move this to config
-	reivewFile   = "yelp_academic_dataset_review.json"
+	reviewFile   = "yelp_academic_dataset_review.json"
 	WriteStopRow = 3
 )

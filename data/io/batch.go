@@ -5,22 +5,26 @@ import (
 	"fodmap/data/schemas"
 	"log/slog"
 	"regexp"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
-type parseSchemaFunc func(pattern *regexp.Regexp, inputBytes []byte) schemas.ReviewSchemaS
+type parseSchemaFunc func(pattern *regexp.Regexp, inputBytes []byte) (schemas.ReviewSchemaS, error)
 
-func ReadToChan(parserFunc parseSchemaFunc, inChan chan schemas.ReviewSchemaS, doneCh chan struct{}, s *bufio.Scanner, stop int) {
+// ParseResult is the item sent on inChan for every scanned line.
+// Err is non-nil when the parser failed; callers can count these to track error rates.
+type ParseResult struct {
+	Record schemas.ReviewSchemaS
+	Err    error
+}
+
+func ReadToChan(parserFunc parseSchemaFunc, inChan chan ParseResult, doneCh chan struct{}, s *bufio.Scanner, stop int) {
 	defer close(inChan)
 	defer close(doneCh)
 
 	pattern := regexp.MustCompile(`[a-zA-Z0-9'-]+`)
 
 	for counter := 0; s.Scan(); counter++ {
-		chanInput := parserFunc(pattern, s.Bytes())
-		spew.Dump("channel input", chanInput)
-		inChan <- chanInput
+		record, err := parserFunc(pattern, s.Bytes())
+		inChan <- ParseResult{Record: record, Err: err}
 
 		if counter >= stop && stop != 0 {
 			doneCh <- struct{}{}
@@ -33,5 +37,4 @@ func ReadToChan(parserFunc parseSchemaFunc, inChan chan schemas.ReviewSchemaS, d
 	}
 
 	doneCh <- struct{}{}
-
 }

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hamba/avro/v2/ocf"
 )
 
@@ -42,9 +41,7 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 			}
 		}
 
-		// Debug print the map
 		slog.Debug("record to be written")
-		spew.Dump(avroMap)
 
 		// Append the record
 		if err := encoder.Encode(avroMap); err != nil {
@@ -76,7 +73,7 @@ func ReadFile(filePath string) error {
 		if err := decoder.Decode(&datum); err != nil {
 			return err
 		}
-		spew.Dump(datum)
+		slog.Debug("decoded avro record")
 	}
 
 	return decoder.Error()

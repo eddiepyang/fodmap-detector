@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/writer"
@@ -50,16 +49,14 @@ type ReviewSchema interface {
 // 	return r.Pattern.FindAllString(inputString, -1)
 // }
 
-func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) schemas.ReviewSchemaS {
+func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.ReviewSchemaS, error) {
 	jsonl := &schemas.ReviewSchemaS{}
-	// test := map[string]interface{}{}
 	if err := json.Unmarshal(inputBytes, jsonl); err != nil {
 		slog.Error("unmarshalling error", "error", err)
-		panic(err)
+		return schemas.ReviewSchemaS{}, err
 	}
-	spew.Dump("jsonl is", jsonl)
 	// jsonl.ParsedText = pattern.FindAllString(jsonl.Text, -1)
-	return *jsonl
+	return *jsonl, nil
 }
 
 func JsonifyReview(pattern *regexp.Regexp, inputBytes []byte) string {
@@ -69,7 +66,6 @@ func JsonifyReview(pattern *regexp.Regexp, inputBytes []byte) string {
 func (z *ZipReader) read(fileName string) (*bufio.Scanner, error) {
 	for _, file := range z.readCloser.File { //todo: fix this
 		if strings.Contains(file.FileHeader.Name, fileName) {
-			spew.Dump("file header", file.FileHeader)
 			rc, err := file.Open()
 			if err != nil {
 				slog.Error("failed to open zip file entry", "error", err)
@@ -96,7 +92,6 @@ func GetArchive(fileName string) *bufio.Scanner {
 		if err != nil {
 			os.Exit(0)
 		}
-		spew.Dump("file name", file)
 		if strings.Contains(file.Name, fileName) {
 			return bufio.NewScanner(archiveFiles)
 		}
@@ -146,6 +141,48 @@ func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
 	return nil, fmt.Errorf("review file not found in archive")
 }
 
+// GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
+// The caller can use the map for O(1) lookups when joining reviews with business metadata.
+func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
+	files, err := os.Open(archiveGz)
+	if err != nil {
+		return nil, fmt.Errorf("opening archive: %w", err)
+	}
+	defer files.Close()
+
+	archiveFiles := tar.NewReader(files)
+	for {
+		file, err := archiveFiles.Next()
+		if err == goio.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tar: %w", err)
+		}
+		if !strings.Contains(file.Name, "business") {
+			continue
+		}
+
+		scanner := bufio.NewScanner(archiveFiles)
+		buf := make([]byte, 4*1024*1024)
+		scanner.Buffer(buf, 4*1024*1024)
+
+		businesses := make(map[string]schemas.BusinessSchemaS)
+		for scanner.Scan() {
+			var b schemas.BusinessSchemaS
+			if err := json.Unmarshal(scanner.Bytes(), &b); err != nil {
+				continue
+			}
+			businesses[b.BusinessId] = b
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scanning archive: %w", err)
+		}
+		return businesses, nil
+	}
+	return nil, fmt.Errorf("business file not found in archive")
+}
+
 func ListDir() {
 	files, err := os.ReadDir("../../../data/")
 	if err != nil {
@@ -173,16 +210,16 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
 		slog.Error("can't create parquet writer", "error", err)
 		return
 	}
-	inChan := make(chan schemas.ReviewSchemaS, 3)
+	inChan := make(chan io.ParseResult, 3)
 	doneCh := make(chan struct{})
 
 	go func() {
 		io.ReadToChan(UnmarshalReview, inChan, doneCh, fileScanner, writeStopRowBatch)
 	}()
 
+	var parseErrors int
 L:
 	for {
-
 		select {
 		case <-doneCh:
 			if err := pw.WriteStop(); err != nil {
@@ -191,17 +228,20 @@ L:
 			break L
 
 		case item := <-inChan:
-			spew.Dump("item is", item)
-			err = pw.Write(item)
+			if item.Err != nil {
+				parseErrors++
+				slog.Error("skipping record due to parse error", "error", item.Err)
+				continue
+			}
+			err = pw.Write(item.Record)
 			if err != nil {
 				slog.Error("error writing to parquet", "error", err)
 				panic(fmt.Sprintf("error writing to parquet: %v", err))
 			}
 		}
-
 	}
 
-	slog.Info("process completed", "duration", time.Since(start), "file", outFile)
+	slog.Info("process completed", "duration", time.Since(start), "file", outFile, "parse_errors", parseErrors)
 }
 
 func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
@@ -238,6 +278,5 @@ func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
 	// 	s[i] = record
 	// }
 
-	spew.Dump("reading files \n", rows)
 	return rows, nil
 }

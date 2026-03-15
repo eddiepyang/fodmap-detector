@@ -12,11 +12,11 @@ import (
 
 const outfile = "outfile.avro"
 
-// setUp ensures the outfile artifact exists for TestReadFile.
+// setUp ensures the outfile artifact is populated for TestReadFile.
+// It regenerates the file if it is missing or empty.
 func setUp() {
-	_, err := os.OpenFile(outfile, os.O_RDWR|os.O_CREATE, 0644)
-	if errors.Is(err, os.ErrNotExist) {
-		// outfile.avro is committed as a test fixture; regenerate if missing.
+	info, err := os.Stat(outfile)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() == 0) {
 		scanner := bufio.NewScanner(strings.NewReader(avroSampleJSONL))
 		WriteEventFile(scanner, outfile, schemas.EventSchema)
 	}

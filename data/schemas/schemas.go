@@ -27,6 +27,14 @@ var EventSchema = `{
 	]
 }`
 
+type BusinessSchemaS struct {
+	BusinessId string `json:"business_id"`
+	Name       string `json:"name"`
+	City       string `json:"city"`
+	State      string `json:"state"`
+	Categories string `json:"categories"` // comma-separated, e.g. "Italian, Pizza, Restaurants"
+}
+
 type ReviewSchemaS struct {
 	ReviewId   string  `parquet:"name=review_id, inname=review_id, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" json:"review_id"`
 	UserId     string  `parquet:"name=user_id, inname=user_id, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY" json:"user_id"`
