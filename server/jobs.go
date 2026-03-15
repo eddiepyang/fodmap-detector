@@ -31,13 +31,17 @@ type JobStore struct {
 	jobs map[string]*Job
 }
 
+// NewJobStore returns an empty JobStore ready for use.
 func NewJobStore() *JobStore {
 	return &JobStore{jobs: make(map[string]*Job)}
 }
 
+// Create adds a new pending job for businessID and returns it.
 func (s *JobStore) Create(businessID string) *Job {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read: %v", err))
+	}
 	job := &Job{
 		ID:         fmt.Sprintf("%x", b),
 		BusinessID: businessID,
@@ -63,6 +67,7 @@ func (s *JobStore) Get(id string) (*Job, bool) {
 	return &copy, true
 }
 
+// Update applies fn to the job with the given id and stamps UpdatedAt.
 func (s *JobStore) Update(id string, fn func(*Job)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

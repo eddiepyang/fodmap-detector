@@ -1,59 +1,40 @@
 package io
 
 import (
-	"bufio"
-	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 
 	"github.com/hamba/avro/v2/ocf"
 )
 
-func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema string) {
-	// Create output file
-	outFile, err := os.Create(writePath)
+type EventWriter struct {
+	encoder *ocf.Encoder
+	closer  io.Closer
+}
+
+func NewEventWriter(w io.WriteCloser, outputSchema string) (*EventWriter, error) {
+	enc, err := ocf.NewEncoder(outputSchema, w)
 	if err != nil {
-		slog.Error("failed to create file", "error", err)
-		os.Exit(1)
-	}
-	defer outFile.Close()
-
-	encoder, err := ocf.NewEncoder(outputSchema, outFile)
-	if err != nil {
-		slog.Error("failed to create OCF encoder", "error", err)
-		os.Exit(1)
+		_ = w.Close()
+		return nil, err
 	}
 
-	for scanner.Scan() {
-		// Create a new map for each record
-		var avroMap map[string]interface{}
+	return &EventWriter{encoder: enc, closer: w}, nil
+}
 
-		if err := json.Unmarshal(scanner.Bytes(), &avroMap); err != nil {
-			slog.Error("failed to unmarshal record", "error", err)
-			os.Exit(1)
-		}
-
-		// hamba/avro requires float32 for Avro float fields; json.Unmarshal
-		// decodes all JSON numbers as float64, so we convert them here.
-		for k, v := range avroMap {
-			if f, ok := v.(float64); ok {
-				avroMap[k] = float32(f)
-			}
-		}
-
-		slog.Debug("record to be written")
-
-		// Append the record
-		if err := encoder.Encode(avroMap); err != nil {
-			slog.Error("failed to append record", "error", err)
-			os.Exit(1)
+func (w *EventWriter) Write(record map[string]any) error {
+	for k, v := range record {
+		if f, ok := v.(float64); ok {
+			record[k] = float32(f)
 		}
 	}
+	slog.Debug("record to be written")
+	return w.encoder.Encode(record)
+}
 
-	if err := scanner.Err(); err != nil {
-		slog.Error("scanner error", "error", err)
-		os.Exit(1)
-	}
+func (w *EventWriter) Close() error {
+	return w.closer.Close()
 }
 
 func ReadFile(filePath string) error {
@@ -61,7 +42,11 @@ func ReadFile(filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer avroFile.Close()
+	defer func() {
+		if err := avroFile.Close(); err != nil {
+			slog.Error("close error", "error", err)
+		}
+	}()
 
 	decoder, err := ocf.NewDecoder(avroFile)
 	if err != nil {
@@ -69,7 +54,7 @@ func ReadFile(filePath string) error {
 	}
 
 	for decoder.HasNext() {
-		var datum interface{}
+		var datum any
 		if err := decoder.Decode(&datum); err != nil {
 			return err
 		}

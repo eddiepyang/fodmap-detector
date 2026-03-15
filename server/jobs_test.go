@@ -137,14 +137,12 @@ func TestJobStore_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			job := store.Create("biz")
 			mu.Lock()
 			ids = append(ids, job.ID)
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 

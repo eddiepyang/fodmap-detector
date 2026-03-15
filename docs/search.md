@@ -10,7 +10,7 @@ well their reviews match the query — optionally filtered by category, city, an
 
 ```
                           ┌─────────────────────────────┐
-  GET /search?q=...  ───► │     Go HTTP Server           │
+  GET /search/...    ───► │     Go HTTP Server           │
                           │  searchHandler               │
                           │    ↓ nearText query          │
                           │  Weaviate Client             │
@@ -36,7 +36,7 @@ well their reviews match the query — optionally filtered by category, city, an
 5. Both the vector and metadata are stored in Weaviate
 
 **Data flow at query time:**
-1. `GET /search?q=<description>` arrives at the server
+1. `GET /search/<description>` arrives at the server
 2. Server calls Weaviate `nearText` with the query string (Weaviate embeds the query too)
 3. Top matching reviews are returned with `certainty` scores
 4. Server aggregates scores by `businessId` using Top-K average (see below)
@@ -107,18 +107,18 @@ INFO indexing complete total_reviews=6990280
 ### Endpoint
 
 ```
-GET /search?q=<description>[&category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
+GET /search/<description>[?category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
 ```
 
 ### Parameters
 
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `q` | Yes | — | Natural-language description of the restaurant |
-| `category` | No | — | Substring match against Yelp categories (e.g. `Italian`, `Tacos`) |
-| `city` | No | — | Exact city name match (e.g. `Phoenix`) |
-| `state` | No | — | Exact state abbreviation match (e.g. `AZ`) |
-| `limit` | No | `10` | Maximum number of restaurant IDs to return |
+| Parameter | Where | Required | Default | Description |
+|---|---|---|---|---|
+| `<description>` | path | Yes | — | Natural-language description of the restaurant |
+| `category` | query | No | — | Substring match against Yelp categories (e.g. `Italian`, `Tacos`) |
+| `city` | query | No | — | Exact city name match (e.g. `Phoenix`) |
+| `state` | query | No | — | Exact state abbreviation match (e.g. `AZ`) |
+| `limit` | query | No | `10` | Maximum number of restaurant IDs to return |
 
 ### Response
 
@@ -132,13 +132,13 @@ GET /search?q=<description>[&category=<cat>][&city=<city>][&state=<state>][&limi
 
 ```bash
 # Basic semantic search
-curl "localhost:8080/search?q=cozy+Italian+with+great+pasta"
+curl "localhost:8080/search/cozy Italian with great pasta"
 
 # Filter by category and location
-curl "localhost:8080/search?q=great+tacos&category=Mexican&city=Phoenix&state=AZ&limit=5"
+curl "localhost:8080/search/great tacos?category=Mexican&city=Phoenix&state=AZ&limit=5"
 
 # Find romantic dinner spots in Las Vegas
-curl "localhost:8080/search?q=romantic+dinner+candlelit&city=Las+Vegas&state=NV"
+curl "localhost:8080/search/romantic dinner candlelit?city=Las Vegas&state=NV"
 ```
 
 ### Server startup with search enabled
@@ -147,7 +147,7 @@ curl "localhost:8080/search?q=romantic+dinner+candlelit&city=Las+Vegas&state=NV"
 go run . serve --weaviate localhost:8090
 ```
 
-If `--weaviate` is omitted, the server starts normally but `GET /search` returns `503 Service Unavailable`.
+If `--weaviate` is omitted, the server starts normally but `GET /search/<query>` returns `503 Service Unavailable`.
 
 ---
 

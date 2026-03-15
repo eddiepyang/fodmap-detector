@@ -40,7 +40,7 @@ type SearchFilter struct {
 
 // IndexItem pairs a review with its associated business metadata for indexing.
 type IndexItem struct {
-	Review     schemas.ReviewSchemaS
+	Review     schemas.Review
 	City       string
 	State      string
 	Categories string
@@ -68,14 +68,14 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 		return nil
 	}
 
-	skip := map[string]interface{}{
-		"text2vec-transformers": map[string]interface{}{"skip": true},
+	skip := map[string]any{
+		"text2vec-transformers": map[string]any{"skip": true},
 	}
 	class := &models.Class{
 		Class:      collectionName,
 		Vectorizer: "text2vec-transformers",
-		ModuleConfig: map[string]interface{}{
-			"text2vec-transformers": map[string]interface{}{
+		ModuleConfig: map[string]any{
+			"text2vec-transformers": map[string]any{
 				"vectorizeClassName": false,
 			},
 		},
@@ -102,13 +102,13 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	batcher := c.wv.Batch().ObjectsBatcher()
 	for _, item := range items {
-		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewId)).String()
+		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
 		batcher = batcher.WithObjects(&models.Object{
 			Class: collectionName,
 			ID:    strfmt.UUID(id),
-			Properties: map[string]interface{}{
-				"reviewId":   item.Review.ReviewId,
-				"businessId": item.Review.BusinessId,
+			Properties: map[string]any{
+				"reviewId":   item.Review.ReviewID,
+				"businessId": item.Review.BusinessID,
 				"stars":      item.Review.Stars,
 				"text":       item.Review.Text,
 				"city":       item.City,
@@ -206,7 +206,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	if !ok {
 		return SearchResult{BusinessIDs: []string{}}
 	}
-	getMap, ok := getRaw.(map[string]interface{})
+	getMap, ok := getRaw.(map[string]any)
 	if !ok {
 		return SearchResult{BusinessIDs: []string{}}
 	}
@@ -214,7 +214,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	if !ok {
 		return SearchResult{BusinessIDs: []string{}}
 	}
-	items, ok := rawItems.([]interface{})
+	items, ok := rawItems.([]any)
 	if !ok {
 		return SearchResult{BusinessIDs: []string{}}
 	}
@@ -222,7 +222,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	// Collect certainty scores per business.
 	scores := make(map[string][]float64)
 	for _, raw := range items {
-		obj, ok := raw.(map[string]interface{})
+		obj, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -230,7 +230,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		if businessID == "" {
 			continue
 		}
-		additional, _ := obj["_additional"].(map[string]interface{})
+		additional, _ := obj["_additional"].(map[string]any)
 		if additional == nil {
 			continue
 		}
@@ -248,7 +248,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		sort.Slice(s, func(i, j int) bool { return s[i] > s[j] })
 		k := min(topKReviews, len(s))
 		var sum float64
-		for i := 0; i < k; i++ {
+		for i := range k {
 			sum += s[i]
 		}
 		results = append(results, ranked{id: id, score: sum / float64(k)})
