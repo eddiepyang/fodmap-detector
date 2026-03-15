@@ -41,7 +41,11 @@ var eventWriteCmd = &cobra.Command{
 			slog.Error("creating event writer", "error", err)
 			os.Exit(1)
 		}
-		defer w.Close()
+		defer func() {
+			if err := w.Close(); err != nil {
+				slog.Error("close error", "error", err)
+			}
+		}()
 
 		for fileScanner.Scan() {
 			var record map[string]any

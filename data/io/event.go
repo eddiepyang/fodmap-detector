@@ -16,7 +16,7 @@ type EventWriter struct {
 func NewEventWriter(w io.WriteCloser, outputSchema string) (*EventWriter, error) {
 	enc, err := ocf.NewEncoder(outputSchema, w)
 	if err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, err
 	}
 
@@ -42,7 +42,11 @@ func ReadFile(filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer avroFile.Close()
+	defer func() {
+		if err := avroFile.Close(); err != nil {
+			slog.Error("close error", "error", err)
+		}
+	}()
 
 	decoder, err := ocf.NewDecoder(avroFile)
 	if err != nil {

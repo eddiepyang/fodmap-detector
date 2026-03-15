@@ -32,7 +32,11 @@ func writeRecords(path, jsonl string) {
 	if err != nil {
 		panic(err)
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			panic(err)
+		}
+	}()
 
 	for _, line := range strings.Split(jsonl, "\n") {
 		var record map[string]any
