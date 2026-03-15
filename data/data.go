@@ -2,12 +2,10 @@ package data
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"fodmap/data/io"
-	"fodmap/data/schemas"
 	goio "io"
 	"log/slog"
 	"math"
@@ -15,6 +13,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"fodmap/data/io"
+	"fodmap/data/schemas"
 
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/reader"
@@ -26,80 +27,41 @@ const (
 	writeStopRowBatch = 100
 )
 
-type CompressedFileReader[R zip.Reader | tar.Reader] interface {
-	getReader() (R, error)
-	close() float64
-}
-
-type ZipReader struct { //todo: define methods for zip
-	file       os.File
-	readCloser zip.ReadCloser
-}
-
-type TarReader struct { //todo: define methods for tar
-	file       os.File
-	readCloser tar.Reader
-}
-
-type ReviewSchema interface {
-	ParseText(inputString string) []string
-}
-
-// func (r *ReviewSchemaS) ParseText(inputString string) []string {
-// 	return r.Pattern.FindAllString(inputString, -1)
-// }
-
-func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.ReviewSchemaS, error) {
-	jsonl := &schemas.ReviewSchemaS{}
+// UnmarshalReview parses a single JSONL review record from inputBytes.
+func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review, error) {
+	jsonl := &schemas.Review{}
 	if err := json.Unmarshal(inputBytes, jsonl); err != nil {
-		slog.Error("unmarshalling error", "error", err)
-		return schemas.ReviewSchemaS{}, err
+		return schemas.Review{}, err
 	}
-	// jsonl.ParsedText = pattern.FindAllString(jsonl.Text, -1)
 	return *jsonl, nil
 }
 
-func JsonifyReview(pattern *regexp.Regexp, inputBytes []byte) string {
-	return string(inputBytes)
-}
-
-func (z *ZipReader) read(fileName string) (*bufio.Scanner, error) {
-	for _, file := range z.readCloser.File { //todo: fix this
-		if strings.Contains(file.FileHeader.Name, fileName) {
-			rc, err := file.Open()
-			if err != nil {
-				slog.Error("failed to open zip file entry", "error", err)
-				panic(err)
-			}
-			defer rc.Close()
-			return bufio.NewScanner(rc), nil
-		}
-	}
-	return nil, fmt.Errorf("error loading file")
-}
-
-func GetArchive(fileName string) *bufio.Scanner {
+// GetArchive opens the archive and returns a scanner positioned at the first
+// entry whose name contains fileName. Returns an error if the archive cannot
+// be opened or the entry is not found.
+func GetArchive(fileName string) (*bufio.Scanner, error) {
 	files, err := os.Open(archiveGz)
 	if err != nil {
-		slog.Error("failed to open archive", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("opening archive: %w", err)
 	}
 
 	archiveFiles := tar.NewReader(files)
-
 	for {
 		file, err := archiveFiles.Next()
+		if errors.Is(err, goio.EOF) {
+			return nil, fmt.Errorf("file %q not found in archive", fileName)
+		}
 		if err != nil {
-			os.Exit(0)
+			return nil, fmt.Errorf("reading tar: %w", err)
 		}
 		if strings.Contains(file.Name, fileName) {
-			return bufio.NewScanner(archiveFiles)
+			return bufio.NewScanner(archiveFiles), nil
 		}
-
 	}
 }
 
-func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
+// GetReviewsByBusiness returns all reviews in the archive for the given businessID.
+func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 	files, err := os.Open(archiveGz)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
@@ -109,7 +71,7 @@ func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
 	archiveFiles := tar.NewReader(files)
 	for {
 		file, err := archiveFiles.Next()
-		if err == goio.EOF {
+		if errors.Is(err, goio.EOF) {
 			break
 		}
 		if err != nil {
@@ -123,13 +85,13 @@ func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
 		buf := make([]byte, 4*1024*1024)
 		scanner.Buffer(buf, 4*1024*1024)
 
-		var results []schemas.ReviewSchemaS
+		var results []schemas.Review
 		for scanner.Scan() {
-			var r schemas.ReviewSchemaS
+			var r schemas.Review
 			if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
 				continue
 			}
-			if r.BusinessId == businessID {
+			if r.BusinessID == businessID {
 				results = append(results, r)
 			}
 		}
@@ -143,7 +105,7 @@ func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
 
 // GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
 // The caller can use the map for O(1) lookups when joining reviews with business metadata.
-func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
+func GetBusinessMap() (map[string]schemas.Business, error) {
 	files, err := os.Open(archiveGz)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
@@ -153,7 +115,7 @@ func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
 	archiveFiles := tar.NewReader(files)
 	for {
 		file, err := archiveFiles.Next()
-		if err == goio.EOF {
+		if errors.Is(err, goio.EOF) {
 			break
 		}
 		if err != nil {
@@ -167,13 +129,13 @@ func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
 		buf := make([]byte, 4*1024*1024)
 		scanner.Buffer(buf, 4*1024*1024)
 
-		businesses := make(map[string]schemas.BusinessSchemaS)
+		businesses := make(map[string]schemas.Business)
 		for scanner.Scan() {
-			var b schemas.BusinessSchemaS
+			var b schemas.Business
 			if err := json.Unmarshal(scanner.Bytes(), &b); err != nil {
 				continue
 			}
-			businesses[b.BusinessId] = b
+			businesses[b.BusinessID] = b
 		}
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("scanning archive: %w", err)
@@ -183,35 +145,36 @@ func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
 	return nil, fmt.Errorf("business file not found in archive")
 }
 
-func ListDir() {
+// ListDir logs all files in ../../../data/. Returns an error if the directory cannot be read.
+func ListDir() error {
 	files, err := os.ReadDir("../../../data/")
 	if err != nil {
-		slog.Error("failed to read directory", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("reading directory: %w", err)
 	}
 
 	for _, file := range files {
 		slog.Info("listing files", "name", file.Name(), "is_dir", file.IsDir())
 	}
+	return nil
 }
 
-func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
+// WriteBatchParquet reads JSONL records from fileScanner, parses them as Review records,
+// and writes them to outFile in Parquet format. Returns an error if writing fails.
+func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) error {
 	start := time.Now()
 
-	//write
 	fw, err := local.NewLocalFileWriter(outFile)
 	if err != nil {
-		slog.Error("can't create file", "error", err)
-		return
+		return fmt.Errorf("creating file: %w", err)
 	}
 	defer fw.Close()
-	pw, err := writer.NewParquetWriter(fw, new(schemas.ReviewSchemaS), 20)
-	if err != nil {
-		slog.Error("can't create parquet writer", "error", err)
-		return
-	}
-	inChan := make(chan io.ParseResult, 3)
 
+	pw, err := writer.NewParquetWriter(fw, new(schemas.Review), 20)
+	if err != nil {
+		return fmt.Errorf("creating parquet writer: %w", err)
+	}
+
+	inChan := make(chan io.ParseResult, 3)
 	go io.ReadToChan(UnmarshalReview, inChan, fileScanner, writeStopRowBatch)
 
 	var parseErrors int
@@ -222,51 +185,37 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
 			continue
 		}
 		if err = pw.Write(item.Record); err != nil {
-			slog.Error("error writing to parquet", "error", err)
-			panic(fmt.Sprintf("error writing to parquet: %v", err))
+			return fmt.Errorf("writing to parquet: %w", err)
 		}
 	}
 
 	if err := pw.WriteStop(); err != nil {
-		slog.Error("WriteStop error", "error", err)
+		return fmt.Errorf("finalizing parquet file: %w", err)
 	}
 
 	slog.Info("process completed", "duration", time.Since(start), "file", outFile, "parse_errors", parseErrors)
+	return nil
 }
 
+// ReadParquet reads up to earlyStop rows from fileName and returns them as []schemas.Review.
 func ReadParquet(fileName string, earlyStop int64) (any, error) {
 	fr, err := local.NewLocalFileReader(fileName)
 	if err != nil {
-		slog.Error("can't open file", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("opening file: %w", err)
 	}
 	defer fr.Close()
 
-	pr, err := reader.NewParquetReader(fr, new(schemas.ReviewSchemaS), 4)
+	pr, err := reader.NewParquetReader(fr, new(schemas.Review), 4)
 	if err != nil {
-		slog.Error("can't create parquet reader", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("creating parquet reader: %w", err)
 	}
 
 	n := pr.GetNumRows()
 	stop := int(math.Min(float64(n), float64(earlyStop)))
 	slog.Info("reading rows", "count", stop)
-	var rows = make([]schemas.ReviewSchemaS, stop)
+	rows := make([]schemas.Review, stop)
 	if err := pr.Read(&rows); err != nil {
 		return nil, err
 	}
-	// Create a slice to hold the results
-	// s := make([]*map[string]interface{}, 0, stop)
-
-	// // Read into the slice
-	// for i := int64(0); i < stop; i++ {
-	// 	record := new(map[string]interface{})
-	// 	if err := pr.Read(record); err != nil {
-	// 		log.Println("Can't read row", err)
-	// 		return nil, err
-	// 	}
-	// 	s[i] = record
-	// }
-
 	return rows, nil
 }

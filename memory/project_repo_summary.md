@@ -10,8 +10,9 @@ A Go HTTP server + CLI that analyzes Yelp restaurant reviews for FODMAP content.
 
 ## Stack
 
-- **Language**: Go 1.24
+- **Language**: Go 1.26.0
 - **HTTP**: stdlib `net/http` with Go 1.22+ pattern routing (`http.NewServeMux`)
+- **Concurrency**: `sync.WaitGroup.Go()` (Go 1.25+) used in `server/llm.go`
 - **LLM**: Google Gemini 2.0 Flash (`GEMINI_API_KEY` env var required)
 - **Vector DB**: Weaviate with `text2vec-transformers` (local embeddings, runs via Docker)
 - **CLI**: Cobra (`go run ./cmd/cli`)

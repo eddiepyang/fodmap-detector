@@ -49,7 +49,11 @@ func runIndex(cmd *cobra.Command, _ []string) {
 	}
 	slog.Info("business metadata loaded", "count", len(businessMap))
 
-	scanner := data.GetArchive("review")
+	scanner, err := data.GetArchive("review")
+	if err != nil {
+		slog.Error("opening archive", "error", err)
+		os.Exit(1)
+	}
 	// GetArchive returns a plain bufio.Scanner with the default 64 KB buffer.
 	// Yelp reviews can be several KB; use a 4 MB buffer to match GetReviewsByBusiness.
 	buf := make([]byte, 4*1024*1024)
@@ -71,14 +75,14 @@ func runIndex(cmd *cobra.Command, _ []string) {
 	}
 
 	for scanner.Scan() {
-		var r schemas.ReviewSchemaS
+		var r schemas.Review
 		if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
 			slog.Warn("skipping malformed record", "error", err)
 			continue
 		}
 
 		item := search.IndexItem{Review: r}
-		if biz, ok := businessMap[r.BusinessId]; ok {
+		if biz, ok := businessMap[r.BusinessID]; ok {
 			item.City = biz.City
 			item.State = biz.State
 			item.Categories = biz.Categories

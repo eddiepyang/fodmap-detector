@@ -2,17 +2,18 @@ package io
 
 import (
 	"bufio"
-	"fodmap/data/schemas"
 	"log/slog"
 	"regexp"
+
+	"fodmap/data/schemas"
 )
 
-type parseSchemaFunc func(pattern *regexp.Regexp, inputBytes []byte) (schemas.ReviewSchemaS, error)
+type parseSchemaFunc func(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review, error)
 
 // ParseResult is the item sent on inChan for every scanned line.
 // Err is non-nil when the parser failed; callers can count these to track error rates.
 type ParseResult struct {
-	Record schemas.ReviewSchemaS
+	Record schemas.Review
 	Err    error
 }
 

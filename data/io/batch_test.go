@@ -12,17 +12,17 @@ import (
 )
 
 // inlineParser is a parseSchemaFunc that uses plain JSON unmarshaling.
-func inlineParser(_ *regexp.Regexp, b []byte) (schemas.ReviewSchemaS, error) {
-	var r schemas.ReviewSchemaS
+func inlineParser(_ *regexp.Regexp, b []byte) (schemas.Review, error) {
+	var r schemas.Review
 	return r, json.Unmarshal(b, &r)
 }
 
 // errorParser returns an error for any line containing "BAD", otherwise parses normally.
-func errorParser(_ *regexp.Regexp, b []byte) (schemas.ReviewSchemaS, error) {
+func errorParser(_ *regexp.Regexp, b []byte) (schemas.Review, error) {
 	if strings.Contains(string(b), "BAD") {
-		return schemas.ReviewSchemaS{}, fmt.Errorf("intentional parse error")
+		return schemas.Review{}, fmt.Errorf("intentional parse error")
 	}
-	var r schemas.ReviewSchemaS
+	var r schemas.Review
 	return r, json.Unmarshal(b, &r)
 }
 
@@ -53,11 +53,11 @@ func TestReadToChan_AllRows(t *testing.T) {
 	if len(results) != 3 {
 		t.Fatalf("got %d rows, want 3", len(results))
 	}
-	if results[0].Record.ReviewId != "r1" {
-		t.Errorf("results[0].Record.ReviewId = %q, want %q", results[0].Record.ReviewId, "r1")
+	if results[0].Record.ReviewID != "r1" {
+		t.Errorf("results[0].Record.ReviewID = %q, want %q", results[0].Record.ReviewID, "r1")
 	}
-	if results[2].Record.ReviewId != "r3" {
-		t.Errorf("results[2].Record.ReviewId = %q, want %q", results[2].Record.ReviewId, "r3")
+	if results[2].Record.ReviewID != "r3" {
+		t.Errorf("results[2].Record.ReviewID = %q, want %q", results[2].Record.ReviewID, "r3")
 	}
 }
 
@@ -95,8 +95,8 @@ func TestReadToChan_FieldValues(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(results))
 	}
 	r := results[0].Record
-	if r.ReviewId != "x1" {
-		t.Errorf("ReviewId = %q, want %q", r.ReviewId, "x1")
+	if r.ReviewID != "x1" {
+		t.Errorf("ReviewID = %q, want %q", r.ReviewID, "x1")
 	}
 	if r.Stars != 4.5 {
 		t.Errorf("Stars = %v, want 4.5", r.Stars)
@@ -141,7 +141,7 @@ func TestReadToChan_ParserError(t *testing.T) {
 			valid = r
 		}
 	}
-	if valid.Record.ReviewId != "good" {
-		t.Errorf("valid record ReviewId = %q, want %q", valid.Record.ReviewId, "good")
+	if valid.Record.ReviewID != "good" {
+		t.Errorf("valid record ReviewID = %q, want %q", valid.Record.ReviewID, "good")
 	}
 }

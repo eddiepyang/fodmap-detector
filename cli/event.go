@@ -23,7 +23,11 @@ var eventWriteCmd = &cobra.Command{
 		if outputFile == "" {
 			outputFile = "test.avro"
 		}
-		fileScanner := data.GetArchive("review")
+		fileScanner, err := data.GetArchive("review")
+		if err != nil {
+			slog.Error("opening archive", "error", err)
+			os.Exit(1)
+		}
 		slog.Info("created fileScanner")
 		io.WriteEventFile(fileScanner, outputFile, schemas.EventSchema)
 		slog.Info("created file")

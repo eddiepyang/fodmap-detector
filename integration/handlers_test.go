@@ -24,7 +24,7 @@ type stubAnalyzer struct {
 	delay time.Duration
 }
 
-func (s *stubAnalyzer) Analyze(_ context.Context, _ []schemas.ReviewSchemaS) (string, error) {
+func (s *stubAnalyzer) Analyze(_ context.Context, _ []schemas.Review) (string, error) {
 	if s.delay > 0 {
 		time.Sleep(s.delay)
 	}

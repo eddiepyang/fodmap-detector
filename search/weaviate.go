@@ -40,7 +40,7 @@ type SearchFilter struct {
 
 // IndexItem pairs a review with its associated business metadata for indexing.
 type IndexItem struct {
-	Review     schemas.ReviewSchemaS
+	Review     schemas.Review
 	City       string
 	State      string
 	Categories string
@@ -102,13 +102,13 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	batcher := c.wv.Batch().ObjectsBatcher()
 	for _, item := range items {
-		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewId)).String()
+		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
 		batcher = batcher.WithObjects(&models.Object{
 			Class: collectionName,
 			ID:    strfmt.UUID(id),
 			Properties: map[string]any{
-				"reviewId":   item.Review.ReviewId,
-				"businessId": item.Review.BusinessId,
+				"reviewId":   item.Review.ReviewID,
+				"businessId": item.Review.BusinessID,
 				"stars":      item.Review.Stars,
 				"text":       item.Review.Text,
 				"city":       item.City,

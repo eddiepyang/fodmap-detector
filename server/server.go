@@ -13,7 +13,7 @@ import (
 // Analyzer is the interface satisfied by LLMClient. Extracted so the server
 // can be constructed with a stub in tests.
 type Analyzer interface {
-	Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS) (string, error)
+	Analyze(ctx context.Context, reviews []schemas.Review) (string, error)
 }
 
 // Searcher is the interface satisfied by search.Client. Extracted so the server

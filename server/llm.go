@@ -80,18 +80,18 @@ type chunkResult struct {
 // Analyze splits reviews into chunks of reviewsPerChunk and processes them
 // concurrently with analysisWorkers goroutines. All goroutines share the same
 // rate limiter so the combined request rate never exceeds freeTierRPM.
-func (l *LLMClient) Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS) (string, error) {
+func (l *LLMClient) Analyze(ctx context.Context, reviews []schemas.Review) (string, error) {
 	chunks := chunkReviews(reviews, reviewsPerChunk)
 
 	workCh := make(chan struct {
 		index int
-		chunk []schemas.ReviewSchemaS
+		chunk []schemas.Review
 	}, len(chunks))
 
 	for i, c := range chunks {
 		workCh <- struct {
 			index int
-			chunk []schemas.ReviewSchemaS
+			chunk []schemas.Review
 		}{i, c}
 	}
 	close(workCh)
@@ -124,7 +124,7 @@ func (l *LLMClient) Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS
 
 // callGemini waits for a rate limiter token then calls the Gemini API with
 // the reviews formatted into the prompt template.
-func (l *LLMClient) callGemini(ctx context.Context, reviews []schemas.ReviewSchemaS) (string, error) {
+func (l *LLMClient) callGemini(ctx context.Context, reviews []schemas.Review) (string, error) {
 	if err := l.limiter.Wait(ctx); err != nil {
 		return "", fmt.Errorf("rate limiter: %w", err)
 	}
@@ -146,8 +146,8 @@ func (l *LLMClient) callGemini(ctx context.Context, reviews []schemas.ReviewSche
 	return resp.Text(), nil
 }
 
-func chunkReviews(reviews []schemas.ReviewSchemaS, size int) [][]schemas.ReviewSchemaS {
-	var chunks [][]schemas.ReviewSchemaS
+func chunkReviews(reviews []schemas.Review, size int) [][]schemas.Review {
+	var chunks [][]schemas.Review
 	for size < len(reviews) {
 		reviews, chunks = reviews[size:], append(chunks, reviews[:size])
 	}
