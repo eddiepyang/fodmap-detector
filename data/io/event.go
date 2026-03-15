@@ -42,11 +42,7 @@ func ReadFile(filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := avroFile.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer avroFile.Close()
 
 	decoder, err := ocf.NewDecoder(avroFile)
 	if err != nil {

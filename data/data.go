@@ -37,25 +37,28 @@ func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review,
 }
 
 // GetArchive opens the archive and returns a scanner positioned at the first
-// entry whose name contains fileName. Returns an error if the archive cannot
-// be opened or the entry is not found.
-func GetArchive(fileName string) (*bufio.Scanner, error) {
+// entry whose name contains fileName, along with a closer for the underlying
+// file. The caller must call Close() when done. Returns an error if the
+// archive cannot be opened or the entry is not found.
+func GetArchive(fileName string) (*bufio.Scanner, goio.Closer, error) {
 	files, err := os.Open(archiveGz)
 	if err != nil {
-		return nil, fmt.Errorf("opening archive: %w", err)
+		return nil, nil, fmt.Errorf("opening archive: %w", err)
 	}
 
 	archiveFiles := tar.NewReader(files)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
-			return nil, fmt.Errorf("file %q not found in archive", fileName)
+			_ = files.Close()
+			return nil, nil, fmt.Errorf("file %q not found in archive", fileName)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("reading tar: %w", err)
+			_ = files.Close()
+			return nil, nil, fmt.Errorf("reading tar: %w", err)
 		}
 		if strings.Contains(file.Name, fileName) {
-			return bufio.NewScanner(archiveFiles), nil
+			return bufio.NewScanner(archiveFiles), files, nil
 		}
 	}
 }
@@ -66,11 +69,7 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer func() {
-		if err := files.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer files.Close()
 
 	archiveFiles := tar.NewReader(files)
 	for {
@@ -114,11 +113,7 @@ func GetBusinessMap() (map[string]schemas.Business, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer func() {
-		if err := files.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer files.Close()
 
 	archiveFiles := tar.NewReader(files)
 	for {
@@ -175,11 +170,7 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %w", err)
 	}
-	defer func() {
-		if err := fw.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer fw.Close()
 
 	pw, err := writer.NewParquetWriter(fw, new(schemas.Review), 20)
 	if err != nil {
@@ -215,11 +206,7 @@ func ReadParquet(fileName string, earlyStop int64) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
-	defer func() {
-		if err := fr.Close(); err != nil {
-			slog.Error("close error", "error", err)
-		}
-	}()
+	defer fr.Close()
 
 	pr, err := reader.NewParquetReader(fr, new(schemas.Review), 4)
 	if err != nil {

@@ -5,7 +5,7 @@ Project-level rules for this codebase.
 ## Testing
 
 - Always run `go test ./...` after any code change
-- Run `golangci-lint run ./...` when available — it mirrors the CI lint step (install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
+- Run `golangci-lint run ./...` when available — it mirrors the CI lint step (install: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.3`)
 - Do not mock — use stub types that implement interfaces (see `integration/handlers_test.go` for the pattern)
 
 ## Go channel patterns
@@ -24,3 +24,20 @@ Project-level rules for this codebase.
 
 - Run `go fix ./...` after bumping the Go version — it applies automated modernizations
 - Keep `go.mod` at a single `go X.Y.Z` line; no `toolchain` directive needed when the installed version matches
+
+## Error handling
+
+- CLI commands use `RunE` (not `Run`) and return `fmt.Errorf("context: %w", err)` — no `slog.Error` + `os.Exit` in command handlers
+- Root command sets `SilenceErrors: true` and `SilenceUsage: true`; `Execute()` in `root.go` handles printing
+- Use `_ = x.Close()` when closing in an error cleanup path (primary error already captured)
+- `defer x.Close()` is fine for deferred cleanup — errcheck is configured to ignore `.Close` on defers (see `.golangci.yml`)
+
+## Resource lifecycle
+
+- Functions that open files for streaming (e.g. `GetArchive`) return `(result, io.Closer, error)` — the caller owns the lifecycle and must `defer closer.Close()`
+- Accept interfaces, return structs: constructor parameters should use interface types (`io.WriteCloser`, `io.Reader`) so callers can pass any implementation
+
+## Logging
+
+- Use `slog` throughout — not `log` or `fmt.Println`
+- Structured key/value pairs: `slog.Error("msg", "key", value)` — never bare string concatenation

@@ -8,8 +8,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "fodmap-detector",
-	Short: "A CLI tool to process FODMAP data.",
+	Use:          "fodmap-detector",
+	Short:        "A CLI tool to process FODMAP data.",
+	SilenceUsage: true,
+	SilenceErrors: true,
 }
 
 func Execute() {

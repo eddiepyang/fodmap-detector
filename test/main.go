@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/parquet"
@@ -79,18 +79,17 @@ func main() {
 	var err error
 	fw, err := local.NewLocalFileWriter("json_schema.parquet")
 	if err != nil {
-		log.Println("Can't create local file", err)
+		slog.Error("can't create local file", "error", err)
 		return
 	}
 
-	//write
 	pw, err := writer.NewParquetWriter(fw, jsonSchema, 4)
 	if err != nil {
-		log.Println("Can't create parquet writer", err)
+		slog.Error("can't create parquet writer", "error", err)
 		return
 	}
 
-	pw.RowGroupSize = 128 * 1024 * 1024 //128M
+	pw.RowGroupSize = 128 * 1024 * 1024
 	pw.CompressionType = parquet.CompressionCodec_SNAPPY
 	num := 10
 	for i := 0; i < num; i++ {
@@ -102,59 +101,47 @@ func main() {
 			Sex:     bool(i%2 == 0),
 			Classes: []string{"Math", "Physics"},
 			Scores: map[string][]float32{
-				"Math":    []float32{89.5, 99.4},
-				"Physics": []float32{100.0, 95.3},
+				"Math":    {89.5, 99.4},
+				"Physics": {100.0, 95.3},
 			},
 
 			Friends: []struct {
 				Name string
 				Id   int64
 			}{
-				struct {
-					Name string
-					Id   int64
-				}{
-					Name: "Jack",
-					Id:   01,
-				},
+				{Name: "Jack", Id: 1},
 			},
 
 			Teachers: []struct {
 				Name string
 				Id   int64
 			}{
-				struct {
-					Name string
-					Id   int64
-				}{
-					Name: "Tom",
-					Id:   02,
-				},
+				{Name: "Tom", Id: 2},
 			},
 		}
 		if err = pw.Write(stu); err != nil {
-			log.Println("Write error", err)
+			slog.Error("write error", "error", err)
+			return
 		}
 	}
 	if err = pw.WriteStop(); err != nil {
-		log.Println("WriteStop error", err)
+		slog.Error("write stop error", "error", err)
 		return
 	}
-	log.Println("Write Finished")
+	slog.Info("write finished")
 	if err = fw.Close(); err != nil {
-		log.Println("Close error", err)
+		slog.Error("close error", "error", err)
 	}
 
-	///read
 	fr, err := local.NewLocalFileReader("json_schema.parquet")
 	if err != nil {
-		log.Println("Can't open file")
+		slog.Error("can't open file", "error", err)
 		return
 	}
 
 	pr, err := reader.NewParquetReader(fr, jsonSchema, 4)
 	if err != nil {
-		log.Println("Can't create parquet reader", err)
+		slog.Error("can't create parquet reader", "error", err)
 		return
 	}
 
@@ -162,14 +149,14 @@ func main() {
 	for i := 0; i < num; i++ {
 		stus := make([]Student, 1)
 		if err = pr.Read(&stus); err != nil {
-			log.Println("Read error", err)
+			slog.Error("read error", "error", err)
+			return
 		}
-		log.Println(stus)
+		slog.Info("row", "data", stus)
 	}
 
 	pr.ReadStop()
 	if err = fr.Close(); err != nil {
-		log.Println("Close error", err)
+		slog.Error("close error", "error", err)
 	}
-
 }
