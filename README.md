@@ -8,7 +8,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 1. Read Yelp review data from a compressed archive (`.tar.gz` of JSON lines)
 2. Serialize reviews to Apache Avro (streaming) or Apache Parquet (columnar batch) formats
-3. (In progress) Run LLM-based FODMAP analysis on review text using a structured prompt
+3. Run LLM-based FODMAP analysis on review text using Google Gemini
 
 ---
 
@@ -16,7 +16,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Go 1.23+ |
+| Language | Go 1.26+ |
 | CLI | [Cobra](https://github.com/spf13/cobra) |
 | Streaming format | Apache Avro (OCF) via [hamba/avro](https://github.com/hamba/avro) |
 | Batch format | Apache Parquet via [xitongsys/parquet-go](https://github.com/xitongsys/parquet-go) |
@@ -34,8 +34,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── cmd/
 │   └── cli/
 │       └── main.go          # CLI entry point
-├── flags.go                 # Global CLI flags (--model)
-├── prompt.txt               # LLM prompt for FODMAP extraction (WIP)
+├── prompt.txt               # LLM prompt for FODMAP extraction
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
@@ -51,15 +50,14 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   └── llm.go               # Gemini LLM client
 │
 ├── data/
-│   ├── data.go              # Core pipeline: archive reading, Parquet write/read
-│   ├── constants.go         # Schema constants and file paths
+│   ├── data.go              # Archive reading, Parquet write/read
 │   │
 │   ├── io/
 │   │   ├── batch.go         # Channel-based JSON reader (ReadToChan)
 │   │   └── event.go         # Avro OCF read/write helpers
 │   │
 │   └── schemas/
-│       └── schemas.go       # ReviewSchemaS + BusinessSchemaS structs + Avro EventSchema
+│       └── schemas.go       # Review + Business structs + Avro EventSchema
 │
 ├── search/
 │   └── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
@@ -75,10 +73,10 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ## Core Data Model
 
 ```go
-type ReviewSchemaS struct {
-    ReviewId   string  // Yelp review ID
-    UserId     string  // Reviewer user ID
-    BusinessId string  // Restaurant/business ID
+type Review struct {
+    ReviewID   string  // Yelp review ID
+    UserID     string  // Reviewer user ID
+    BusinessID string  // Restaurant/business ID
     Stars      float32 // Rating (1-5)
     Useful     int32   // Usefulness votes
     Funny      int32   // Funny votes
@@ -108,7 +106,7 @@ WriteEventFile()        WriteBatchParquet()
                              |
                         ReadParquet()
                              |
-                      []ReviewSchemaS
+                        []Review
 ```
 
 ---
@@ -169,7 +167,7 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 | `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
 | `GET` | `/results/{job_id}` | Poll analysis results |
 | `GET` | `/reviews` | List reviews for a business |
-| `GET` | `/search/{query}` | Semantic restaurant search (requires Weaviate) |
+| `GET` | `/search/{query...}` | Semantic restaurant search (requires Weaviate) |
 
 #### Search endpoint
 

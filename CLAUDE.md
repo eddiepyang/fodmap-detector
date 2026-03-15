@@ -5,6 +5,7 @@ Project-level rules for this codebase.
 ## Testing
 
 - Always run `go test ./...` after any code change
+- Run `golangci-lint run ./...` when available — it mirrors the CI lint step (install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 - Do not mock — use stub types that implement interfaces (see `integration/handlers_test.go` for the pattern)
 
 ## Go channel patterns
