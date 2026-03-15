@@ -1,7 +1,7 @@
 package io
 
 import (
-	"bufio"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -10,6 +10,7 @@ import (
 	"fodmap/data/schemas"
 )
 
+
 const outfile = "outfile.avro"
 
 // setUp ensures the outfile artifact is populated for TestReadFile.
@@ -17,8 +18,30 @@ const outfile = "outfile.avro"
 func setUp() {
 	info, err := os.Stat(outfile)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() == 0) {
-		scanner := bufio.NewScanner(strings.NewReader(avroSampleJSONL))
-		WriteEventFile(scanner, outfile, schemas.EventSchema)
+		writeRecords(outfile, avroSampleJSONL)
+	}
+}
+
+// writeRecords is a test helper that writes JSONL lines to an Avro file via EventWriter.
+func writeRecords(path, jsonl string) {
+	f, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	w, err := NewEventWriter(f, schemas.EventSchema)
+	if err != nil {
+		panic(err)
+	}
+	defer w.Close()
+
+	for _, line := range strings.Split(jsonl, "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			panic(err)
+		}
+		if err := w.Write(record); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -41,12 +64,10 @@ func TestReadFile(t *testing.T) {
 // It writes sample records to a temp Avro file and reads them back.
 func TestWriteAndReadAvro(t *testing.T) {
 	path := t.TempDir() + "/test.avro"
-
-	scanner := bufio.NewScanner(strings.NewReader(avroSampleJSONL))
-	WriteEventFile(scanner, path, schemas.EventSchema)
+	writeRecords(path, avroSampleJSONL)
 
 	if err := ReadFile(path); err != nil {
-		t.Errorf("ReadFile after WriteEventFile: %v", err)
+		t.Errorf("ReadFile after EventWriter: %v", err)
 	}
 }
 

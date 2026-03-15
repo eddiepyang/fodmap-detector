@@ -100,7 +100,7 @@ data/archive.tar.gz  (Yelp JSON lines, gzip-compressed)
 Avro path               Parquet path
 (event cmd)             (batch cmd)
    |                         |
-WriteEventFile()        WriteBatchParquet()
+EventWriter.Write()     WriteBatchParquet()
    |                         |
 *.avro                  *.parquet
                              |

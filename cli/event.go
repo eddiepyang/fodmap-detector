@@ -1,8 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fodmap/data"
-	"fodmap/data/io"
+	dataio "fodmap/data/io"
 	"fodmap/data/schemas"
 	"log/slog"
 	"os"
@@ -29,7 +30,34 @@ var eventWriteCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		slog.Info("created fileScanner")
-		io.WriteEventFile(fileScanner, outputFile, schemas.EventSchema)
+
+		f, err := os.Create(outputFile)
+		if err != nil {
+			slog.Error("creating output file", "error", err)
+			os.Exit(1)
+		}
+		w, err := dataio.NewEventWriter(f, schemas.EventSchema)
+		if err != nil {
+			slog.Error("creating event writer", "error", err)
+			os.Exit(1)
+		}
+		defer w.Close()
+
+		for fileScanner.Scan() {
+			var record map[string]any
+			if err := json.Unmarshal(fileScanner.Bytes(), &record); err != nil {
+				slog.Error("unmarshal record", "error", err)
+				os.Exit(1)
+			}
+			if err := w.Write(record); err != nil {
+				slog.Error("write record", "error", err)
+				os.Exit(1)
+			}
+		}
+		if err := fileScanner.Err(); err != nil {
+			slog.Error("scanner error", "error", err)
+			os.Exit(1)
+		}
 		slog.Info("created file")
 	},
 }
@@ -43,7 +71,7 @@ var eventReadCmd = &cobra.Command{
 			slog.Error("input file path is required")
 			os.Exit(1)
 		}
-		err := io.ReadFile(inputFile)
+		err := dataio.ReadFile(inputFile)
 		if err != nil {
 			slog.Error("error reading file", "error", err)
 			os.Exit(1)
