@@ -23,7 +23,9 @@ func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"job_id": job.ID})
+	if err := json.NewEncoder(w).Encode(map[string]string{"job_id": job.ID}); err != nil {
+		slog.Error("encode error", "error", err)
+	}
 }
 
 // runAnalysis is the background goroutine that reads reviews from the archive,
@@ -64,7 +66,9 @@ func (s *Server) resultsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		slog.Error("encode error", "error", err)
+	}
 }
 
 func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +86,9 @@ func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(reviews)
+	if err := json.NewEncoder(w).Encode(reviews); err != nil {
+		slog.Error("encode error", "error", err)
+	}
 }
 
 func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
@@ -126,5 +132,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]string{"business_ids": result.BusinessIDs})
+	if err := json.NewEncoder(w).Encode(map[string][]string{"business_ids": result.BusinessIDs}); err != nil {
+		slog.Error("encode error", "error", err)
+	}
 }
