@@ -20,6 +20,7 @@ func TestUnmarshalReview(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
+		wantErr    bool
 		wantId     string
 		wantUserId string
 		wantStars  float32
@@ -57,11 +58,25 @@ func TestUnmarshalReview(t *testing.T) {
 			wantCool:   0,
 			wantText:   "Wow",
 		},
+		{
+			name:    "invalid JSON returns error",
+			input:   `{not valid json`,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := UnmarshalReview(pattern, []byte(tt.input))
+			got, err := UnmarshalReview(pattern, []byte(tt.input))
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if got.ReviewId != tt.wantId {
 				t.Errorf("ReviewId = %q, want %q", got.ReviewId, tt.wantId)
 			}
