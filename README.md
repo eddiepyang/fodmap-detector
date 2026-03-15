@@ -22,6 +22,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Batch format | Apache Parquet via [xitongsys/parquet-go](https://github.com/xitongsys/parquet-go) |
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
+| Vector search | [Weaviate](https://weaviate.io) with `text2vec-transformers` (local embeddings) |
 
 ---
 
@@ -40,7 +41,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── root.go              # Root Cobra command
 │   ├── event.go             # Avro subcommand (event write / event read)
 │   ├── batch.go             # Parquet subcommand (batch)
-│   └── serve.go             # Serve subcommand (starts the HTTP server)
+│   ├── serve.go             # Serve subcommand (starts the HTTP server)
+│   └── index.go             # Index subcommand (populates Weaviate for search)
 │
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
@@ -57,9 +59,15 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   │   └── event.go         # Avro OCF read/write helpers
 │   │
 │   └── schemas/
-│       └── schemas.go       # ReviewSchemaS struct + Avro EventSchema
+│       └── schemas.go       # ReviewSchemaS + BusinessSchemaS structs + Avro EventSchema
 │
-└── vendor/                  # Vendored dependencies
+├── search/
+│   └── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
+│
+├── docs/
+│   └── search.md            # Search service design decisions and API reference
+│
+└── docker-compose.yml       # Weaviate + t2v-transformers services
 ```
 
 ---
@@ -107,12 +115,41 @@ WriteEventFile()        WriteBatchParquet()
 
 ## Running
 
-### Server
-
-Start the HTTP analysis server:
+### 1. Start Weaviate (required for search)
 
 ```sh
-go run .
+docker compose up -d
+```
+
+This starts Weaviate on port `8090` and the `text2vec-transformers` inference sidecar.
+On first run, the transformer model (~90 MB) is downloaded automatically. Wait for:
+
+```
+t2v-transformers  | Application startup complete.
+```
+
+### 2. Index reviews into Weaviate
+
+```sh
+go run ./cmd/cli index --weaviate localhost:8090
+```
+
+This reads the full Yelp archive, joins reviews with business metadata (city, state, categories),
+and upserts them to Weaviate in batches of 100. The command is idempotent — safe to re-run.
+
+```sh
+# Custom batch size
+go run ./cmd/cli index --weaviate localhost:8090 --batch-size 500
+```
+
+### 3. Start the HTTP server
+
+```sh
+# With search enabled
+go run . serve --weaviate localhost:8090
+
+# Without search (search endpoint returns 503)
+go run . serve
 ```
 
 Default port is `8080`. Default prompt path is `./prompt.txt`.
@@ -123,7 +160,39 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 |--------|------|-------------|
 | `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
 | `GET` | `/results/{job_id}` | Poll analysis results |
-| `GET` | `/reviews` | List available reviews |
+| `GET` | `/reviews` | List reviews for a business |
+| `GET` | `/search` | Semantic restaurant search (requires Weaviate) |
+
+#### Search endpoint
+
+Find restaurants matching a natural-language description:
+
+```sh
+# Basic search — returns top 10 business IDs by relevance
+curl "localhost:8080/search?q=cozy+Italian+with+great+pasta"
+
+# Filter by category
+curl "localhost:8080/search?q=best+tacos&category=Mexican"
+
+# Filter by city and state
+curl "localhost:8080/search?q=romantic+dinner&city=Las+Vegas&state=NV"
+
+# Combine all filters with a custom limit
+curl "localhost:8080/search?q=outdoor+patio+brunch&category=Breakfast&city=Phoenix&state=AZ&limit=5"
+```
+
+**Response:**
+```json
+{
+  "business_ids": ["abc123", "def456", "ghi789"]
+}
+```
+
+Business IDs are ranked by **Top-K average similarity** — the average of the top 5 most relevant
+reviews per restaurant. This avoids both volume bias (popular chains don't dominate) and outlier
+noise (one lucky review can't carry a poor fit).
+
+See [docs/search.md](docs/search.md) for full API reference and design decisions.
 
 ### CLI
 
@@ -134,6 +203,17 @@ go run ./cmd/cli
 ```
 
 #### Commands
+
+##### Index (Weaviate)
+
+```sh
+go run ./cmd/cli index --weaviate localhost:8090
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--weaviate` | `localhost:8090` | Weaviate host:port |
+| `--batch-size` | `100` | Reviews per batch |
 
 ##### Parquet (batch)
 
@@ -168,4 +248,8 @@ Place the Yelp dataset archive at:
 ./data/archive.tar.gz
 ```
 
-The archive must contain a file whose name includes `"review"` (e.g. `yelp_academic_dataset_review.json`), formatted as newline-delimited JSON (JSONL).
+The archive must contain files whose names include `"review"` and `"business"`:
+- `yelp_academic_dataset_review.json` — review text and ratings (required for all features)
+- `yelp_academic_dataset_business.json` — business name, city, state, categories (required for search filters)
+
+Both files must be formatted as newline-delimited JSON (JSONL).

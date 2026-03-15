@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"fodmap/data/schemas"
+	"fodmap/search"
 	"fodmap/server"
 )
 
@@ -30,10 +31,21 @@ func (s *stubAnalyzer) Analyze(_ context.Context, _ []schemas.ReviewSchemaS) (st
 	return s.result, s.err
 }
 
+// stubSearcher is a test double for server.Searcher.
+type stubSearcher struct {
+	result search.SearchResult
+	err    error
+}
+
+func (s *stubSearcher) Search(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
+	return s.result, s.err
+}
+
 // newMux returns the handler mux used by the server, wired to the stub analyzer.
-func newMux(t *testing.T, analyzer server.Analyzer) http.Handler {
+// Pass nil for searcher to leave the search endpoint disabled (returns 503).
+func newMux(t *testing.T, analyzer server.Analyzer, searcher server.Searcher) http.Handler {
 	t.Helper()
-	srv := server.NewServer(analyzer, 0)
+	srv := server.NewServer(analyzer, searcher, 0)
 	return srv.Handler()
 }
 
@@ -54,7 +66,7 @@ type resultResponse struct {
 // --- /analyze ---
 
 func TestAnalyzeHandler_MissingBusinessID(t *testing.T) {
-	mux := newMux(t, &stubAnalyzer{})
+	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/analyze", nil)
 
@@ -66,7 +78,7 @@ func TestAnalyzeHandler_MissingBusinessID(t *testing.T) {
 }
 
 func TestAnalyzeHandler_ReturnsJobID(t *testing.T) {
-	mux := newMux(t, &stubAnalyzer{result: "ok"})
+	mux := newMux(t, &stubAnalyzer{result: "ok"}, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/analyze?business_id=biz1", nil)
 
@@ -88,7 +100,7 @@ func TestAnalyzeHandler_ReturnsJobID(t *testing.T) {
 // --- /results/{job_id} ---
 
 func TestResultsHandler_UnknownJob(t *testing.T) {
-	mux := newMux(t, &stubAnalyzer{})
+	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/results/doesnotexist", nil)
 
@@ -101,7 +113,7 @@ func TestResultsHandler_UnknownJob(t *testing.T) {
 
 func TestResultsHandler_PendingJob(t *testing.T) {
 	// Use a long delay so runAnalysis is still in-flight when we query.
-	mux := newMux(t, &stubAnalyzer{delay: 10 * time.Second})
+	mux := newMux(t, &stubAnalyzer{delay: 10 * time.Second}, nil)
 
 	// Create a job.
 	rec := httptest.NewRecorder()
@@ -137,7 +149,7 @@ func TestResultsHandler_PendingJob(t *testing.T) {
 // --- /reviews ---
 
 func TestReviewsHandler_MissingBusinessID(t *testing.T) {
-	mux := newMux(t, &stubAnalyzer{})
+	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/reviews", nil)
 
@@ -151,7 +163,7 @@ func TestReviewsHandler_MissingBusinessID(t *testing.T) {
 func TestReviewsHandler_ArchiveMissing(t *testing.T) {
 	// In the integration test environment the archive is not present, so the
 	// handler should respond with 500 and not panic.
-	mux := newMux(t, &stubAnalyzer{})
+	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/reviews?business_id=biz1", nil)
 
@@ -159,5 +171,71 @@ func TestReviewsHandler_ArchiveMissing(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- /search ---
+
+func TestSearchHandler_NoSearcherConfigured(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestSearchHandler_MissingQuery(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSearchHandler_ReturnsBusinessIDs(t *testing.T) {
+	stub := &stubSearcher{
+		result: search.SearchResult{BusinessIDs: []string{"biz1", "biz2"}},
+	}
+	mux := newMux(t, &stubAnalyzer{}, stub)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp struct {
+		BusinessIDs []string `json:"business_ids"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.BusinessIDs) != 2 {
+		t.Errorf("got %d business_ids, want 2", len(resp.BusinessIDs))
+	}
+}
+
+func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{}})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=noresults", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	// Ensure response is {"business_ids":[]} not {"business_ids":null}
+	body := rec.Body.String()
+	if body == "" {
+		t.Fatal("empty response body")
+	}
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if string(resp["business_ids"]) == "null" {
+		t.Error("business_ids should be [] not null")
 	}
 }

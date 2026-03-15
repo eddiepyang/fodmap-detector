@@ -146,6 +146,48 @@ func GetReviewsByBusiness(businessID string) ([]schemas.ReviewSchemaS, error) {
 	return nil, fmt.Errorf("review file not found in archive")
 }
 
+// GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
+// The caller can use the map for O(1) lookups when joining reviews with business metadata.
+func GetBusinessMap() (map[string]schemas.BusinessSchemaS, error) {
+	files, err := os.Open(archiveGz)
+	if err != nil {
+		return nil, fmt.Errorf("opening archive: %w", err)
+	}
+	defer files.Close()
+
+	archiveFiles := tar.NewReader(files)
+	for {
+		file, err := archiveFiles.Next()
+		if err == goio.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tar: %w", err)
+		}
+		if !strings.Contains(file.Name, "business") {
+			continue
+		}
+
+		scanner := bufio.NewScanner(archiveFiles)
+		buf := make([]byte, 4*1024*1024)
+		scanner.Buffer(buf, 4*1024*1024)
+
+		businesses := make(map[string]schemas.BusinessSchemaS)
+		for scanner.Scan() {
+			var b schemas.BusinessSchemaS
+			if err := json.Unmarshal(scanner.Bytes(), &b); err != nil {
+				continue
+			}
+			businesses[b.BusinessId] = b
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scanning archive: %w", err)
+		}
+		return businesses, nil
+	}
+	return nil, fmt.Errorf("business file not found in archive")
+}
+
 func ListDir() {
 	files, err := os.ReadDir("../../../data/")
 	if err != nil {

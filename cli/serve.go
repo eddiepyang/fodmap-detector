@@ -17,9 +17,12 @@ var serveCmd = &cobra.Command{
 		port, _ := cmd.Flags().GetInt("port")
 		promptPath, _ := cmd.Flags().GetString("prompt")
 
+		weaviateHost, _ := cmd.Flags().GetString("weaviate")
+
 		srv, err := server.New(context.Background(), server.Config{
-			Port:       port,
-			PromptPath: promptPath,
+			Port:         port,
+			PromptPath:   promptPath,
+			WeaviateHost: weaviateHost,
 		})
 		if err != nil {
 			slog.Error("failed to initialize server", "error", err)
@@ -36,4 +39,5 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
 	serveCmd.Flags().String("prompt", "./prompt.txt", "Path to the LLM prompt template")
+	serveCmd.Flags().String("weaviate", "", "Weaviate host:port (e.g. localhost:8090); omit to disable search")
 }

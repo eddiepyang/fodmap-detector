@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"fodmap/data/schemas"
+	"fodmap/search"
 )
 
 // Analyzer is the interface satisfied by LLMClient. Extracted so the server
@@ -15,15 +16,23 @@ type Analyzer interface {
 	Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS) (string, error)
 }
 
+// Searcher is the interface satisfied by search.Client. Extracted so the server
+// can be constructed with a stub in tests.
+type Searcher interface {
+	Search(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
+}
+
 type Server struct {
-	store *JobStore
-	llm   Analyzer
-	port  int
+	store    *JobStore
+	llm      Analyzer
+	searcher Searcher // nil when Weaviate is not configured
+	port     int
 }
 
 type Config struct {
-	Port       int
-	PromptPath string
+	Port         int
+	PromptPath   string
+	WeaviateHost string // optional; if empty, the search endpoint returns 503
 }
 
 // New initialises the LLM client and job store. Returns an error if
@@ -33,17 +42,30 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initializing LLM client: %w", err)
 	}
-	return &Server{
+
+	s := &Server{
 		store: NewJobStore(),
 		llm:   llm,
 		port:  cfg.Port,
-	}, nil
+	}
+
+	if cfg.WeaviateHost != "" {
+		sc, err := search.NewClient(cfg.WeaviateHost)
+		if err != nil {
+			return nil, fmt.Errorf("initializing weaviate client: %w", err)
+		}
+		s.searcher = sc
+		slog.Info("weaviate search enabled", "host", cfg.WeaviateHost)
+	}
+
+	return s, nil
 }
 
-// NewServer creates a Server with the provided Analyzer. Intended for tests
-// where the real LLM client should not be initialised.
-func NewServer(llm Analyzer, port int) *Server {
-	return &Server{store: NewJobStore(), llm: llm, port: port}
+// NewServer creates a Server with the provided Analyzer and Searcher. Intended for tests
+// where the real LLM and Weaviate clients should not be initialised. Pass nil for searcher
+// to disable the search endpoint.
+func NewServer(llm Analyzer, searcher Searcher, port int) *Server {
+	return &Server{store: NewJobStore(), llm: llm, searcher: searcher, port: port}
 }
 
 // Handler returns the HTTP handler with all routes registered.
@@ -52,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /analyze", s.analyzeHandler)
 	mux.HandleFunc("GET /results/{job_id}", s.resultsHandler)
 	mux.HandleFunc("GET /reviews", s.reviewsHandler)
+	mux.HandleFunc("GET /search", s.searchHandler)
 	return mux
 }
 
