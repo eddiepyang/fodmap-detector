@@ -218,6 +218,21 @@ func TestSearchHandler_ReturnsBusinessIDs(t *testing.T) {
 	}
 }
 
+func TestSearchHandler_InvalidLimit(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{BusinessIDs: []string{"biz1"}}})
+
+	cases := []string{"0", "-5", "abc"}
+	for _, limit := range cases {
+		t.Run("limit="+limit, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos&limit="+limit, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("limit=%q: status = %d, want %d", limit, rec.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
 func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{}})
 	rec := httptest.NewRecorder()

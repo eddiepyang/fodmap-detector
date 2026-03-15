@@ -99,9 +99,12 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	limit := 10
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
+		n, err := strconv.Atoi(l)
+		if err != nil || n <= 0 {
+			http.Error(w, `{"error":"limit must be a positive integer"}`, http.StatusBadRequest)
+			return
 		}
+		limit = n
 	}
 
 	filter := search.SearchFilter{
