@@ -91,9 +91,9 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := r.URL.Query().Get("q")
+	q := r.PathValue("query")
 	if q == "" {
-		http.Error(w, `{"error":"q query parameter is required"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"search query is required"}`, http.StatusBadRequest)
 		return
 	}
 

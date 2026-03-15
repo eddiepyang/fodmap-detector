@@ -12,17 +12,17 @@ func makeData(items []struct {
 	businessID string
 	certainty  float64
 }) map[string]models.JSONObject {
-	rawItems := make([]interface{}, len(items))
+	rawItems := make([]any, len(items))
 	for i, item := range items {
-		rawItems[i] = map[string]interface{}{
+		rawItems[i] = map[string]any{
 			"businessId": item.businessID,
-			"_additional": map[string]interface{}{
+			"_additional": map[string]any{
 				"certainty": item.certainty,
 			},
 		}
 	}
 	return map[string]models.JSONObject{
-		"Get": map[string]interface{}{
+		"Get": map[string]any{
 			collectionName: rawItems,
 		},
 	}

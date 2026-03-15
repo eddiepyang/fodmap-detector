@@ -26,7 +26,7 @@ func WriteEventFile(scanner *bufio.Scanner, writePath string, outputSchema strin
 
 	for scanner.Scan() {
 		// Create a new map for each record
-		var avroMap map[string]interface{}
+		var avroMap map[string]any
 
 		if err := json.Unmarshal(scanner.Bytes(), &avroMap); err != nil {
 			slog.Error("failed to unmarshal record", "error", err)
@@ -69,7 +69,7 @@ func ReadFile(filePath string) error {
 	}
 
 	for decoder.HasNext() {
-		var datum interface{}
+		var datum any
 		if err := decoder.Decode(&datum); err != nil {
 			return err
 		}

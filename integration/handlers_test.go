@@ -179,7 +179,7 @@ func TestReviewsHandler_ArchiveMissing(t *testing.T) {
 func TestSearchHandler_NoSearcherConfigured(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos", nil))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
@@ -189,7 +189,7 @@ func TestSearchHandler_NoSearcherConfigured(t *testing.T) {
 func TestSearchHandler_MissingQuery(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{})
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/", nil))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -202,7 +202,7 @@ func TestSearchHandler_ReturnsBusinessIDs(t *testing.T) {
 	}
 	mux := newMux(t, &stubAnalyzer{}, stub)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -225,7 +225,7 @@ func TestSearchHandler_InvalidLimit(t *testing.T) {
 	for _, limit := range cases {
 		t.Run("limit="+limit, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=tacos&limit="+limit, nil))
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos?limit="+limit, nil))
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("limit=%q: status = %d, want %d", limit, rec.Code, http.StatusBadRequest)
 			}
@@ -236,7 +236,7 @@ func TestSearchHandler_InvalidLimit(t *testing.T) {
 func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{}})
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=noresults", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/noresults", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)

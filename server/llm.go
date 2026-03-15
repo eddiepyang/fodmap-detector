@@ -100,14 +100,12 @@ func (l *LLMClient) Analyze(ctx context.Context, reviews []schemas.ReviewSchemaS
 
 	var wg sync.WaitGroup
 	for range analysisWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for work := range workCh {
 				out, err := l.callGemini(ctx, work.chunk)
 				resultCh <- chunkResult{index: work.index, output: out, err: err}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

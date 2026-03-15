@@ -67,7 +67,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── docs/
 │   └── search.md            # Search service design decisions and API reference
 │
-└── docker-compose.yml       # Weaviate + t2v-transformers services
+└── docker-compose.yaml      # Weaviate + t2v-transformers services
 ```
 
 ---
@@ -115,6 +115,14 @@ WriteEventFile()        WriteBatchParquet()
 
 ## Running
 
+### Prerequisites
+
+Docker Engine with the Compose plugin is required. On Ubuntu, if `docker compose` is not found:
+
+```sh
+sudo apt-get install docker-compose-v2
+```
+
 ### 1. Start Weaviate (required for search)
 
 ```sh
@@ -161,7 +169,7 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 | `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
 | `GET` | `/results/{job_id}` | Poll analysis results |
 | `GET` | `/reviews` | List reviews for a business |
-| `GET` | `/search` | Semantic restaurant search (requires Weaviate) |
+| `GET` | `/search/{query}` | Semantic restaurant search (requires Weaviate) |
 
 #### Search endpoint
 
@@ -169,16 +177,16 @@ Find restaurants matching a natural-language description:
 
 ```sh
 # Basic search — returns top 10 business IDs by relevance
-curl "localhost:8080/search?q=cozy+Italian+with+great+pasta"
+curl "localhost:8080/search/cozy Italian with great pasta"
 
 # Filter by category
-curl "localhost:8080/search?q=best+tacos&category=Mexican"
+curl "localhost:8080/search/best tacos?category=Mexican"
 
 # Filter by city and state
-curl "localhost:8080/search?q=romantic+dinner&city=Las+Vegas&state=NV"
+curl "localhost:8080/search/romantic dinner?city=Las Vegas&state=NV"
 
 # Combine all filters with a custom limit
-curl "localhost:8080/search?q=outdoor+patio+brunch&category=Breakfast&city=Phoenix&state=AZ&limit=5"
+curl "localhost:8080/search/outdoor patio brunch?category=Breakfast&city=Phoenix&state=AZ&limit=5"
 ```
 
 **Response:**

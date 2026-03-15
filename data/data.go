@@ -211,40 +211,30 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) {
 		return
 	}
 	inChan := make(chan io.ParseResult, 3)
-	doneCh := make(chan struct{})
 
-	go func() {
-		io.ReadToChan(UnmarshalReview, inChan, doneCh, fileScanner, writeStopRowBatch)
-	}()
+	go io.ReadToChan(UnmarshalReview, inChan, fileScanner, writeStopRowBatch)
 
 	var parseErrors int
-L:
-	for {
-		select {
-		case <-doneCh:
-			if err := pw.WriteStop(); err != nil {
-				slog.Error("WriteStop error", "error", err)
-			}
-			break L
-
-		case item := <-inChan:
-			if item.Err != nil {
-				parseErrors++
-				slog.Error("skipping record due to parse error", "error", item.Err)
-				continue
-			}
-			err = pw.Write(item.Record)
-			if err != nil {
-				slog.Error("error writing to parquet", "error", err)
-				panic(fmt.Sprintf("error writing to parquet: %v", err))
-			}
+	for item := range inChan {
+		if item.Err != nil {
+			parseErrors++
+			slog.Error("skipping record due to parse error", "error", item.Err)
+			continue
 		}
+		if err = pw.Write(item.Record); err != nil {
+			slog.Error("error writing to parquet", "error", err)
+			panic(fmt.Sprintf("error writing to parquet: %v", err))
+		}
+	}
+
+	if err := pw.WriteStop(); err != nil {
+		slog.Error("WriteStop error", "error", err)
 	}
 
 	slog.Info("process completed", "duration", time.Since(start), "file", outFile, "parse_errors", parseErrors)
 }
 
-func ReadParquet(fileName string, earlyStop int64) (interface{}, error) {
+func ReadParquet(fileName string, earlyStop int64) (any, error) {
 	fr, err := local.NewLocalFileReader(fileName)
 	if err != nil {
 		slog.Error("can't open file", "error", err)

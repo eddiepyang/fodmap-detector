@@ -74,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /analyze", s.analyzeHandler)
 	mux.HandleFunc("GET /results/{job_id}", s.resultsHandler)
 	mux.HandleFunc("GET /reviews", s.reviewsHandler)
-	mux.HandleFunc("GET /search", s.searchHandler)
+	mux.HandleFunc("GET /search/{query...}", s.searchHandler)
 	return mux
 }
 
