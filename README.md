@@ -158,6 +158,9 @@ go run ./cmd/cli index --archive /data/yelp_dataset.tar
 
 # Disable checkpointing
 go run ./cmd/cli index --checkpoint ""
+
+# Start from a known offset (e.g. after processing 2,155,100 reviews)
+go run ./cmd/cli index --start-offset 2155100
 ```
 
 ### 3. Start the HTTP server
@@ -235,6 +238,7 @@ go run ./cmd/cli index --weaviate localhost:8090
 | `--workers` | `4` | Concurrent batch upload goroutines |
 | `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
 | `--checkpoint` | `index.checkpoint` | Checkpoint file path (empty string disables) |
+| `--start-offset` | `0` | Skip this many reviews before indexing (overrides checkpoint) |
 
 ##### Parquet (batch)
 

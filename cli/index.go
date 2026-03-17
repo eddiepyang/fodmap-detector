@@ -31,6 +31,7 @@ func init() {
 	indexCmd.Flags().Int("workers", 4, "Number of concurrent batch upload goroutines")
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
+	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
 }
 
 func runIndex(cmd *cobra.Command, _ []string) error {
@@ -39,6 +40,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	numWorkers, _ := cmd.Flags().GetInt("workers")
 	archivePath, _ := cmd.Flags().GetString("archive")
 	checkpointPath, _ := cmd.Flags().GetString("checkpoint")
+	startOffset, _ := cmd.Flags().GetInt("start-offset")
 	ctx := context.Background()
 
 	client, err := search.NewClient(host)
@@ -58,7 +60,10 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	slog.Info("business metadata loaded", "count", len(businessMap))
 
 	offset := 0
-	if checkpointPath != "" {
+	if startOffset > 0 {
+		offset = startOffset
+		slog.Info("starting from explicit offset", "offset", offset)
+	} else if checkpointPath != "" {
 		offset, err = readCheckpoint(checkpointPath)
 		if err != nil {
 			return fmt.Errorf("reading checkpoint: %w", err)
