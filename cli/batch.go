@@ -16,7 +16,7 @@ var batchCmd = &cobra.Command{
 		if outputFile == "" {
 			outputFile = "test.parquet"
 		}
-		fileScanner, closer, err := data.GetArchive("review")
+		fileScanner, closer, err := data.GetArchive(data.DefaultArchivePath, "review")
 		if err != nil {
 			return fmt.Errorf("opening archive: %w", err)
 		}
