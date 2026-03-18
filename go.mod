@@ -1,9 +1,8 @@
 module fodmap
 
-go 1.26.1
+go 1.25.0
 
 require (
-	github.com/davecgh/go-spew v1.1.1
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/google/uuid v1.6.0
 	github.com/hamba/avro/v2 v2.30.0

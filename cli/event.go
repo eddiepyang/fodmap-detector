@@ -25,7 +25,7 @@ var eventWriteCmd = &cobra.Command{
 		if outputFile == "" {
 			outputFile = "test.avro"
 		}
-		fileScanner, closer, err := data.GetArchive("review")
+		fileScanner, closer, err := data.GetArchive(data.DefaultArchivePath, "review")
 		if err != nil {
 			return fmt.Errorf("opening archive: %w", err)
 		}
