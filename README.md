@@ -63,7 +63,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   └── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
 │
 ├── docs/
-│   └── search.md            # Search service design decisions and API reference
+│   ├── search.md                    # Search service design decisions and API reference
+│   └── indexing-improvements.md     # Indexing performance tuning plan
 │
 └── docker-compose.yaml      # Weaviate + t2v-transformers services
 ```
@@ -93,7 +94,7 @@ type Review struct {
 data/archive.tar.gz  (Yelp JSON lines, gzip-compressed)
         |
         v
-   GetArchive("review")  ->  *bufio.Scanner
+   GetArchive(path, "review")  ->  *bufio.Scanner
         |
    +----+--------------------+
    |                         |
@@ -141,11 +142,25 @@ go run ./cmd/cli index --weaviate localhost:8090
 ```
 
 This reads the full Yelp archive, joins reviews with business metadata (city, state, categories),
-and upserts them to Weaviate in batches of 100. The command is idempotent — safe to re-run.
+and upserts them to Weaviate in batches of 500 using 4 concurrent upload workers. The command is
+idempotent — safe to re-run. A checkpoint file (`index.checkpoint`) is written after each batch so
+an interrupted run resumes from where it left off rather than starting over.
 
 ```sh
-# Custom batch size
-go run ./cmd/cli index --weaviate localhost:8090 --batch-size 500
+# Custom tuning
+go run ./cmd/cli index --weaviate localhost:8090 --batch-size 1000 --workers 8
+
+# Resume from a specific checkpoint file
+go run ./cmd/cli index --checkpoint /tmp/my.checkpoint
+
+# Point to a different archive
+go run ./cmd/cli index --archive /data/yelp_dataset.tar
+
+# Disable checkpointing
+go run ./cmd/cli index --checkpoint ""
+
+# Start from a known offset (e.g. after processing 2,155,100 reviews)
+go run ./cmd/cli index --start-offset 2155100
 ```
 
 ### 3. Start the HTTP server
@@ -219,7 +234,11 @@ go run ./cmd/cli index --weaviate localhost:8090
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `100` | Reviews per batch |
+| `--batch-size` | `500` | Reviews per batch |
+| `--workers` | `4` | Concurrent batch upload goroutines |
+| `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
+| `--checkpoint` | `index.checkpoint` | Checkpoint file path (empty string disables) |
+| `--start-offset` | `0` | Skip this many reviews before indexing (overrides checkpoint) |
 
 ##### Parquet (batch)
 

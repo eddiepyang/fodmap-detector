@@ -22,10 +22,10 @@ import (
 	"github.com/xitongsys/parquet-go/writer"
 )
 
-const (
-	archiveGz         = "./data/archive.tar.gz"
-	writeStopRowBatch = 100
-)
+// DefaultArchivePath is the default path to the Yelp dataset TAR archive.
+const DefaultArchivePath = "../data/yelp_dataset.tar"
+
+const writeStopRowBatch = 100
 
 // UnmarshalReview parses a single JSONL review record from inputBytes.
 func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review, error) {
@@ -36,12 +36,12 @@ func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review,
 	return *jsonl, nil
 }
 
-// GetArchive opens the archive and returns a scanner positioned at the first
-// entry whose name contains fileName, along with a closer for the underlying
-// file. The caller must call Close() when done. Returns an error if the
-// archive cannot be opened or the entry is not found.
-func GetArchive(fileName string) (*bufio.Scanner, goio.Closer, error) {
-	files, err := os.Open(archiveGz)
+// GetArchive opens the archive at archivePath and returns a scanner positioned
+// at the first entry whose name contains fileName, along with a closer for the
+// underlying file. The caller must call Close() when done. Returns an error if
+// the archive cannot be opened or the entry is not found.
+func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, error) {
+	files, err := os.Open(archivePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening archive: %w", err)
 	}
@@ -65,7 +65,7 @@ func GetArchive(fileName string) (*bufio.Scanner, goio.Closer, error) {
 
 // GetReviewsByBusiness returns all reviews in the archive for the given businessID.
 func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
-	files, err := os.Open(archiveGz)
+	files, err := os.Open(DefaultArchivePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
@@ -109,7 +109,7 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 // GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
 // The caller can use the map for O(1) lookups when joining reviews with business metadata.
 func GetBusinessMap() (map[string]schemas.Business, error) {
-	files, err := os.Open(archiveGz)
+	files, err := os.Open(DefaultArchivePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
