@@ -100,7 +100,7 @@ type Business struct {
 }
 ```
 
-The Avro streaming schema (`EventSchema`) mirrors the `Review` struct — it carries `business_id` but not the business name. The business name must be joined from the business dataset at query time.
+The Avro streaming schema (`EventSchema`) mirrors the `Review` struct and carries `business_id` but not the business name. During indexing, the name is joined from the business dataset and stored in Weaviate so search results include it directly.
 
 ---
 
@@ -221,11 +221,13 @@ curl "localhost:8080/search/outdoor patio brunch?category=Breakfast&city=Phoenix
 **Response:**
 ```json
 {
-  "business_ids": ["abc123", "def456", "ghi789"]
+  "businesses": [
+    {"id": "abc123", "name": "Joe's Diner"},
+    {"id": "def456", "name": "Pasta Palace"},
+    {"id": "ghi789", "name": "Taco Town"}
+  ]
 }
 ```
-
-The response contains business IDs, not names. Callers that need human-readable names must look them up in `yelp_academic_dataset_business.json`.
 
 Business IDs are ranked by **Top-K average similarity** — the average of the top 5 most relevant
 reviews per restaurant. This avoids both volume bias (popular chains don't dominate) and outlier

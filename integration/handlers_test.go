@@ -196,9 +196,12 @@ func TestSearchHandler_MissingQuery(t *testing.T) {
 	}
 }
 
-func TestSearchHandler_ReturnsBusinessIDs(t *testing.T) {
+func TestSearchHandler_ReturnsBusinesses(t *testing.T) {
 	stub := &stubSearcher{
-		result: search.SearchResult{BusinessIDs: []string{"biz1", "biz2"}},
+		result: search.SearchResult{Businesses: []search.BusinessResult{
+			{ID: "biz1", Name: "Biz One"},
+			{ID: "biz2", Name: "Biz Two"},
+		}},
 	}
 	mux := newMux(t, &stubAnalyzer{}, stub)
 	rec := httptest.NewRecorder()
@@ -208,18 +211,24 @@ func TestSearchHandler_ReturnsBusinessIDs(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	var resp struct {
-		BusinessIDs []string `json:"business_ids"`
+		Businesses []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"businesses"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(resp.BusinessIDs) != 2 {
-		t.Errorf("got %d business_ids, want 2", len(resp.BusinessIDs))
+	if len(resp.Businesses) != 2 {
+		t.Errorf("got %d businesses, want 2", len(resp.Businesses))
+	}
+	if resp.Businesses[0].Name != "Biz One" {
+		t.Errorf("got name %q, want %q", resp.Businesses[0].Name, "Biz One")
 	}
 }
 
 func TestSearchHandler_InvalidLimit(t *testing.T) {
-	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{BusinessIDs: []string{"biz1"}}})
+	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{Businesses: []search.BusinessResult{{ID: "biz1", Name: "Biz One"}}}})
 
 	cases := []string{"0", "-5", "abc"}
 	for _, limit := range cases {
@@ -241,7 +250,7 @@ func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	// Ensure response is {"business_ids":[]} not {"business_ids":null}
+	// Ensure response is {"businesses":[]} not {"businesses":null}
 	body := rec.Body.String()
 	if body == "" {
 		t.Fatal("empty response body")
@@ -250,7 +259,7 @@ func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if string(resp["business_ids"]) == "null" {
-		t.Error("business_ids should be [] not null")
+	if string(resp["businesses"]) == "null" {
+		t.Error("businesses should be [] not null")
 	}
 }

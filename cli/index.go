@@ -136,6 +136,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 
 		item := search.IndexItem{Review: r}
 		if biz, ok := businessMap[r.BusinessID]; ok {
+			item.BusinessName = biz.Name
 			item.City = biz.City
 			item.State = biz.State
 			item.Categories = biz.Categories
