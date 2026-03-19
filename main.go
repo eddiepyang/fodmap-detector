@@ -12,8 +12,9 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 
 	srv, err := server.New(context.Background(), server.Config{
-		Port:       8080,
-		PromptPath: "./prompt.txt",
+		Port:         8080,
+		PromptPath:   "./prompt.txt",
+		WeaviateHost: os.Getenv("WEAVIATE_HOST"),
 	})
 	if err != nil {
 		slog.Error("failed to initialize server", "error", err)

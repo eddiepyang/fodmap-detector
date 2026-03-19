@@ -132,11 +132,14 @@ EventWriter.Write()     WriteBatchParquet()
 
 ### Prerequisites
 
-Docker Engine with the Compose plugin is required. On Ubuntu, if `docker compose` is not found:
-
-```sh
-sudo apt-get install docker-compose-v2
-```
+- **Docker Engine** with the Compose plugin. On Ubuntu, if `docker compose` is not found:
+  ```sh
+  sudo apt-get install docker-compose-v2
+  ```
+- **`GEMINI_API_KEY`** — required to start the HTTP server (used by the `/analyze` endpoint). Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
+  ```sh
+  export GEMINI_API_KEY=your_key_here
+  ```
 
 ### 1. Start Weaviate (required for search)
 
@@ -181,12 +184,14 @@ go run ./cmd/cli index --start-offset 2155100
 
 ### 3. Start the HTTP server
 
+`GEMINI_API_KEY` must be set in the environment before starting.
+
 ```sh
 # With search enabled
-go run . serve --weaviate localhost:8090
+GEMINI_API_KEY=your_key go run . serve --weaviate localhost:8090
 
 # Without search (search endpoint returns 503)
-go run . serve
+GEMINI_API_KEY=your_key go run . serve
 ```
 
 Default port is `8080`. Default prompt path is `./prompt.txt`.
@@ -205,17 +210,17 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 Find restaurants matching a natural-language description:
 
 ```sh
-# Basic search — returns top 10 business IDs by relevance
-curl "localhost:8080/search/cozy Italian with great pasta"
+# Basic search — returns top 10 businesses by relevance
+curl "localhost:8080/search/cozy%20Italian%20with%20great%20pasta"
 
 # Filter by category
-curl "localhost:8080/search/best tacos?category=Mexican"
+curl "localhost:8080/search/best%20tacos?category=Mexican"
 
 # Filter by city and state
-curl "localhost:8080/search/romantic dinner?city=Las Vegas&state=NV"
+curl "localhost:8080/search/romantic%20dinner?city=Las%20Vegas&state=NV"
 
 # Combine all filters with a custom limit
-curl "localhost:8080/search/outdoor patio brunch?category=Breakfast&city=Phoenix&state=AZ&limit=5"
+curl "localhost:8080/search/outdoor%20patio%20brunch?category=Breakfast&city=Phoenix&state=AZ&limit=5"
 ```
 
 **Response:**
