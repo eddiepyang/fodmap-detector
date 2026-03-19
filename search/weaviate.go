@@ -26,9 +26,15 @@ type Client struct {
 	wv *weaviate.Client
 }
 
-// SearchResult holds the ranked list of business IDs returned by a search query.
+// BusinessResult pairs a business ID with its human-readable name.
+type BusinessResult struct {
+	ID   string
+	Name string
+}
+
+// SearchResult holds the ranked list of businesses returned by a search query.
 type SearchResult struct {
-	BusinessIDs []string
+	Businesses []BusinessResult
 }
 
 // SearchFilter holds optional filters to narrow the search by category, city, and/or state.
@@ -40,10 +46,11 @@ type SearchFilter struct {
 
 // IndexItem pairs a review with its associated business metadata for indexing.
 type IndexItem struct {
-	Review     schemas.Review
-	City       string
-	State      string
-	Categories string
+	Review       schemas.Review
+	BusinessName string
+	City         string
+	State        string
+	Categories   string
 }
 
 // NewClient creates a Weaviate client connected to the given host (e.g. "localhost:8090").
@@ -86,6 +93,7 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 			{Name: "city", DataType: []string{"text"}, ModuleConfig: skip},
 			{Name: "state", DataType: []string{"text"}, ModuleConfig: skip},
 			{Name: "categories", DataType: []string{"text"}, ModuleConfig: skip},
+			{Name: "businessName", DataType: []string{"text"}, ModuleConfig: skip},
 			// text is NOT skipped — this is the field that gets vectorized
 			{Name: "text", DataType: []string{"text"}},
 		},
@@ -107,13 +115,14 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 			Class: collectionName,
 			ID:    strfmt.UUID(id),
 			Properties: map[string]any{
-				"reviewId":   item.Review.ReviewID,
-				"businessId": item.Review.BusinessID,
-				"stars":      item.Review.Stars,
-				"text":       item.Review.Text,
-				"city":       item.City,
-				"state":      item.State,
-				"categories": item.Categories,
+				"reviewId":     item.Review.ReviewID,
+				"businessId":   item.Review.BusinessID,
+				"businessName": item.BusinessName,
+				"stars":        item.Review.Stars,
+				"text":         item.Review.Text,
+				"city":         item.City,
+				"state":        item.State,
+				"categories":   item.Categories,
 			},
 		})
 	}
@@ -136,6 +145,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 func (c *Client) Search(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	fields := []graphql.Field{
 		{Name: "businessId"},
+		{Name: "businessName"},
 		{Name: "_additional { certainty }"},
 	}
 
@@ -200,27 +210,31 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 }
 
 // aggregateTopK groups review certainty scores by businessId, averages the top K per restaurant,
-// then returns the top `limit` business IDs sorted by that average (descending).
+// then returns the top `limit` businesses sorted by that average (descending).
 func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	getRaw, ok := data["Get"]
 	if !ok {
-		return SearchResult{BusinessIDs: []string{}}
+		return SearchResult{Businesses: []BusinessResult{}}
 	}
 	getMap, ok := getRaw.(map[string]any)
 	if !ok {
-		return SearchResult{BusinessIDs: []string{}}
+		return SearchResult{Businesses: []BusinessResult{}}
 	}
 	rawItems, ok := getMap[collectionName]
 	if !ok {
-		return SearchResult{BusinessIDs: []string{}}
+		return SearchResult{Businesses: []BusinessResult{}}
 	}
 	items, ok := rawItems.([]any)
 	if !ok {
-		return SearchResult{BusinessIDs: []string{}}
+		return SearchResult{Businesses: []BusinessResult{}}
 	}
 
-	// Collect certainty scores per business.
-	scores := make(map[string][]float64)
+	// Collect certainty scores and name per business.
+	type bizEntry struct {
+		name   string
+		scores []float64
+	}
+	entries := make(map[string]*bizEntry)
 	for _, raw := range items {
 		obj, ok := raw.(map[string]any)
 		if !ok {
@@ -235,30 +249,38 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			continue
 		}
 		certainty, _ := additional["certainty"].(float64)
-		scores[businessID] = append(scores[businessID], certainty)
+		e := entries[businessID]
+		if e == nil {
+			name, _ := obj["businessName"].(string)
+			e = &bizEntry{name: name}
+			entries[businessID] = e
+		}
+		e.scores = append(e.scores, certainty)
 	}
 
 	// Compute top-K average per business.
 	type ranked struct {
 		id    string
+		name  string
 		score float64
 	}
-	results := make([]ranked, 0, len(scores))
-	for id, s := range scores {
+	results := make([]ranked, 0, len(entries))
+	for id, e := range entries {
+		s := e.scores
 		sort.Slice(s, func(i, j int) bool { return s[i] > s[j] })
 		k := min(topKReviews, len(s))
 		var sum float64
 		for i := range k {
 			sum += s[i]
 		}
-		results = append(results, ranked{id: id, score: sum / float64(k)})
+		results = append(results, ranked{id: id, name: e.name, score: sum / float64(k)})
 	}
 
 	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 
-	out := make([]string, 0, min(limit, len(results)))
+	out := make([]BusinessResult, 0, min(limit, len(results)))
 	for i := 0; i < limit && i < len(results); i++ {
-		out = append(out, results[i].id)
+		out = append(out, BusinessResult{ID: results[i].id, Name: results[i].name})
 	}
-	return SearchResult{BusinessIDs: out}
+	return SearchResult{Businesses: out}
 }

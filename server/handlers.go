@@ -127,12 +127,20 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure JSON encodes [] not null when there are no results.
-	if result.BusinessIDs == nil {
-		result.BusinessIDs = []string{}
+	if result.Businesses == nil {
+		result.Businesses = []search.BusinessResult{}
 	}
 
+	type business struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	out := make([]business, len(result.Businesses))
+	for i, b := range result.Businesses {
+		out[i] = business{ID: b.ID, Name: b.Name}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string][]string{"business_ids": result.BusinessIDs}); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string][]business{"businesses": out}); err != nil {
 		slog.Error("encode error", "error", err)
 	}
 }
