@@ -105,7 +105,7 @@ func TestWriteAndReadParquet(t *testing.T) {
 	path := t.TempDir() + "/test.parquet"
 
 	scanner := bufio.NewScanner(strings.NewReader(testReviewsJSONL))
-	if err := WriteBatchParquet(path, scanner); err != nil {
+	if err := WriteBatchParquet(path, scanner, 0); err != nil {
 		t.Fatalf("WriteBatchParquet: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestReadParquet_EarlyStop(t *testing.T) {
 	path := t.TempDir() + "/test.parquet"
 
 	scanner := bufio.NewScanner(strings.NewReader(testReviewsJSONL))
-	if err := WriteBatchParquet(path, scanner); err != nil {
+	if err := WriteBatchParquet(path, scanner, 0); err != nil {
 		t.Fatalf("WriteBatchParquet: %v", err)
 	}
 

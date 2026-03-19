@@ -73,18 +73,34 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 ## Core Data Model
 
+Reviews reference businesses by ID only. The business name and location metadata live in a separate dataset file.
+
 ```go
+// Review holds a single review record. BusinessID is a foreign key into the business dataset —
+// the business name is NOT present here.
 type Review struct {
     ReviewID   string  // Yelp review ID
     UserID     string  // Reviewer user ID
-    BusinessID string  // Restaurant/business ID
+    BusinessID string  // Foreign key — look up name/location in Business
     Stars      float32 // Rating (1-5)
     Useful     int32   // Usefulness votes
     Funny      int32   // Funny votes
     Cool       int32   // Cool votes
     Text       string  // Full review text
 }
+
+// Business holds metadata from yelp_academic_dataset_business.json.
+// Required to resolve a BusinessID to a human-readable name.
+type Business struct {
+    BusinessID string // Primary key, matches Review.BusinessID
+    Name       string // Human-readable restaurant/business name
+    City       string
+    State      string
+    Categories string // Comma-separated, e.g. "Italian, Pizza, Restaurants"
+}
 ```
+
+The Avro streaming schema (`EventSchema`) mirrors the `Review` struct — it carries `business_id` but not the business name. The business name must be joined from the business dataset at query time.
 
 ---
 
@@ -209,6 +225,8 @@ curl "localhost:8080/search/outdoor patio brunch?category=Breakfast&city=Phoenix
 }
 ```
 
+The response contains business IDs, not names. Callers that need human-readable names must look them up in `yelp_academic_dataset_business.json`.
+
 Business IDs are ranked by **Top-K average similarity** — the average of the top 5 most relevant
 reviews per restaurant. This avoids both volume bias (popular chains don't dominate) and outlier
 noise (one lucky review can't carry a poor fit).
@@ -243,19 +261,35 @@ go run ./cmd/cli index --weaviate localhost:8090
 ##### Parquet (batch)
 
 ```sh
-# Write reviews from archive to Parquet, then read back 5 rows
-fodmap-detector batch -o output.parquet
+# Write reviews from archive to Parquet
+go run ./cmd/cli batch -o output.parquet
+
+# Limit to 500 records
+go run ./cmd/cli batch -o output.parquet -n 500
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output` | `test.parquet` | Output file path |
+| `-n, --limit` | `0` | Max records to write (0 = no limit) |
 
 ##### Avro (event)
 
 ```sh
 # Write reviews from archive to Avro OCF
-fodmap-detector event write -o output.avro
+go run ./cmd/cli event write -o output.avro
+
+# Limit to 500 records
+go run ./cmd/cli event write -o output.avro -n 500
 
 # Read and dump an Avro file
-fodmap-detector event read -i output.avro
+go run ./cmd/cli event read -i output.avro
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output` | `test.avro` | Output file path |
+| `-n, --limit` | `0` | Max records to write (0 = no limit) |
 
 ##### Global flag
 
