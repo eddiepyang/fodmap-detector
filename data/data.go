@@ -25,8 +25,6 @@ import (
 // DefaultArchivePath is the default path to the Yelp dataset TAR archive.
 const DefaultArchivePath = "../data/yelp_dataset.tar"
 
-const writeStopRowBatch = 100
-
 // UnmarshalReview parses a single JSONL review record from inputBytes.
 func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review, error) {
 	jsonl := &schemas.Review{}
@@ -163,7 +161,7 @@ func ListDir() error {
 
 // WriteBatchParquet reads JSONL records from fileScanner, parses them as Review records,
 // and writes them to outFile in Parquet format. Returns an error if writing fails.
-func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) error {
+func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner, limit int) error {
 	start := time.Now()
 
 	fw, err := local.NewLocalFileWriter(outFile)
@@ -178,7 +176,7 @@ func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner) error {
 	}
 
 	inChan := make(chan io.ParseResult, 3)
-	go io.ReadToChan(UnmarshalReview, inChan, fileScanner, writeStopRowBatch)
+	go io.ReadToChan(UnmarshalReview, inChan, fileScanner, limit)
 
 	var parseErrors int
 	for item := range inChan {

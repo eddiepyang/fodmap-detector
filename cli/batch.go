@@ -16,13 +16,14 @@ var batchCmd = &cobra.Command{
 		if outputFile == "" {
 			outputFile = "test.parquet"
 		}
+		limit, _ := cmd.Flags().GetInt("limit")
 		fileScanner, closer, err := data.GetArchive(data.DefaultArchivePath, "review")
 		if err != nil {
 			return fmt.Errorf("opening archive: %w", err)
 		}
 		defer closer.Close()
 		slog.Info("created fileScanner")
-		if err := data.WriteBatchParquet(outputFile, fileScanner); err != nil {
+		if err := data.WriteBatchParquet(outputFile, fileScanner, limit); err != nil {
 			return fmt.Errorf("writing parquet: %w", err)
 		}
 		slog.Info("created file")
@@ -33,4 +34,5 @@ var batchCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(batchCmd)
 	batchCmd.Flags().StringP("output", "o", "test.parquet", "Output file path")
+	batchCmd.Flags().IntP("limit", "n", 0, "Max records to write (0 = no limit)")
 }

@@ -25,6 +25,7 @@ var eventWriteCmd = &cobra.Command{
 		if outputFile == "" {
 			outputFile = "test.avro"
 		}
+		limit, _ := cmd.Flags().GetInt("limit")
 		fileScanner, closer, err := data.GetArchive(data.DefaultArchivePath, "review")
 		if err != nil {
 			return fmt.Errorf("opening archive: %w", err)
@@ -42,7 +43,10 @@ var eventWriteCmd = &cobra.Command{
 		}
 		defer w.Close()
 
-		for fileScanner.Scan() {
+		for count := 0; fileScanner.Scan(); count++ {
+			if limit > 0 && count >= limit {
+				break
+			}
 			var record map[string]any
 			if err := json.Unmarshal(fileScanner.Bytes(), &record); err != nil {
 				return fmt.Errorf("unmarshal record: %w", err)
@@ -80,5 +84,6 @@ func init() {
 	eventCmd.AddCommand(eventReadCmd)
 
 	eventWriteCmd.Flags().StringP("output", "o", "test.avro", "Output file path")
+	eventWriteCmd.Flags().IntP("limit", "n", 0, "Max records to write (0 = no limit)")
 	eventReadCmd.Flags().StringP("input", "i", "", "Input file path")
 }
