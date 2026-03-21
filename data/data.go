@@ -3,6 +3,7 @@ package data
 import (
 	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,25 +39,37 @@ func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review,
 // at the first entry whose name contains fileName, along with a closer for the
 // underlying file. The caller must call Close() when done. Returns an error if
 // the archive cannot be opened or the entry is not found.
+type multiCloser struct{ a, b goio.Closer }
+
+func (m multiCloser) Close() error { _ = m.a.Close(); return m.b.Close() }
+
 func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, error) {
 	files, err := os.Open(archivePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening archive: %w", err)
 	}
 
-	archiveFiles := tar.NewReader(files)
+	gz, err := gzip.NewReader(files)
+	if err != nil {
+		_ = files.Close()
+		return nil, nil, fmt.Errorf("opening gzip stream: %w", err)
+	}
+
+	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
+			_ = gz.Close()
 			_ = files.Close()
 			return nil, nil, fmt.Errorf("file %q not found in archive", fileName)
 		}
 		if err != nil {
+			_ = gz.Close()
 			_ = files.Close()
 			return nil, nil, fmt.Errorf("reading tar: %w", err)
 		}
 		if strings.Contains(file.Name, fileName) {
-			return bufio.NewScanner(archiveFiles), files, nil
+			return bufio.NewScanner(archiveFiles), multiCloser{gz, files}, nil
 		}
 	}
 }
@@ -69,7 +82,13 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 	}
 	defer files.Close()
 
-	archiveFiles := tar.NewReader(files)
+	gz, err := gzip.NewReader(files)
+	if err != nil {
+		return nil, fmt.Errorf("opening gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
@@ -113,7 +132,13 @@ func GetBusinessMap() (map[string]schemas.Business, error) {
 	}
 	defer files.Close()
 
-	archiveFiles := tar.NewReader(files)
+	gz, err := gzip.NewReader(files)
+	if err != nil {
+		return nil, fmt.Errorf("opening gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
