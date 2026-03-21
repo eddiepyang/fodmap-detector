@@ -28,8 +28,11 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID   string
-	Name string
+	ID    string
+	Name  string
+	City  string
+	State string
+	Score float64
 }
 
 // SearchResult holds the ranked list of businesses returned by a search query.
@@ -146,6 +149,8 @@ func (c *Client) Search(ctx context.Context, query string, limit int, filter Sea
 	fields := []graphql.Field{
 		{Name: "businessId"},
 		{Name: "businessName"},
+		{Name: "city"},
+		{Name: "state"},
 		{Name: "_additional { certainty }"},
 	}
 
@@ -232,6 +237,8 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	// Collect certainty scores and name per business.
 	type bizEntry struct {
 		name   string
+		city   string
+		state  string
 		scores []float64
 	}
 	entries := make(map[string]*bizEntry)
@@ -252,7 +259,9 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		e := entries[businessID]
 		if e == nil {
 			name, _ := obj["businessName"].(string)
-			e = &bizEntry{name: name}
+			city, _ := obj["city"].(string)
+			state, _ := obj["state"].(string)
+			e = &bizEntry{name: name, city: city, state: state}
 			entries[businessID] = e
 		}
 		e.scores = append(e.scores, certainty)
@@ -262,6 +271,8 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	type ranked struct {
 		id    string
 		name  string
+		city  string
+		state string
 		score float64
 	}
 	results := make([]ranked, 0, len(entries))
@@ -273,14 +284,14 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		for i := range k {
 			sum += s[i]
 		}
-		results = append(results, ranked{id: id, name: e.name, score: sum / float64(k)})
+		results = append(results, ranked{id: id, name: e.name, city: e.city, state: e.state, score: sum / float64(k)})
 	}
 
 	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 
 	out := make([]BusinessResult, 0, min(limit, len(results)))
 	for i := 0; i < limit && i < len(results); i++ {
-		out = append(out, BusinessResult{ID: results[i].id, Name: results[i].name})
+		out = append(out, BusinessResult{ID: results[i].id, Name: results[i].name, City: results[i].city, State: results[i].state, Score: results[i].score})
 	}
 	return SearchResult{Businesses: out}
 }

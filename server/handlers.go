@@ -132,12 +132,15 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type business struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID    string  `json:"id"`
+		Name  string  `json:"name"`
+		City  string  `json:"city"`
+		State string  `json:"state"`
+		Score float64 `json:"score"`
 	}
 	out := make([]business, len(result.Businesses))
 	for i, b := range result.Businesses {
-		out[i] = business{ID: b.ID, Name: b.Name}
+		out[i] = business{ID: b.ID, Name: b.Name, City: b.City, State: b.State, Score: b.Score}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string][]business{"businesses": out}); err != nil {
