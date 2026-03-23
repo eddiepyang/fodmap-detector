@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -38,75 +41,82 @@ func init() {
 	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes")
 }
 
-var vectorizerHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var vectorizerHTTPClient = &http.Client{Timeout: 5 * time.Minute}
 
-type transformerRequest struct {
-	Text   string                `json:"text"`
-	Config transformerReqConfig  `json:"config"`
+type batchRequest struct {
+	Texts []string `json:"texts"`
 }
 
-type transformerReqConfig struct {
-	PoolingStrategy string `json:"pooling_strategy"`
-}
-
-type transformerResponse struct {
-	Vector []float32 `json:"vector"`
-	Error  string    `json:"error"`
-}
-
-// vectorizeBatch calls the transformer sidecar directly for all items concurrently,
-// setting each item's Vector field. Concurrent requests arrive within
-// BATCH_WAIT_TIME_SECONDS and are batched by the transformer for a single GPU pass.
-func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) error {
-	type result struct {
-		idx int
-		vec []float32
-		err error
+// decodeFloat32Vectors reads a binary stream of the form
+// [header (headerLen bytes of uint32 LE fields)][float32 LE data].
+// The first uint32 is the number of rows, the second is the dimension.
+// Returns the decoded vectors as a slice of []float32.
+func decodeFloat32Vectors(r io.Reader, header []byte) ([][]float32, error) {
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, fmt.Errorf("read header: %w", err)
 	}
-	ch := make(chan result, len(items))
-	var wg sync.WaitGroup
-	for i, item := range items {
-		wg.Go(func() {
-			body, err := json.Marshal(transformerRequest{
-				Text:   item.Review.Text,
-				Config: transformerReqConfig{PoolingStrategy: "masked_mean"},
-			})
-			if err != nil {
-				ch <- result{idx: i, err: err}
-				return
-			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				"http://"+host+"/vectors", bytes.NewReader(body))
-			if err != nil {
-				ch <- result{idx: i, err: err}
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			resp, err := vectorizerHTTPClient.Do(req)
-			if err != nil {
-				ch <- result{idx: i, err: err}
-				return
-			}
-			defer resp.Body.Close()
-			var res transformerResponse
-			if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-				ch <- result{idx: i, err: fmt.Errorf("decode: %w", err)}
-				return
-			}
-			if resp.StatusCode > 399 {
-				ch <- result{idx: i, err: fmt.Errorf("vectorizer status %d: %s", resp.StatusCode, res.Error)}
-				return
-			}
-			ch <- result{idx: i, vec: res.Vector}
-		})
+	rows := binary.LittleEndian.Uint32(header[:4])
+	dim := binary.LittleEndian.Uint32(header[4:8])
+
+	raw := make([]byte, rows*dim*4)
+	if _, err := io.ReadFull(r, raw); err != nil {
+		return nil, fmt.Errorf("read vectors: %w", err)
 	}
-	wg.Wait()
-	for range items {
-		r := <-ch
-		if r.err != nil {
-			return fmt.Errorf("vectorize item %d: %w", r.idx, r.err)
+
+	vectors := make([][]float32, rows)
+	for i := range vectors {
+		vec := make([]float32, dim)
+		off := i * int(dim) * 4
+		for j := range vec {
+			vec[j] = math.Float32frombits(binary.LittleEndian.Uint32(raw[off+j*4:]))
 		}
-		items[r.idx].Vector = r.vec
+		vectors[i] = vec
+	}
+	return vectors, nil
+}
+
+// vectorizeBatch sends all texts in a single HTTP request to the vectorizer's
+// batch endpoint, which runs one model.encode() GPU pass for the entire batch.
+func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) error {
+	texts := make([]string, len(items))
+	for i, item := range items {
+		texts[i] = item.Review.Text
+	}
+
+	body, err := json.Marshal(batchRequest{Texts: texts})
+	if err != nil {
+		return fmt.Errorf("marshal batch request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://"+host+"/vectors/batch", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := vectorizerHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("vectorize batch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode > 399 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("vectorizer status %d: %s", resp.StatusCode, errBody)
+	}
+
+	var header [8]byte
+	vectors, err := decodeFloat32Vectors(resp.Body, header[:])
+	if err != nil {
+		return fmt.Errorf("decode vectors: %w", err)
+	}
+	if len(vectors) != len(items) {
+		return fmt.Errorf("vectorizer returned %d vectors, expected %d", len(vectors), len(items))
+	}
+
+	for i, vec := range vectors {
+		items[i].Vector = vec
 	}
 	return nil
 }
@@ -168,7 +178,10 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 
 	slog.Info("archive opened, beginning indexing")
 
-	batchCh := make(chan []search.IndexItem, numWorkers)
+	// Deep buffers so the producer stays ahead of the GPU and the GPU stays
+	// ahead of the Weaviate upload workers — minimising idle time at each stage.
+	batchCh := make(chan []search.IndexItem, numWorkers*4)
+	vectorizedCh := make(chan []search.IndexItem, numWorkers*2)
 
 	var (
 		wg       sync.WaitGroup
@@ -178,20 +191,34 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 
 	total.Store(int64(offset))
 
+	// Stage 1: single vectorize worker — the proxy serialises GPU work anyway,
+	// so one worker is enough; the deep batchCh buffer ensures the next request
+	// is ready the moment the current one finishes.
+	go func() {
+		for batch := range batchCh {
+			if firstErr.Load() != nil {
+				continue // drain without processing to unblock producer
+			}
+			if vectorizerHost != "" {
+				if err := vectorizeBatch(ctx, vectorizerHost, batch); err != nil {
+					e := fmt.Errorf("vectorize batch: %w", err)
+					firstErr.CompareAndSwap(nil, &e)
+					continue
+				}
+			}
+			vectorizedCh <- batch
+		}
+		close(vectorizedCh)
+	}()
+
+	// Stage 2: upload workers — drain vectorizedCh while Stage 1 keeps running.
 	for range numWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for batch := range batchCh {
+			for batch := range vectorizedCh {
 				if firstErr.Load() != nil {
-					continue // drain without processing to unblock producer
-				}
-				if vectorizerHost != "" {
-					if err := vectorizeBatch(ctx, vectorizerHost, batch); err != nil {
-						e := fmt.Errorf("vectorize batch: %w", err)
-						firstErr.CompareAndSwap(nil, &e)
-						continue
-					}
+					continue
 				}
 				if err := client.BatchUpsert(ctx, batch); err != nil {
 					e := fmt.Errorf("batch upsert: %w", err)
