@@ -2,15 +2,19 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
+	"time"
 
 	"fodmap/data/schemas"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/google/uuid"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
+	"github.com/weaviate/weaviate-go-client/v4/weaviate/fault"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/filters"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/graphql"
 	"github.com/weaviate/weaviate/entities/models"
@@ -48,12 +52,15 @@ type SearchFilter struct {
 }
 
 // IndexItem pairs a review with its associated business metadata for indexing.
+// If Vector is non-nil it is sent directly to Weaviate, bypassing the
+// transformer sidecar's per-object sequential vectorization.
 type IndexItem struct {
 	Review       schemas.Review
 	BusinessName string
 	City         string
 	State        string
 	Categories   string
+	Vector       []float32
 }
 
 // NewClient creates a Weaviate client connected to the given host (e.g. "localhost:8090").
@@ -61,6 +68,9 @@ func NewClient(host string) (*Client, error) {
 	cfg := weaviate.Config{
 		Host:   host,
 		Scheme: "http",
+		ConnectionClient: &http.Client{
+			Timeout: 5 * time.Minute,
+		},
 	}
 	wv, err := weaviate.NewClient(cfg)
 	if err != nil {
@@ -115,8 +125,9 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	for _, item := range items {
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
 		batcher = batcher.WithObjects(&models.Object{
-			Class: collectionName,
-			ID:    strfmt.UUID(id),
+			Class:  collectionName,
+			ID:     strfmt.UUID(id),
+			Vector: models.C11yVector(item.Vector),
 			Properties: map[string]any{
 				"reviewId":     item.Review.ReviewID,
 				"businessId":   item.Review.BusinessID,
@@ -132,6 +143,10 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 
 	responses, err := batcher.Do(ctx)
 	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("batch upsert: %w", wErr.DerivedFromError)
+		}
 		return fmt.Errorf("batch upsert: %w", err)
 	}
 	for _, resp := range responses {

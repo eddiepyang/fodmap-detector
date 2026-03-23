@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"fodmap/data"
 	"fodmap/data/schemas"
@@ -27,11 +30,85 @@ var indexCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(indexCmd)
 	indexCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
-	indexCmd.Flags().Int("batch-size", 500, "Number of reviews per Weaviate batch")
+	indexCmd.Flags().Int("batch-size", 512, "Number of reviews per Weaviate batch")
 	indexCmd.Flags().Int("workers", 4, "Number of concurrent batch upload goroutines")
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
+	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes")
+}
+
+var vectorizerHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+type transformerRequest struct {
+	Text   string                `json:"text"`
+	Config transformerReqConfig  `json:"config"`
+}
+
+type transformerReqConfig struct {
+	PoolingStrategy string `json:"pooling_strategy"`
+}
+
+type transformerResponse struct {
+	Vector []float32 `json:"vector"`
+	Error  string    `json:"error"`
+}
+
+// vectorizeBatch calls the transformer sidecar directly for all items concurrently,
+// setting each item's Vector field. Concurrent requests arrive within
+// BATCH_WAIT_TIME_SECONDS and are batched by the transformer for a single GPU pass.
+func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) error {
+	type result struct {
+		idx int
+		vec []float32
+		err error
+	}
+	ch := make(chan result, len(items))
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Go(func() {
+			body, err := json.Marshal(transformerRequest{
+				Text:   item.Review.Text,
+				Config: transformerReqConfig{PoolingStrategy: "masked_mean"},
+			})
+			if err != nil {
+				ch <- result{idx: i, err: err}
+				return
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+				"http://"+host+"/vectors", bytes.NewReader(body))
+			if err != nil {
+				ch <- result{idx: i, err: err}
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := vectorizerHTTPClient.Do(req)
+			if err != nil {
+				ch <- result{idx: i, err: err}
+				return
+			}
+			defer resp.Body.Close()
+			var res transformerResponse
+			if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+				ch <- result{idx: i, err: fmt.Errorf("decode: %w", err)}
+				return
+			}
+			if resp.StatusCode > 399 {
+				ch <- result{idx: i, err: fmt.Errorf("vectorizer status %d: %s", resp.StatusCode, res.Error)}
+				return
+			}
+			ch <- result{idx: i, vec: res.Vector}
+		})
+	}
+	wg.Wait()
+	for range items {
+		r := <-ch
+		if r.err != nil {
+			return fmt.Errorf("vectorize item %d: %w", r.idx, r.err)
+		}
+		items[r.idx].Vector = r.vec
+	}
+	return nil
 }
 
 func runIndex(cmd *cobra.Command, _ []string) error {
@@ -41,6 +118,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	archivePath, _ := cmd.Flags().GetString("archive")
 	checkpointPath, _ := cmd.Flags().GetString("checkpoint")
 	startOffset, _ := cmd.Flags().GetInt("start-offset")
+	vectorizerHost, _ := cmd.Flags().GetString("vectorizer")
 	ctx := context.Background()
 
 	client, err := search.NewClient(host)
@@ -107,6 +185,13 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 			for batch := range batchCh {
 				if firstErr.Load() != nil {
 					continue // drain without processing to unblock producer
+				}
+				if vectorizerHost != "" {
+					if err := vectorizeBatch(ctx, vectorizerHost, batch); err != nil {
+						e := fmt.Errorf("vectorize batch: %w", err)
+						firstErr.CompareAndSwap(nil, &e)
+						continue
+					}
 				}
 				if err := client.BatchUpsert(ctx, batch); err != nil {
 					e := fmt.Errorf("batch upsert: %w", err)

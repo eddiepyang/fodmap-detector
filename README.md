@@ -147,7 +147,10 @@ EventWriter.Write()     WriteBatchParquet()
 docker compose up -d
 ```
 
-This starts Weaviate on port `8090` and the `text2vec-transformers` inference sidecar.
+This starts:
+- **Weaviate** on port `8090` — the vector database
+- **t2v-transformers** on port `8091` — a local `sentence-transformers/multi-qa-MiniLM-L6-cos-v1` inference server used to embed review text into 384-dimensional vectors
+
 On first run, the transformer model (~90 MB) is downloaded automatically. Wait for:
 
 ```
@@ -157,30 +160,54 @@ t2v-transformers  | Application startup complete.
 ### 2. Index reviews into Weaviate
 
 ```sh
-go run ./cmd/cli index --weaviate localhost:8090
+go run . index --weaviate localhost:8090
 ```
 
 This reads the full Yelp archive, joins reviews with business metadata (city, state, categories),
-and upserts them to Weaviate in batches of 500 using 4 concurrent upload workers. The command is
+and upserts them to Weaviate in batches using 4 concurrent upload workers. The command is
 idempotent — safe to re-run. A checkpoint file (`index.checkpoint`) is written after each batch so
 an interrupted run resumes from where it left off rather than starting over.
 
 ```sh
 # Custom tuning
-go run ./cmd/cli index --weaviate localhost:8090 --batch-size 1000 --workers 8
+go run . index --weaviate localhost:8090 --batch-size 1000 --workers 8
 
 # Resume from a specific checkpoint file
-go run ./cmd/cli index --checkpoint /tmp/my.checkpoint
+go run . index --checkpoint /tmp/my.checkpoint
 
 # Point to a different archive
-go run ./cmd/cli index --archive /data/yelp_dataset.tar
+go run . index --archive /data/yelp_dataset.tar
 
 # Disable checkpointing
-go run ./cmd/cli index --checkpoint ""
+go run . index --checkpoint ""
 
 # Start from a known offset (e.g. after processing 2,155,100 reviews)
-go run ./cmd/cli index --start-offset 2155100
+go run . index --start-offset 2155100
 ```
+
+#### GPU-accelerated indexing with `--vectorizer`
+
+By default, Weaviate handles vectorization internally: it calls the t2v-transformers sidecar once
+per object, sequentially. This means the GPU always receives a batch of one, leaving it heavily
+underutilized (~35% on typical hardware).
+
+Passing `--vectorizer` bypasses this and pre-vectorizes each batch directly from Go:
+
+```sh
+go run . index --weaviate localhost:8090 --vectorizer localhost:8091
+```
+
+**How it works:**
+
+For each batch, all review texts are sent to the transformer concurrently (one goroutine per text).
+The transformer is configured with `BATCH_WAIT_TIME_SECONDS=0.1` and `MAX_BATCH_SIZE=512`, so it
+accumulates the concurrent requests that arrive within 100 ms and runs them as a single GPU forward
+pass — giving the GPU a batch of up to 512 instead of 1. The resulting vectors are attached to the
+objects before they are sent to Weaviate. Weaviate detects that each object already has a vector
+and skips vectorization entirely — it never calls the transformer sidecar during import.
+
+Without `--vectorizer`, indexing still works correctly — Weaviate vectorizes each object itself.
+The flag only affects throughput, not correctness, so it can be omitted on CPU-only machines.
 
 ### 3. Start the HTTP server
 
@@ -245,7 +272,7 @@ See [docs/search.md](docs/search.md) for full API reference and design decisions
 Run the CLI with:
 
 ```sh
-go run ./cmd/cli
+go run .
 ```
 
 #### Commands
@@ -253,26 +280,27 @@ go run ./cmd/cli
 ##### Index (Weaviate)
 
 ```sh
-go run ./cmd/cli index --weaviate localhost:8090
+go run . index --weaviate localhost:8090
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `500` | Reviews per batch |
+| `--batch-size` | `512` | Reviews per batch |
 | `--workers` | `4` | Concurrent batch upload goroutines |
 | `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
 | `--checkpoint` | `index.checkpoint` | Checkpoint file path (empty string disables) |
 | `--start-offset` | `0` | Skip this many reviews before indexing (overrides checkpoint) |
+| `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization (e.g. `localhost:8091`); omit to let Weaviate vectorize |
 
 ##### Parquet (batch)
 
 ```sh
 # Write reviews from archive to Parquet
-go run ./cmd/cli batch -o output.parquet
+go run . batch -o output.parquet
 
 # Limit to 500 records
-go run ./cmd/cli batch -o output.parquet -n 500
+go run . batch -o output.parquet -n 500
 ```
 
 | Flag | Default | Description |
@@ -284,13 +312,13 @@ go run ./cmd/cli batch -o output.parquet -n 500
 
 ```sh
 # Write reviews from archive to Avro OCF
-go run ./cmd/cli event write -o output.avro
+go run . event write -o output.avro
 
 # Limit to 500 records
-go run ./cmd/cli event write -o output.avro -n 500
+go run . event write -o output.avro -n 500
 
 # Read and dump an Avro file
-go run ./cmd/cli event read -i output.avro
+go run . event read -i output.avro
 ```
 
 | Flag | Default | Description |
