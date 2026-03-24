@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"fodmap/data"
 	"fodmap/data/schemas"
 
 	"github.com/go-openapi/strfmt"
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	collectionName = "YelpReview"
-	topKReviews    = 5
+	collectionName       = "YelpReview"
+	fodmapCollectionName = "FodmapIngredient"
+	topKReviews          = 5
 )
 
 // Client wraps the Weaviate client with domain-specific operations.
@@ -45,6 +47,14 @@ type SearchResult struct {
 	Businesses []BusinessResult
 }
 
+// FodmapResult represents a parsed FODMAP ingredient from Weaviate.
+type FodmapResult struct {
+	Ingredient string
+	Level      string
+	Groups     []string
+	Notes      string
+}
+
 // SearchReviews holds the reviews associated with a search result, including their metadata.
 type SearchReviews struct {
 	BusinessReviews []RankedReview
@@ -52,9 +62,10 @@ type SearchReviews struct {
 
 // SearchFilter holds optional filters to narrow the search by category, city, and/or state.
 type SearchFilter struct {
-	Category string // substring match against categories field; empty = no filter
-	City     string // exact match; empty = no filter
-	State    string // exact match; empty = no filter
+	Category   string // substring match against categories field; empty = no filter
+	City       string // exact match; empty = no filter
+	State      string // exact match; empty = no filter
+	BusinessID string // exact match; empty = no filter
 }
 
 // IndexItem pairs a review with its associated business metadata for indexing.
@@ -265,6 +276,13 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 				WithOperator(filters.Equal).
 				WithValueText(f.State))
 	}
+	if f.BusinessID != "" {
+		operands = append(operands,
+			filters.Where().
+				WithPath([]string{"businessId"}).
+				WithOperator(filters.Equal).
+				WithValueText(f.BusinessID))
+	}
 
 	switch len(operands) {
 	case 0:
@@ -421,4 +439,141 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 		results = results[:limit]
 	}
 	return SearchReviews{BusinessReviews: results}
+}
+
+// EnsureFodmapSchema creates the FodmapIngredient collection if it does not already exist.
+func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
+	_, err := c.wv.Schema().ClassGetter().WithClassName(fodmapCollectionName).Do(ctx)
+	if err == nil {
+		return nil
+	}
+
+	skip := map[string]any{
+		"text2vec-transformers": map[string]any{"skip": true},
+	}
+	class := &models.Class{
+		Class:      fodmapCollectionName,
+		Vectorizer: "text2vec-transformers",
+		ModuleConfig: map[string]any{
+			"text2vec-transformers": map[string]any{
+				"vectorizeClassName": false,
+			},
+		},
+		Properties: []*models.Property{
+			{Name: "ingredient", DataType: []string{"text"}},
+			{Name: "level", DataType: []string{"text"}, ModuleConfig: skip},
+			{Name: "groups", DataType: []string{"text[]"}, ModuleConfig: skip},
+			{Name: "notes", DataType: []string{"text"}, ModuleConfig: skip},
+		},
+	}
+	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+		return fmt.Errorf("creating fodmap schema: %w", err)
+	}
+	return nil
+}
+
+// BatchUpsertFodmap inserts or updates a batch of FODMAP ingredients in Weaviate.
+func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
+	batcher := c.wv.Batch().ObjectsBatcher()
+	for name, entry := range items {
+		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("fodmap_"+name)).String()
+		batcher = batcher.WithObjects(&models.Object{
+			Class: fodmapCollectionName,
+			ID:    strfmt.UUID(id),
+			Properties: map[string]any{
+				"ingredient": name,
+				"level":      entry.Level,
+				"groups":     entry.Groups,
+				"notes":      entry.Notes,
+			},
+		})
+	}
+	responses, err := batcher.Do(ctx)
+	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("batch upsert fodmap: %w", wErr.DerivedFromError)
+		}
+		return fmt.Errorf("batch upsert fodmap: %w", err)
+	}
+	for _, resp := range responses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("batch upsert fodmap item error", "errors", resp.Result.Errors)
+		}
+	}
+	return nil
+}
+
+// SearchFodmap performs a nearText vector query on the FodmapIngredient collection.
+func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
+	fields := []graphql.Field{
+		{Name: "ingredient"},
+		{Name: "level"},
+		{Name: "groups"},
+		{Name: "notes"},
+		{Name: "_additional { certainty }"},
+	}
+
+	nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{ingredient})
+
+	resp, err := c.wv.GraphQL().Get().
+		WithClassName(fodmapCollectionName).
+		WithFields(fields...).
+		WithNearText(nearText).
+		WithLimit(1).
+		Do(ctx)
+
+	if err != nil {
+		return FodmapResult{}, 0, fmt.Errorf("graphql query: %w", err)
+	}
+	if resp.Errors != nil {
+		return FodmapResult{}, 0, fmt.Errorf("graphql errors: %v", resp.Errors)
+	}
+
+	res, cert, ok := ParseFodmapResult(resp.Data)
+	if !ok {
+		return FodmapResult{}, 0, errors.New("not found")
+	}
+	return res, cert, nil
+}
+
+// ParseFodmapResult extracts the top FodmapIngredient match from the GraphQL response.
+func ParseFodmapResult(result map[string]models.JSONObject) (FodmapResult, float64, bool) {
+	getRaw, ok := result["Get"].(map[string]any)
+	if !ok {
+		return FodmapResult{}, 0, false
+	}
+	items, ok := getRaw[fodmapCollectionName].([]any)
+	if !ok || len(items) == 0 {
+		return FodmapResult{}, 0, false
+	}
+	obj, ok := items[0].(map[string]any)
+	if !ok {
+		return FodmapResult{}, 0, false
+	}
+
+	ingredient, _ := obj["ingredient"].(string)
+	level, _ := obj["level"].(string)
+	notes, _ := obj["notes"].(string)
+
+	var groups []string
+	if groupsSlice, ok := obj["groups"].([]any); ok {
+		for _, g := range groupsSlice {
+			if s, ok := g.(string); ok {
+				groups = append(groups, s)
+			}
+		}
+	}
+
+	certainty := 0.0
+	if additional, ok := obj["_additional"].(map[string]any); ok {
+		certainty, _ = additional["certainty"].(float64)
+	}
+
+	return FodmapResult{
+		Ingredient: ingredient,
+		Level:      level,
+		Groups:     groups,
+		Notes:      notes,
+	}, certainty, true
 }

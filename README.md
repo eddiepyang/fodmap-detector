@@ -34,20 +34,23 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── cmd/
 │   └── cli/
 │       └── main.go          # CLI entry point
-├── prompt.txt               # LLM prompt for FODMAP extraction
+├── prompt.txt               # LLM prompt for FODMAP batch analysis
+├── chat-prompt.txt          # System prompt template for the interactive chat agent
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
 │   ├── event.go             # Avro subcommand (event write / event read)
 │   ├── batch.go             # Parquet subcommand (batch)
 │   ├── serve.go             # Serve subcommand (starts the HTTP server)
-│   └── index.go             # Index subcommand (populates Weaviate for search)
+│   ├── index.go             # Index subcommand (populates Weaviate for search)
+│   ├── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
+│   └── fodmap_data.go       # Static FODMAP ingredient database + lookup
 │
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # HTTP request handlers
 │   ├── jobs.go              # Background job store
-│   └── llm.go               # Gemini LLM client
+│   └── llm.go               # Gemini LLM client (batch analysis)
 │
 ├── data/
 │   ├── data.go              # Archive reading, Parquet write/read
@@ -64,6 +67,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │
 ├── docs/
 │   ├── search.md                    # Search service design decisions and API reference
+│   ├── chat.md                      # Chat agent design decisions, tradeoffs, and future work
 │   └── indexing-improvements.md     # Indexing performance tuning plan
 │
 └── docker-compose.yaml      # Weaviate + t2v-transformers services
@@ -230,39 +234,47 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 | `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
 | `GET` | `/results/{job_id}` | Poll analysis results |
 | `GET` | `/reviews` | List reviews for a business |
-| `GET` | `/search/{query...}` | Semantic restaurant search (requires Weaviate) |
+| `GET` | `/searchBusiness/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
+| `GET` | `/searchReview/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
 
-#### Search endpoint
+#### Search endpoints
 
-Find restaurants matching a natural-language description:
+Find restaurants or review texts matching a natural-language description:
 
 ```sh
-# Basic search — returns top 10 businesses by relevance
-curl "localhost:8080/search/cozy%20Italian%20with%20great%20pasta"
+# Business search — returns top 10 businesses ranked by review relevance
+curl "localhost:8080/searchBusiness/cozy%20Italian%20with%20great%20pasta"
 
-# Filter by category
-curl "localhost:8080/search/best%20tacos?category=Mexican"
-
-# Filter by city and state
-curl "localhost:8080/search/romantic%20dinner?city=Las%20Vegas&state=NV"
-
-# Combine all filters with a custom limit
-curl "localhost:8080/search/outdoor%20patio%20brunch?category=Breakfast&city=Phoenix&state=AZ&limit=5"
+# Filter by category, city, state
+curl "localhost:8080/searchBusiness/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
 ```
 
-**Response:**
+**Business search response:**
 ```json
 {
   "businesses": [
-    {"id": "abc123", "name": "Joe's Diner"},
-    {"id": "def456", "name": "Pasta Palace"},
-    {"id": "ghi789", "name": "Taco Town"}
+    {"id": "abc123", "name": "Joe's Diner", "city": "Las Vegas", "state": "NV", "score": 0.91},
+    {"id": "def456", "name": "Pasta Palace", "city": "Las Vegas", "state": "NV", "score": 0.87}
   ]
 }
 ```
 
-Business IDs are ranked by **Top-K average similarity** — the average of the top 5 most relevant
-reviews per restaurant. This avoids both volume bias (popular chains don't dominate) and outlier
+```sh
+# Review search — returns top K review texts ranked by semantic similarity
+curl "localhost:8080/searchReview/gluten%20free%20options?limit=5"
+```
+
+**Review search response:**
+```json
+{
+  "reviews": [
+    {"text": "Great gluten-free pasta...", "business_id": "abc123", "business_name": "Joe's Diner", "city": "Las Vegas", "state": "NV", "score": 0.94}
+  ]
+}
+```
+
+Businesses are ranked by **Top-K average similarity** — the average of the top 5 most relevant
+reviews per restaurant. This avoids volume bias (popular chains don't dominate) and outlier
 noise (one lucky review can't carry a poor fit).
 
 See [docs/search.md](docs/search.md) for full API reference and design decisions.
@@ -326,11 +338,53 @@ go run . event read -i output.avro
 | `-o, --output` | `test.avro` | Output file path |
 | `-n, --limit` | `0` | Max records to write (0 = no limit) |
 
-##### Global flag
+##### Chat (interactive FODMAP/allergen agent)
+
+Start an interactive chat session grounded in real reviews for a restaurant matching your query.
+The agent uses Gemini for reasoning and calls two built-in tools mid-conversation to verify claims:
+
+- `lookup_fodmap` — checks a curated static database (60+ ingredients) for FODMAP level and groups
+- `lookup_allergens` — queries the [Open Food Facts](https://openfoodfacts.org) API for allergen data
 
 ```sh
--m, --model <string>   Model name (for future LLM integration)
+# Find the top Thai restaurant in Las Vegas and start a chat about its dishes
+GEMINI_API_KEY=your_key go run . chat "pad thai" --city "Las Vegas" --state NV
+
+# Output:
+# Found: Lotus of Siam (Las Vegas, NV)
+# Fetched 20 reviews. Starting chat (type 'exit' to quit)...
+# > does the pad thai have garlic?
+# Garlic is listed as high FODMAP (fructans). Based on review #3, the pad thai
+# sauce does appear to contain garlic...
+# > exit
 ```
+
+The command requires the server to be running (`go run . serve --weaviate localhost:8090`).
+
+See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviations, and future improvements.
+
+**Guardrails:**
+
+| Layer | Guardrail |
+|-------|-----------|
+| Prompt | Scope restricted to food/FODMAP/allergen questions |
+| Prompt | No medical diagnoses; always refers to a registered dietitian |
+| Prompt | Must call `lookup_fodmap` tool rather than guessing FODMAP status |
+| Prompt | Grounded in provided reviews; flags dishes not mentioned |
+| Code | Input length capped at 2,000 characters |
+| Code | Injection pattern detection (8 patterns) |
+| Code | Per-turn topic pre-screen via lightweight Gemini call |
+| Code | Long-response warning logged via `slog` |
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server` | `http://localhost:8080` | Base URL of the running fodmap server |
+| `--limit` | `20` | Max reviews to include as context |
+| `--prompt` | `./chat-prompt.txt` | Path to the chat system prompt template |
+| `--category` | `""` | Filter businesses by category substring |
+| `--city` | `""` | Filter businesses by city (exact match) |
+| `--state` | `""` | Filter businesses by state (exact match) |
+| `--model` | `gemini-3.1-flash` | Gemini model ID for the chat session |
 
 ---
 

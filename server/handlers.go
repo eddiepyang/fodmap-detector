@@ -171,9 +171,10 @@ func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := search.SearchFilter{
-		Category: r.URL.Query().Get("category"),
-		City:     r.URL.Query().Get("city"),
-		State:    r.URL.Query().Get("state"),
+		Category:   r.URL.Query().Get("category"),
+		City:       r.URL.Query().Get("city"),
+		State:      r.URL.Query().Get("state"),
+		BusinessID: r.URL.Query().Get("business_id"),
 	}
 
 	result, err := s.searcher.GetReviews(r.Context(), q, limit, filter)
@@ -210,6 +211,45 @@ func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string][]review{"reviews": out}); err != nil {
+		slog.Error("encode error", "error", err)
+	}
+}
+
+func (s *Server) getFodmapHandler(w http.ResponseWriter, r *http.Request) {
+	if s.searcher == nil {
+		http.Error(w, `{"error":"search service not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	ingredient := r.PathValue("ingredient")
+	if ingredient == "" {
+		http.Error(w, `{"error":"ingredient is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	res, cert, err := s.searcher.SearchFodmap(r.Context(), ingredient)
+	if err != nil {
+		slog.Error("search fodmap error", "error", err)
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+
+	type response struct {
+		Ingredient string   `json:"ingredient"`
+		Level      string   `json:"level"`
+		Groups     []string `json:"groups"`
+		Notes      string   `json:"notes"`
+		Certainty  float64  `json:"certainty"`
+	}
+	out := response{
+		Ingredient: res.Ingredient,
+		Level:      res.Level,
+		Groups:     res.Groups,
+		Notes:      res.Notes,
+		Certainty:  cert,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
 		slog.Error("encode error", "error", err)
 	}
 }

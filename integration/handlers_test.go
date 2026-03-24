@@ -33,16 +33,24 @@ func (s *stubAnalyzer) Analyze(_ context.Context, _ []schemas.Review) (string, e
 
 // stubSearcher is a test double for server.Searcher.
 type stubSearcher struct {
-	result      search.SearchResult
-	reviewResult search.SearchReviews
-	err         error
+	result           search.SearchResult
+	reviewResult     search.SearchReviews
+	fodmapResult     search.FodmapResult
+	fodmapCertainty  float64
+	err              error
+	lastReviewFilter search.SearchFilter
 }
 
 func (s *stubSearcher) GetBusinesses(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
 	return s.result, s.err
 }
 
-func (s *stubSearcher) GetReviews(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchReviews, error) {
+func (s *stubSearcher) SearchFodmap(_ context.Context, _ string) (search.FodmapResult, float64, error) {
+	return s.fodmapResult, s.fodmapCertainty, s.err
+}
+
+func (s *stubSearcher) GetReviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
+	s.lastReviewFilter = filter
 	return s.reviewResult, s.err
 }
 
@@ -266,5 +274,81 @@ func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	}
 	if string(resp["businesses"]) == "null" {
 		t.Error("businesses should be [] not null")
+	}
+}
+
+// --- /searchReview ---
+
+func TestSearchReviewHandler_ParsesBusinessID(t *testing.T) {
+	stub := &stubSearcher{
+		reviewResult: search.SearchReviews{BusinessReviews: []search.RankedReview{}},
+	}
+	mux := newMux(t, &stubAnalyzer{}, stub)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchReview/pad%20thai?business_id=my-biz-123", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if stub.lastReviewFilter.BusinessID != "my-biz-123" {
+		t.Errorf("got business_id %q, want %q", stub.lastReviewFilter.BusinessID, "my-biz-123")
+	}
+}
+
+// --- /searchFodmap ---
+
+func TestFodmapHandler_NoSearcherConfigured(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchFodmap/garlic", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestFodmapHandler_MissingIngredient(t *testing.T) {
+	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchFodmap/", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestFodmapHandler_ReturnsIngredient(t *testing.T) {
+	stub := &stubSearcher{
+		fodmapResult: search.FodmapResult{
+			Ingredient: "garlic",
+			Level:      "high",
+			Groups:     []string{"fructans"},
+			Notes:      "Keep away",
+		},
+		fodmapCertainty: 0.95,
+	}
+	mux := newMux(t, &stubAnalyzer{}, stub)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchFodmap/garlic", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp struct {
+		Ingredient  string   `json:"ingredient"`
+		Level       string   `json:"level"`
+		Groups      []string `json:"groups"`
+		Notes       string   `json:"notes"`
+		Certainty   float64  `json:"certainty"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Ingredient != "garlic" {
+		t.Errorf("got ingredient %q, want %q", resp.Ingredient, "garlic")
+	}
+	if len(resp.Groups) != 1 || resp.Groups[0] != "fructans" {
+		t.Errorf("got groups %v, want [fructans]", resp.Groups)
 	}
 }
