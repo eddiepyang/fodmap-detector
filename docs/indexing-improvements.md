@@ -101,3 +101,20 @@ Import grouping in `cli/index.go`: stdlib → project (`fodmap/...`) → third-p
 1. `go test ./...` — existing tests pass
 2. Run indexing against a live Weaviate instance and observe `slog.Info("indexed batch", "total", ...)` lines appearing in bursts rather than one at a time
 3. Compare wall-clock time with `time fodmap-detector index` before and after
+
+## Update: V2 Massively Parallel Pipeline
+
+The initial concurrency improvements focused primarily on Weaviate uploads. However, profiling revealed that the pipeline was still bottlenecked by the sequential scanning and JSON parsing loop, as well as the PyTorch Global Interpreter Lock (GIL) in the single-process vectorizer.
+
+To achieve maximum 100% saturation on modern hardware (like Apple M2 and desktop CPUs), the pipeline was completely overhauled into a **4-Stage Asynchronous Architecture**:
+
+1. **Stage 0 (Disk Reader)**: The main thread linearly reads from the `.tar` archive as fast as the NVMe drive permits and pumps raw `[]byte` arrays into an enormous channel buffer.
+2. **Stage 1 (JSON Parsers)**: `N` independent workers pull from the channel, running `json.Unmarshal` simultaneously to bypass JSON parsing bottlenecks.
+3. **Stage 2 (Vectorize Proxies)**: `N` workers fire HTTP requests to the Python vectorizer backend concurrently. When running `uvicorn` with `--workers 4`, PyTorch processes all batches simultaneously in separate OS processes.
+4. **Stage 3 (Uploaders)**: `N` workers push vectorized batches into Weaviate.
+
+### Safe Rewind Checkpointing
+
+Because batches now finish completely out of order across the independent worker threads, the original atomic counter checkpoint strategy became unsafe. If Batch 3 finished before Batch 1 and the system crashed, Batch 1 would be lost upon resume!
+
+To guarantee zero data loss without introducing complex locking, we implemented **Safe Rewind Checkpointing**. By subtracting the maximum pipeline in-flight buffer size (`8 * numWorkers * batchSize`) from the current successfully completed total, the checkpoint purposefully rewinds the stream. On crash recovery, overlapping patches are securely re-processed, taking advantage of Weaviate's exact-match UUID idempotency to silently overwrite duplicates and ensure nothing is ever skipped.

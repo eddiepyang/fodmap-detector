@@ -17,9 +17,12 @@ model: SentenceTransformer
 async def lifespan(_app: FastAPI):
     global model
     model_name = os.getenv("MODEL_NAME", "sentence-transformers/multi-qa-MiniLM-L6-cos-v1")
-    cuda = os.getenv("ENABLE_CUDA", "0") in ("1", "true")
-    device = "cuda:0" if cuda and torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer(model_name, device=device, local_files_only=True)
+    device = "cpu"
+    if os.getenv("ENABLE_CUDA", "0") in ("1", "true") and torch.cuda.is_available():
+        device = "cuda:0"
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = "mps"
+    model = SentenceTransformer(model_name, device=device, local_files_only=False)
     model.eval()
     yield
 

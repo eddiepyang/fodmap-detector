@@ -1,0 +1,21 @@
+services:
+  weaviate:
+    environment:
+      TRANSFORMERS_INFERENCE_API: "http://vectorizer:8080"
+    depends_on:
+      - vectorizer
+
+  vectorizer:
+    build: ./vectorizer-proxy
+    ports:
+      - "8091:8080"
+    environment:
+      MODEL_NAME: "sentence-transformers/multi-qa-MiniLM-L6-cos-v1"
+      ENABLE_CUDA: "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
