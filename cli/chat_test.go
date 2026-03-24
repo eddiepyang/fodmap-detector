@@ -58,7 +58,7 @@ func TestValidateChatInput_InjectionPatterns(t *testing.T) {
 	}
 }
 
-// ---- fetchTopBusiness ----
+// ---- HTTPFodmapServerClient.FetchTopBusiness ----
 
 func TestFetchTopBusiness_ReturnsTop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,8 @@ func TestFetchTopBusiness_ReturnsTop(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	biz, err := fetchTopBusiness(t.Context(), srv.URL, "pad thai", "", "", "")
+	client := NewHTTPFodmapServerClient(srv.URL)
+	biz, err := client.FetchTopBusiness(t.Context(), "pad thai", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +104,8 @@ func TestFetchTopBusiness_ForwardsFilters(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchTopBusiness(t.Context(), srv.URL, "tacos", "Mexican", "Phoenix", "AZ")
+	client := NewHTTPFodmapServerClient(srv.URL)
+	_, err := client.FetchTopBusiness(t.Context(), "tacos", "Mexican", "Phoenix", "AZ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,13 +123,14 @@ func TestFetchTopBusiness_NoResults(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchTopBusiness(t.Context(), srv.URL, "xyz", "", "", "")
+	client := NewHTTPFodmapServerClient(srv.URL)
+	_, err := client.FetchTopBusiness(t.Context(), "xyz", "", "", "")
 	if err == nil {
 		t.Error("expected error for empty results, got nil")
 	}
 }
 
-// ---- fetchChatReviews ----
+// ---- HTTPFodmapServerClient.FetchChatReviews ----
 
 func TestFetchChatReviews_LimitLargerThanResults(t *testing.T) {
 	reviews := []map[string]any{
@@ -139,7 +142,8 @@ func TestFetchChatReviews_LimitLargerThanResults(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchChatReviews(t.Context(), srv.URL, "biz1", "pad thai", 20)
+	client := NewHTTPFodmapServerClient(srv.URL)
+	got, err := client.FetchChatReviews(t.Context(), "biz1", "pad thai", 20)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,7 +162,8 @@ func TestFetchChatReviews_ForwardsBusinessID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _ = fetchChatReviews(t.Context(), srv.URL, "my-biz-id", "pad thai", 5)
+	client := NewHTTPFodmapServerClient(srv.URL)
+	_, _ = client.FetchChatReviews(t.Context(), "my-biz-id", "pad thai", 5)
 	if gotPath != "/searchReview/pad%20thai" && gotPath != "/searchReview/pad thai" {
 		t.Errorf("path = %q, want /searchReview/pad%%20thai", gotPath)
 	}
@@ -252,12 +257,15 @@ func TestDispatchTool_FODMAP_Known(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result := dispatchTool(t.Context(), srv.URL, "lookup_fodmap", map[string]any{"ingredient": "garlic"})
-	if result["found"] != true {
-		t.Errorf("found = %v, want true", result["found"])
+	client := NewHTTPFodmapServerClient(srv.URL)
+	session := &chatSession{fodmapClient: client}
+	result := session.dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "garlic"}).(FodmapToolResponse)
+	
+	if result.Found != true {
+		t.Errorf("found = %v, want true", result.Found)
 	}
-	if result["fodmap_level"] != "high" {
-		t.Errorf("fodmap_level = %v, want high", result["fodmap_level"])
+	if result.FodmapLevel != "high" {
+		t.Errorf("fodmap_level = %v, want high", result.FodmapLevel)
 	}
 }
 
@@ -267,14 +275,18 @@ func TestDispatchTool_FODMAP_Unknown(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result := dispatchTool(t.Context(), srv.URL, "lookup_fodmap", map[string]any{"ingredient": "unobtainium"})
-	if result["found"] != false {
-		t.Errorf("found = %v, want false", result["found"])
+	client := NewHTTPFodmapServerClient(srv.URL)
+	session := &chatSession{fodmapClient: client}
+	result := session.dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "unobtainium"}).(FodmapToolResponse)
+	
+	if result.Found != false {
+		t.Errorf("found = %v, want false", result.Found)
 	}
 }
 
 func TestDispatchTool_UnknownTool(t *testing.T) {
-	result := dispatchTool(t.Context(), "", "nonexistent_tool", map[string]any{})
+	session := &chatSession{}
+	result := session.dispatchTool(t.Context(), "nonexistent_tool", map[string]any{}).(map[string]any)
 	if _, ok := result["error"]; !ok {
 		t.Error("expected error key for unknown tool")
 	}
@@ -291,20 +303,15 @@ func TestDispatchTool_Allergens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	orig := offBaseURL
-	offBaseURL = srv.URL + "/cgi/search.pl"
-	t.Cleanup(func() { offBaseURL = orig })
+	client := NewOpenFoodFactsClient(srv.URL + "/cgi/search.pl")
+	session := &chatSession{allergenClient: client}
 
-	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "pasta"})
-	if _, ok := result["error"]; ok {
-		t.Fatalf("unexpected error in result: %v", result["error"])
+	result := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "pasta"}).(AllergenToolResponse)
+	if result.Error != "" {
+		t.Fatalf("unexpected error in result: %v", result.Error)
 	}
-	allergens, ok := result["allergens"].([]string)
-	if !ok {
-		t.Fatalf("allergens not []string, got %T", result["allergens"])
-	}
-	if len(allergens) != 2 {
-		t.Errorf("len(allergens) = %d, want 2", len(allergens))
+	if len(result.Allergens) != 2 {
+		t.Errorf("len(allergens) = %d, want 2", len(result.Allergens))
 	}
 }
 
@@ -320,15 +327,12 @@ func TestDispatchTool_AllergensDeduplicated(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	orig := offBaseURL
-	offBaseURL = srv.URL + "/cgi/search.pl"
-	t.Cleanup(func() { offBaseURL = orig })
+	client := NewOpenFoodFactsClient(srv.URL + "/cgi/search.pl")
+	session := &chatSession{allergenClient: client}
 
-	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "pasta"})
-	allergens, ok := result["allergens"].([]string)
-	if !ok {
-		t.Fatalf("allergens not []string, got %T", result["allergens"])
-	}
+	result := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "pasta"}).(AllergenToolResponse)
+	allergens := result.Allergens
+	
 	seen := make(map[string]int)
 	for _, a := range allergens {
 		seen[a]++
@@ -347,28 +351,16 @@ func TestDispatchTool_AllergensNoProducts(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	orig := offBaseURL
-	offBaseURL = srv.URL + "/cgi/search.pl"
-	t.Cleanup(func() { offBaseURL = orig })
+	client := NewOpenFoodFactsClient(srv.URL + "/cgi/search.pl")
+	session := &chatSession{allergenClient: client}
 
-	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "mystery food"})
-	allergens, ok := result["allergens"].([]string)
-	if !ok {
-		t.Fatalf("allergens not []string, got %T", result["allergens"])
-	}
-	if len(allergens) != 0 {
-		t.Errorf("expected empty allergens for no products, got %v", allergens)
+	result := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "mystery food"}).(AllergenToolResponse)
+	if len(result.Allergens) != 0 {
+		t.Errorf("expected empty allergens for no products, got %v", result.Allergens)
 	}
 }
 
 func TestDispatchTool_AllergensCached(t *testing.T) {
-	t.Cleanup(func() {
-		allergenCache.Range(func(key, value any) bool {
-			allergenCache.Delete(key)
-			return true
-		})
-	})
-	
 	var callCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -381,20 +373,19 @@ func TestDispatchTool_AllergensCached(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	orig := offBaseURL
-	offBaseURL = srv.URL + "/cgi/search.pl"
-	t.Cleanup(func() { offBaseURL = orig })
+	client := NewOpenFoodFactsClient(srv.URL + "/cgi/search.pl")
+	session := &chatSession{allergenClient: client}
 
 	// First call should hit the HTTP server
-	result1 := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "peanut butter"})
-	if _, ok := result1["error"]; ok {
-		t.Fatalf("unexpected error: %v", result1["error"])
+	result1 := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "peanut butter"}).(AllergenToolResponse)
+	if result1.Error != "" {
+		t.Fatalf("unexpected error: %v", result1.Error)
 	}
 
 	// Second call should return cached result
-	result2 := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "peanut butter"})
-	if _, ok := result2["error"]; ok {
-		t.Fatalf("unexpected error: %v", result2["error"])
+	result2 := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "peanut butter"}).(AllergenToolResponse)
+	if result2.Error != "" {
+		t.Fatalf("unexpected error: %v", result2.Error)
 	}
 
 	if callCount != 1 {
