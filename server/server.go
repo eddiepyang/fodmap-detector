@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"fodmap/data"
 	"fodmap/data/schemas"
 	"fodmap/search"
 )
@@ -21,6 +22,7 @@ type Analyzer interface {
 type Searcher interface {
 	GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
 	GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
+	SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error)
 }
 
 type Server struct {
@@ -57,6 +59,14 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		}
 		s.searcher = sc
 		slog.Info("weaviate search enabled", "host", cfg.WeaviateHost)
+
+		if err := sc.EnsureFodmapSchema(ctx); err != nil {
+			slog.Warn("ensuring fodmap schema failed", "error", err)
+		} else {
+			if err := sc.BatchUpsertFodmap(ctx, data.FodmapDB); err != nil {
+				slog.Warn("batch upsert fodmap failed", "error", err)
+			}
+		}
 	}
 
 	return s, nil
@@ -77,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /reviews", s.reviewsHandler)
 	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
 	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
 	return mux
 }
 

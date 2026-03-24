@@ -172,9 +172,62 @@ func TestBuildWhereFilter_StateOnly(t *testing.T) {
 	}
 }
 
+func TestBuildWhereFilter_BusinessID(t *testing.T) {
+	f := buildWhereFilter(SearchFilter{BusinessID: "biz123"})
+	if f == nil {
+		t.Fatal("expected non-nil filter for BusinessID")
+	}
+}
+
 func TestBuildWhereFilter_AllThree(t *testing.T) {
 	f := buildWhereFilter(SearchFilter{Category: "pizza", City: "Austin", State: "TX"})
 	if f == nil {
 		t.Fatal("expected non-nil compound filter")
+	}
+}
+
+// --- ParseFodmapResult tests ---
+
+func TestParseFodmapResult_Empty(t *testing.T) {
+	result, certainty, ok := ParseFodmapResult(map[string]models.JSONObject{})
+	if ok {
+		t.Errorf("expected not ok for empty result, got ok with %v (certainty %f)", result, certainty)
+	}
+}
+
+func TestParseFodmapResult_Valid(t *testing.T) {
+	data := map[string]models.JSONObject{
+		"Get": map[string]any{
+			"FodmapIngredient": []any{
+				map[string]any{
+					"ingredient": "garlic",
+					"level":      "high",
+					"groups":     []any{"fructans"},
+					"notes":      "Keep away",
+					"_additional": map[string]any{
+						"certainty": 0.95,
+					},
+				},
+			},
+		},
+	}
+	result, certainty, ok := ParseFodmapResult(data)
+	if !ok {
+		t.Fatal("expected ok for valid result")
+	}
+	if result.Ingredient != "garlic" {
+		t.Errorf("got ingredient %q, want %q", result.Ingredient, "garlic")
+	}
+	if result.Level != "high" {
+		t.Errorf("got level %q, want %q", result.Level, "high")
+	}
+	if len(result.Groups) != 1 || result.Groups[0] != "fructans" {
+		t.Errorf("got groups %v, want [fructans]", result.Groups)
+	}
+	if result.Notes != "Keep away" {
+		t.Errorf("got notes %q, want %q", result.Notes, "Keep away")
+	}
+	if certainty != 0.95 {
+		t.Errorf("got certainty %f, want 0.95", certainty)
 	}
 }

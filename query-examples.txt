@@ -1,0 +1,24 @@
+curl -s -X POST http://localhost:8090/v1/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "{ Get { YelpReview(nearText: {concepts: [\"duck\"]}, limit: 10, where: {path: [\"categories\"], operator: equals, valueText: \"*chinese*\"}) { businessId businessName city state _additional { certainty distance } } } }"
+  }' | jq .
+
+# list all cities
+  curl -s -X POST http://localhost:8090/v1/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "{ Aggregate { YelpReview(groupBy: [\"city\"]) { groupedBy { value } meta { count } } } }"
+  }' | jq '.data.Aggregate.YelpReview | sort_by(-.meta.count) | .[:20] | .[] | {city: .groupedBy.value, reviews: .meta.count}'
+
+# equals
+curl -s -X POST http://localhost:8090/v1/graphql   -H 'Content-Type: application/json'   -d '{
+    "query": "{ Get { YelpReview(nearText: {concepts: [\"duck\"]}, limit: 10, where: {path: [\"categories\"], operator: Equal, valueText: \"Chinese\"}) { businessId businessName city state _additional { certainty distance } } } }"
+  }' | jq '.'
+
+
+curl -s -X POST http://localhost:8090/v1/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "{ Get { YelpReview(nearText: {concepts: [\"duck\"]}, limit: 10, where: { operator: And, operands: [ { path: [\"categories\"], operator: Equal, valueText: \"Chinese\" }, { path: [\"city\"], operator: Equal, valueText: \"New York\" } ] }) { businessId businessName city state _additional { certainty distance } } } }"
+  }' | jq '.'
