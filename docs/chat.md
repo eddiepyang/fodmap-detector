@@ -23,7 +23,7 @@ via Gemini function calling.
   │  2. GET /reviews?business_id={id}                │    Weaviate nearText
   │     ← []Review (capped at --limit)               │    + archive lookup
   │                                                  │
-  │  3. Render chat-prompt.txt template              │
+  │  3. Render chat-instruction.txt template              │
   │     with business name + formatted reviews       │
   │                                                  │
   │  4. Create Gemini chat session                   │
@@ -168,7 +168,7 @@ sees the message, saving tokens and preventing prompt pollution of the conversat
 
 **Prompt layer** handles contextual cases the code layer cannot: nuanced off-topic pivots,
 medical-advice-seeking, or FODMAP claims the model could make without calling the verification tool.
-These are enforced by the system instruction in `chat-prompt.txt`.
+These are enforced by the system instruction in `chat-instruction.txt`.
 
 **Tradeoff:** The topic pre-screen adds one extra API call per turn. It fails open (allows the
 message through) if the screen call errors, avoiding false blocks at the cost of occasionally
@@ -245,6 +245,6 @@ from that plan and the reasoning behind each:
 |---|---|
 | `cli/chat.go` | Command entry point, REPL loop, HTTP helpers, guardrails, tool dispatch, allergen lookup |
 | `cli/fodmap_data.go` | Static FODMAP ingredient database (~60 entries) and `lookupFODMAP` function |
-| `cli/chat-prompt.txt` | Go `text/template` for the chat system instruction (guardrails + review context) |
+| `cli/chat-instruction.txt` | Go `text/template` for the chat system instruction (guardrails + review context) |
 | `cli/chat_test.go` | Tests for guardrails, HTTP helpers, template rendering, tool dispatch |
 | `cli/fodmap_data_test.go` | Tests for FODMAP lookup (exact, partial, case-insensitive, not-found) |

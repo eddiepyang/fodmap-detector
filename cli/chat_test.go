@@ -183,7 +183,7 @@ Reviews:
 
 func writeTempPrompt(t *testing.T, content string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "chat-prompt.txt")
+	p := filepath.Join(t.TempDir(), "chat-instruction.txt")
 	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("writing temp prompt: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestDispatchTool_FODMAP_Known(t *testing.T) {
 	client := NewHTTPFodmapServerClient(srv.URL)
 	session := &chatSession{fodmapClient: client}
 	result := session.dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "garlic"}).(FodmapToolResponse)
-	
+
 	if result.Found != true {
 		t.Errorf("found = %v, want true", result.Found)
 	}
@@ -278,7 +278,7 @@ func TestDispatchTool_FODMAP_Unknown(t *testing.T) {
 	client := NewHTTPFodmapServerClient(srv.URL)
 	session := &chatSession{fodmapClient: client}
 	result := session.dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "unobtainium"}).(FodmapToolResponse)
-	
+
 	if result.Found != false {
 		t.Errorf("found = %v, want false", result.Found)
 	}
@@ -332,7 +332,7 @@ func TestDispatchTool_AllergensDeduplicated(t *testing.T) {
 
 	result := session.dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "pasta"}).(AllergenToolResponse)
 	allergens := result.Allergens
-	
+
 	seen := make(map[string]int)
 	for _, a := range allergens {
 		seen[a]++

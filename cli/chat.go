@@ -50,7 +50,7 @@ func init() {
 	rootCmd.AddCommand(chatCmd)
 	chatCmd.Flags().String("server", "http://localhost:8080", "Base URL of the fodmap server")
 	chatCmd.Flags().Int("limit", 20, "Max reviews to include in context")
-	chatCmd.Flags().String("prompt", "./chat-prompt.txt", "Path to the chat system prompt template")
+	chatCmd.Flags().String("instruction", "./chat-instruction.txt", "Path to the chat system prompt template")
 	chatCmd.Flags().String("category", "", "Filter businesses by category substring")
 	chatCmd.Flags().String("city", "", "Filter businesses by city (exact match)")
 	chatCmd.Flags().String("state", "", "Filter businesses by state (exact match)")
