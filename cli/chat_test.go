@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -181,21 +179,11 @@ const testChatPromptTmpl = `Expert at {{.BusinessName}} ({{.City}}, {{.State}}).
 Reviews:
 {{.Reviews}}`
 
-func writeTempPrompt(t *testing.T, content string) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "chat-instruction.txt")
-	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-		t.Fatalf("writing temp prompt: %v", err)
-	}
-	return p
-}
-
 func TestRenderChatSystemPrompt_ContainsBusinessAndReviews(t *testing.T) {
-	path := writeTempPrompt(t, testChatPromptTmpl)
 	biz := &chatBusiness{Name: "Lotus of Siam", City: "Las Vegas", State: "NV"}
 	reviews := []chatReview{{Stars: 4.5, Text: "great pad thai"}}
 
-	result, err := renderChatSystemPrompt(path, biz, reviews)
+	result, err := renderChatSystemPrompt(testChatPromptTmpl, biz, reviews)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,15 +194,29 @@ func TestRenderChatSystemPrompt_ContainsBusinessAndReviews(t *testing.T) {
 	}
 }
 
+func TestRenderChatSystemPrompt_RealFile(t *testing.T) {
+	// Tests that the real embedded string parses successfully
+	biz := &chatBusiness{Name: "TestBiz", City: "TestCity", State: "TestState"}
+	reviews := []chatReview{{Stars: 5.0, Text: "Test Review"}}
+	
+	result, err := renderChatSystemPrompt(defaultChatInstruction, biz, reviews)
+	if err != nil {
+		t.Fatalf("Failed to render real embedded instruction: %v", err)
+	}
+	
+	if !strings.Contains(result, "TestBiz") {
+		t.Errorf("expected rendered prompt to contain TestBiz")
+	}
+}
+
 func TestRenderChatSystemPrompt_ReviewsFormatted(t *testing.T) {
-	path := writeTempPrompt(t, testChatPromptTmpl)
 	biz := &chatBusiness{Name: "B", City: "C", State: "S"}
 	reviews := []chatReview{
 		{Stars: 5.0, Text: "first review"},
 		{Stars: 3.0, Text: "second review"},
 	}
 
-	result, err := renderChatSystemPrompt(path, biz, reviews)
+	result, err := renderChatSystemPrompt(testChatPromptTmpl, biz, reviews)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -223,16 +225,8 @@ func TestRenderChatSystemPrompt_ReviewsFormatted(t *testing.T) {
 	}
 }
 
-func TestRenderChatSystemPrompt_MissingFile(t *testing.T) {
-	_, err := renderChatSystemPrompt("/nonexistent/path.txt", &chatBusiness{}, nil)
-	if err == nil {
-		t.Error("expected error for missing prompt file, got nil")
-	}
-}
-
 func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
-	path := writeTempPrompt(t, "{{.Unclosed")
-	_, err := renderChatSystemPrompt(path, &chatBusiness{}, nil)
+	_, err := renderChatSystemPrompt("{{.Unclosed", &chatBusiness{}, nil)
 	if err == nil {
 		t.Error("expected error for invalid template, got nil")
 	}
