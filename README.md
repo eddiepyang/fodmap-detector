@@ -33,7 +33,6 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── cmd/
 │   └── cli/
 │       └── main.go          # CLI entry point
-├── chat-instruction.txt          # System prompt template for the interactive chat agent
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
@@ -41,6 +40,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── serve.go             # Serve subcommand (starts the HTTP server)
 │   ├── index.go             # Index subcommand (populates Weaviate for search)
 │   ├── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
+│   ├── chat-instruction.txt # Embedded instruction template for the interactive chat agent
 │   └── fodmap_data.go       # Static FODMAP ingredient database + lookup
 │
 ├── server/
@@ -203,17 +203,15 @@ The flag only affects throughput, not correctness, so it can be omitted on CPU-o
 
 ### 3. Start the HTTP server
 
-`GEMINI_API_KEY` must be set in the environment before starting.
-
 ```sh
 # With search enabled
-GEMINI_API_KEY=your_key go run . serve --weaviate localhost:8090
+go run . serve --weaviate localhost:8090
 
 # Without search (search endpoint returns 503)
-GEMINI_API_KEY=your_key go run . serve
+go run . serve
 ```
 
-Default port is `8080`. Default prompt path is `./prompt.txt`.
+Default port is `8080`.
 
 #### Endpoints
 
@@ -354,7 +352,7 @@ See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviation
 |------|---------|-------------|
 | `--server` | `http://localhost:8080` | Base URL of the running fodmap server |
 | `--limit` | `20` | Max reviews to include as context |
-| `--prompt` | `./chat-instruction.txt` | Path to the chat system prompt template |
+| `--instruction` | `""` | Optional path to a custom chat instruction template file (overrides the embedded default) |
 | `--category` | `""` | Filter businesses by category substring |
 | `--city` | `""` | Filter businesses by city (exact match) |
 | `--state` | `""` | Filter businesses by state (exact match) |

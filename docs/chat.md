@@ -27,7 +27,7 @@ via Gemini function calling.
   │     with business name + formatted reviews       │
   │                                                  │
   │  4. Create Gemini chat session                   │
-  │     system instruction = rendered prompt          │
+  │     system instruction = embedded instruction string│
   │     tools = [lookup_fodmap, lookup_allergens]     │
   │                                                  │
   │  5. REPL loop ─────────────────────────┐         │
@@ -245,6 +245,7 @@ from that plan and the reasoning behind each:
 |---|---|
 | `cli/chat.go` | Command entry point, REPL loop, HTTP helpers, guardrails, tool dispatch, allergen lookup |
 | `cli/fodmap_data.go` | Static FODMAP ingredient database (~60 entries) and `lookupFODMAP` function |
-| `cli/chat-instruction.txt` | Go `text/template` for the chat system instruction (guardrails + review context) |
+| `cli/chat-instruction.txt` | Go `text/template` for the chat system instruction (embedded directly into the binary) |
 | `cli/chat_test.go` | Tests for guardrails, HTTP helpers, template rendering, tool dispatch |
 | `cli/fodmap_data_test.go` | Tests for FODMAP lookup (exact, partial, case-insensitive, not-found) |
+```

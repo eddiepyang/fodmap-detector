@@ -24,7 +24,8 @@ All files created/modified. Build passes (`go build ./...`).
 | `server/llm.go` | ✅ created | Gemini client with concurrent workers + 15 RPM rate limiter |
 | `server/handlers.go` | ✅ created | HTTP handlers: `analyzeHandler`, `resultsHandler`, `reviewsHandler` |
 | `server/server.go` | ✅ created | `Server` struct, routing, `Start()` |
-| `cli/serve.go` | ✅ created | Cobra `serve` subcommand (`--port`, `--prompt` flags) |
+| `cli/chat.go` | ✅ created | Cobra `chat` subcommand (`--server`, `--limit`, `--instruction` flags) |
+| `cli/serve.go` | ✅ created | Cobra `serve` subcommand (`--port`, `--weaviate` flags) |
 | `data/data.go` | ✅ modified | Added `GetReviewsByBusiness(businessID string)` |
 | `go.mod` + `vendor/` | ✅ modified | Added `google.golang.org/genai v1.47.0`, `golang.org/x/time v0.14.0` |
 
