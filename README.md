@@ -67,6 +67,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │
 ├── docs/
 │   ├── search.md                    # Search service design decisions and API reference
+│   ├── chat.md                      # Chat agent design decisions, tradeoffs, and future work
 │   └── indexing-improvements.md     # Indexing performance tuning plan
 │
 └── docker-compose.yaml      # Weaviate + t2v-transformers services
@@ -359,6 +360,8 @@ GEMINI_API_KEY=your_key go run . chat "pad thai" --city "Las Vegas" --state NV
 ```
 
 The command requires the server to be running (`go run . serve --weaviate localhost:8090`).
+
+See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviations, and future improvements.
 
 **Guardrails:**
 
