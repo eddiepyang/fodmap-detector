@@ -1,7 +1,7 @@
 *.avro
 *.old
 *.backup
-
+index.checkpoint
 vendor
 *.parquet
 
