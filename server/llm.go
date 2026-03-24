@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	geminiModel = "gemini-2.0-flash"
+	geminiModel = "gemini-3.1-flash-lite"
 
-	// freeTierRPM is the Gemini 2.0 Flash free-tier request rate limit.
+	// freeTierRPM is the free-tier request rate limit.
 	// Source: https://ai.google.dev/gemini-api/docs/rate-limits
 	freeTierRPM = 15
 
