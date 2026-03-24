@@ -1,18 +1,10 @@
 package data
 
 import (
-	"bufio"
 	"regexp"
-	"strings"
 	"testing"
-
-	"fodmap/data/schemas"
 )
 
-var testReviewsJSONL = strings.Join([]string{
-	`{"review_id":"r1","user_id":"u1","business_id":"b1","stars":4.5,"useful":2,"funny":1,"cool":3,"text":"Great food here!"}`,
-	`{"review_id":"r2","user_id":"u2","business_id":"b2","stars":2.0,"useful":0,"funny":0,"cool":0,"text":"Disappointing."}`,
-}, "\n")
 
 func TestUnmarshalReview(t *testing.T) {
 	pattern := regexp.MustCompile(`[a-zA-Z0-9'-]+`)
@@ -99,73 +91,4 @@ func TestUnmarshalReview(t *testing.T) {
 	}
 }
 
-// TestWriteAndReadParquet is an integration test that verifies the full
-// write→read roundtrip using in-memory JSONL data and a temp file.
-func TestWriteAndReadParquet(t *testing.T) {
-	path := t.TempDir() + "/test.parquet"
 
-	scanner := bufio.NewScanner(strings.NewReader(testReviewsJSONL))
-	if err := WriteBatchParquet(path, scanner, 0); err != nil {
-		t.Fatalf("WriteBatchParquet: %v", err)
-	}
-
-	result, err := ReadParquet(path, 10)
-	if err != nil {
-		t.Fatalf("ReadParquet: %v", err)
-	}
-
-	rows, ok := result.([]schemas.Review)
-	if !ok {
-		t.Fatalf("unexpected result type: %T", result)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
-	}
-
-	if rows[0].ReviewID != "r1" {
-		t.Errorf("rows[0].ReviewID = %q, want %q", rows[0].ReviewID, "r1")
-	}
-	if rows[0].Stars != 4.5 {
-		t.Errorf("rows[0].Stars = %v, want 4.5", rows[0].Stars)
-	}
-	if rows[0].Useful != 2 {
-		t.Errorf("rows[0].Useful = %v, want 2", rows[0].Useful)
-	}
-	if rows[1].ReviewID != "r2" {
-		t.Errorf("rows[1].ReviewID = %q, want %q", rows[1].ReviewID, "r2")
-	}
-	if rows[1].Stars != 2.0 {
-		t.Errorf("rows[1].Stars = %v, want 2.0", rows[1].Stars)
-	}
-}
-
-// TestReadParquet_EarlyStop verifies that earlyStop limits rows returned.
-func TestReadParquet_EarlyStop(t *testing.T) {
-	path := t.TempDir() + "/test.parquet"
-
-	scanner := bufio.NewScanner(strings.NewReader(testReviewsJSONL))
-	if err := WriteBatchParquet(path, scanner, 0); err != nil {
-		t.Fatalf("WriteBatchParquet: %v", err)
-	}
-
-	result, err := ReadParquet(path, 1)
-	if err != nil {
-		t.Fatalf("ReadParquet: %v", err)
-	}
-
-	rows, ok := result.([]schemas.Review)
-	if !ok {
-		t.Fatalf("unexpected result type: %T", result)
-	}
-	if len(rows) != 1 {
-		t.Errorf("got %d rows, want 1 (earlyStop=1)", len(rows))
-	}
-}
-
-// TestReadParquet_MissingFile verifies error is returned for a missing file.
-func TestReadParquet_MissingFile(t *testing.T) {
-	_, err := ReadParquet("/does/not/exist.parquet", 5)
-	if err == nil {
-		t.Error("expected error for missing file, got nil")
-	}
-}

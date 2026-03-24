@@ -2,6 +2,10 @@
 
 Project-level rules for this codebase.
 
+## Git Workflow
+
+- Always pull the latest changes from `main` (`git pull origin main`) before starting a new task or creating a branch.
+
 ## Testing
 
 - Always use Test-Driven Development (TDD). Write tests before writing the implementation.

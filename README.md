@@ -7,8 +7,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ## Purpose
 
 1. Read Yelp review data from a compressed archive (`.tar.gz` of JSON lines)
-2. Serialize reviews to Apache Avro (streaming) or Apache Parquet (columnar batch) formats
-3. Run LLM-based FODMAP analysis on review text using Google Gemini
+2. Serialize reviews to Apache Avro (streaming) format
+3. Provide an interactive semantic search and chat agent for FODMAP/allergen queries
 
 ---
 
@@ -19,7 +19,6 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Language | Go 1.26+ |
 | CLI | [Cobra](https://github.com/spf13/cobra) |
 | Streaming format | Apache Avro (OCF) via [hamba/avro](https://github.com/hamba/avro) |
-| Batch format | Apache Parquet via [xitongsys/parquet-go](https://github.com/xitongsys/parquet-go) |
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
 | Vector search | [Weaviate](https://weaviate.io) with `text2vec-transformers` (local embeddings) |
@@ -34,13 +33,11 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── cmd/
 │   └── cli/
 │       └── main.go          # CLI entry point
-├── prompt.txt               # LLM prompt for FODMAP batch analysis
 ├── chat-prompt.txt          # System prompt template for the interactive chat agent
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
 │   ├── event.go             # Avro subcommand (event write / event read)
-│   ├── batch.go             # Parquet subcommand (batch)
 │   ├── serve.go             # Serve subcommand (starts the HTTP server)
 │   ├── index.go             # Index subcommand (populates Weaviate for search)
 │   ├── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
@@ -49,14 +46,11 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # HTTP request handlers
-│   ├── jobs.go              # Background job store
-│   └── llm.go               # Gemini LLM client (batch analysis)
 │
 ├── data/
 │   ├── data.go              # Archive reading, Parquet write/read
 │   │
 │   ├── io/
-│   │   ├── batch.go         # Channel-based JSON reader (ReadToChan)
 │   │   └── event.go         # Avro OCF read/write helpers
 │   │
 │   └── schemas/
@@ -116,18 +110,12 @@ data/archive.tar.gz  (Yelp JSON lines, gzip-compressed)
         v
    GetArchive(path, "review")  ->  *bufio.Scanner
         |
-   +----+--------------------+
-   |                         |
-Avro path               Parquet path
-(event cmd)             (batch cmd)
-   |                         |
-EventWriter.Write()     WriteBatchParquet()
-   |                         |
-*.avro                  *.parquet
-                             |
-                        ReadParquet()
-                             |
-                        []Review
+   |
+Avro path (event cmd)
+   |
+EventWriter.Write()
+   |
+*.avro
 ```
 
 ---
@@ -140,7 +128,7 @@ EventWriter.Write()     WriteBatchParquet()
   ```sh
   sudo apt-get install docker-compose-v2
   ```
-- **`GEMINI_API_KEY`** — required to start the HTTP server (used by the `/analyze` endpoint). Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
+- **`GEMINI_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
   ```sh
   export GEMINI_API_KEY=your_key_here
   ```
@@ -231,8 +219,7 @@ Default port is `8080`. Default prompt path is `./prompt.txt`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/analyze` | Submit reviews for FODMAP analysis (returns job ID) |
-| `GET` | `/results/{job_id}` | Poll analysis results |
+
 | `GET` | `/reviews` | List reviews for a business |
 | `GET` | `/searchBusiness/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
 | `GET` | `/searchReview/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
@@ -305,20 +292,7 @@ go run . index --weaviate localhost:8090
 | `--start-offset` | `0` | Skip this many reviews before indexing (overrides checkpoint) |
 | `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization (e.g. `localhost:8091`); omit to let Weaviate vectorize |
 
-##### Parquet (batch)
 
-```sh
-# Write reviews from archive to Parquet
-go run . batch -o output.parquet
-
-# Limit to 500 records
-go run . batch -o output.parquet -n 500
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-o, --output` | `test.parquet` | Output file path |
-| `-n, --limit` | `0` | Max records to write (0 = no limit) |
 
 ##### Avro (event)
 
