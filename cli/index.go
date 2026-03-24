@@ -183,48 +183,120 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 
 	// Deep buffers so the producer stays ahead of the GPU and the GPU stays
 	// ahead of the Weaviate upload workers — minimising idle time at each stage.
+	// Deep buffers so the producer stays ahead of the GPU and Weaviate.
+	rawLineCh := make(chan []byte, numWorkers*batchSize*2)
 	batchCh := make(chan []search.IndexItem, numWorkers*4)
-	vectorizedCh := make(chan []search.IndexItem, numWorkers*2)
+	vectorizedCh := make(chan []search.IndexItem, numWorkers*4)
 
 	var (
-		wg       sync.WaitGroup
-		total    atomic.Int64
-		firstErr atomic.Pointer[error]
+		parseWg   sync.WaitGroup
+		vecWg     sync.WaitGroup
+		uploadWg  sync.WaitGroup
+		total     atomic.Int64
+		firstErr  atomic.Pointer[error]
 	)
 
 	total.Store(int64(offset))
 
-	// Stage 1: single vectorize worker — the proxy serialises GPU work anyway,
-	// so one worker is enough; the deep batchCh buffer ensures the next request
-	// is ready the moment the current one finishes.
-	go func() {
-		for batch := range batchCh {
-			if firstErr.Load() != nil {
-				continue // drain without processing to unblock producer
-			}
-			if vectorizerHost != "" {
-				if err := vectorizeBatch(ctx, vectorizerHost, batch); err != nil {
-					e := fmt.Errorf("vectorize batch: %w", err)
-					firstErr.CompareAndSwap(nil, &e)
+	// Stage 1: Parallel JSON parsing workers
+	for range numWorkers {
+		parseWg.Add(1)
+		go func() {
+			defer parseWg.Done()
+			batch := make([]search.IndexItem, 0, batchSize)
+			for b := range rawLineCh {
+				if firstErr.Load() != nil {
 					continue
 				}
+				var r schemas.Review
+				if err := json.Unmarshal(b, &r); err != nil {
+					slog.Warn("skipping malformed record", "error", err)
+					continue
+				}
+				item := search.IndexItem{Review: r}
+				if biz, ok := businessMap[r.BusinessID]; ok {
+					item.BusinessName = biz.Name
+					item.City = biz.City
+					item.State = biz.State
+					item.Categories = biz.Categories
+				}
+				if filterCity != "" && !strings.EqualFold(filterCity, item.City) {
+					continue
+				}
+				batch = append(batch, item)
+				if len(batch) >= batchSize {
+					batchCh <- append([]search.IndexItem(nil), batch...)
+					batch = batch[:0]
+				}
 			}
-			vectorizedCh <- batch
-		}
+			if len(batch) > 0 {
+				batchCh <- append([]search.IndexItem(nil), batch...)
+			}
+		}()
+	}
+	go func() {
+		parseWg.Wait()
+		close(batchCh)
+	}()
+
+	// Stage 2: Parallel vectorizer workers
+	vWorkers := numWorkers
+	if vectorizerHost == "" {
+		vWorkers = 1 // If skip vectorization, single pass-through worker is fine
+	}
+	for range vWorkers {
+		vecWg.Add(1)
+		go func() {
+			defer vecWg.Done()
+			for batch := range batchCh {
+				if firstErr.Load() != nil {
+					continue
+				}
+				if vectorizerHost != "" {
+					var err error
+					for attempt := 0; attempt < 5; attempt++ {
+						err = vectorizeBatch(ctx, vectorizerHost, batch)
+						if err == nil {
+							break
+						}
+						slog.Warn("vectorize batch failed, retrying", "attempt", attempt+1, "error", err)
+						time.Sleep(time.Duration(1<<attempt) * time.Second)
+					}
+					if err != nil {
+						e := fmt.Errorf("vectorize batch failed after 5 attempts: %w", err)
+						firstErr.CompareAndSwap(nil, &e)
+						continue
+					}
+				}
+				vectorizedCh <- batch
+			}
+		}()
+	}
+	go func() {
+		vecWg.Wait()
 		close(vectorizedCh)
 	}()
 
-	// Stage 2: upload workers — drain vectorizedCh while Stage 1 keeps running.
+	// Stage 3: Weaviate upload workers
 	for range numWorkers {
-		wg.Add(1)
+		uploadWg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer uploadWg.Done()
 			for batch := range vectorizedCh {
 				if firstErr.Load() != nil {
 					continue
 				}
-				if err := client.BatchUpsert(ctx, batch); err != nil {
-					e := fmt.Errorf("batch upsert: %w", err)
+				var err error
+				for attempt := 0; attempt < 5; attempt++ {
+					err = client.BatchUpsert(ctx, batch)
+					if err == nil {
+						break
+					}
+					slog.Warn("batch upsert failed, retrying", "attempt", attempt+1, "error", err)
+					time.Sleep(time.Duration(1<<attempt) * time.Second)
+				}
+				if err != nil {
+					e := fmt.Errorf("batch upsert failed after 5 attempts: %w", err)
 					firstErr.CompareAndSwap(nil, &e)
 					continue
 				}
@@ -232,7 +304,13 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 				slog.Info("indexed batch", "total", n)
 
 				if checkpointPath != "" {
-					if werr := writeCheckpoint(checkpointPath, n); werr != nil {
+					// Safe rewind checkpointing: rewind assuming 8 parallel buffers of size (batchSize)
+					// to guarantee we never drop in-flight parallel batches if there is a crash.
+					safeOffset := n - int64(8*numWorkers*batchSize)
+					if safeOffset < 0 {
+						safeOffset = 0
+					}
+					if werr := writeCheckpoint(checkpointPath, safeOffset); werr != nil {
 						slog.Warn("checkpoint write failed", "error", werr)
 					}
 				}
@@ -240,37 +318,17 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	batch := make([]search.IndexItem, 0, batchSize)
-
+	// Stage 0: Main thread reads raw lines from archive
 	for scanner.Scan() {
-		var r schemas.Review
-		if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
-			slog.Warn("skipping malformed record", "error", err)
-			continue
+		if firstErr.Load() != nil {
+			break
 		}
-
-		item := search.IndexItem{Review: r}
-		if biz, ok := businessMap[r.BusinessID]; ok {
-			item.BusinessName = biz.Name
-			item.City = biz.City
-			item.State = biz.State
-			item.Categories = biz.Categories
-		}
-		if filterCity != "" && !strings.EqualFold(filterCity, item.City) {
-			continue
-		}
-		batch = append(batch, item)
-		if len(batch) >= batchSize {
-			batchCh <- append([]search.IndexItem(nil), batch...)
-			batch = batch[:0]
-		}
+		b := make([]byte, len(scanner.Bytes()))
+		copy(b, scanner.Bytes())
+		rawLineCh <- b
 	}
-
-	if len(batch) > 0 {
-		batchCh <- batch
-	}
-	close(batchCh)
-	wg.Wait()
+	close(rawLineCh)
+	uploadWg.Wait()
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scanner error: %w", err)

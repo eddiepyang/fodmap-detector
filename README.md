@@ -30,10 +30,6 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ```
 .
 ├── main.go                  # Server entry point
-├── cmd/
-│   └── cli/
-│       └── main.go          # CLI entry point
-│
 ├── cli/
 │   ├── root.go              # Root Cobra command
 │   ├── event.go             # Avro subcommand (event write / event read)
@@ -133,21 +129,38 @@ EventWriter.Write()
   export GEMINI_API_KEY=your_key_here
   ```
 
-### 1. Start Weaviate (required for search)
+### 1. Start Vector Search Infrastructure
+
+You must run Weaviate and the embedding vectorizer to enable semantic search. The setup differs depending on whether you want to use Mac Apple Silicon (Metal/MPS) or a Linux machine with an NVIDIA GPU.
+
+#### Option A: Mac M2 / CPU Setup (Best for Apple Silicon)
+
+Docker on macOS cannot directly access the GPU (Metal) hardware. To get massive acceleration using Apple's `mps` backend, run Weaviate in Docker but run the python vectorizer natively:
+
+1. **Start Weaviate in Docker:**
+   ```sh
+   docker compose up -d
+   ```
+   *(This boots up Weaviate on port `8090` and configures it to look for the vectorizer on your local machine).*
+
+2. **Start the Vectorizer Natively:**
+   In a separate terminal:
+   ```sh
+   cd vectorizer-proxy
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   uvicorn app:app --host 0.0.0.0 --port 8080 --workers 4
+   ```
+
+#### Option B: Linux / NVIDIA CUDA Setup
+
+If you are on Linux and have the `nvidia-container-toolkit` installed, you can run everything inside Docker with direct GPU passthrough. You don't need to run the Python script natively.
 
 ```sh
-docker compose up -d
+docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d
 ```
-
-This starts:
-- **Weaviate** on port `8090` — the vector database
-- **t2v-transformers** on port `8091` — a local `sentence-transformers/multi-qa-MiniLM-L6-cos-v1` inference server used to embed review text into 384-dimensional vectors
-
-On first run, the transformer model (~90 MB) is downloaded automatically. Wait for:
-
-```
-t2v-transformers  | Application startup complete.
-```
+*(This starts both Weaviate and the CUDA-accelerated vectorizer entirely inside Docker).*
 
 ### 2. Index reviews into Weaviate
 

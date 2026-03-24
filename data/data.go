@@ -36,19 +36,31 @@ type multiCloser struct{ a, b goio.Closer }
 
 func (m multiCloser) Close() error { _ = m.a.Close(); return m.b.Close() }
 
+func getTarReader(f *os.File) (*tar.Reader, goio.Closer, error) {
+	gz, err := gzip.NewReader(f)
+	if err == nil {
+		return tar.NewReader(gz), gz, nil
+	}
+	if err == gzip.ErrHeader {
+		if _, err := f.Seek(0, 0); err != nil {
+			return nil, nil, fmt.Errorf("seeking file: %w", err)
+		}
+		return tar.NewReader(f), goio.NopCloser(f), nil
+	}
+	return nil, nil, fmt.Errorf("opening gzip stream: %w", err)
+}
+
 func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, error) {
 	files, err := os.Open(archivePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening archive: %w", err)
 	}
 
-	gz, err := gzip.NewReader(files)
+	archiveFiles, gz, err := getTarReader(files)
 	if err != nil {
 		_ = files.Close()
-		return nil, nil, fmt.Errorf("opening gzip stream: %w", err)
+		return nil, nil, err
 	}
-
-	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
@@ -75,13 +87,11 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 	}
 	defer files.Close()
 
-	gz, err := gzip.NewReader(files)
+	archiveFiles, gz, err := getTarReader(files)
 	if err != nil {
-		return nil, fmt.Errorf("opening gzip stream: %w", err)
+		return nil, err
 	}
 	defer gz.Close()
-
-	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
@@ -125,13 +135,11 @@ func GetBusinessMap() (map[string]schemas.Business, error) {
 	}
 	defer files.Close()
 
-	gz, err := gzip.NewReader(files)
+	archiveFiles, gz, err := getTarReader(files)
 	if err != nil {
-		return nil, fmt.Errorf("opening gzip stream: %w", err)
+		return nil, err
 	}
 	defer gz.Close()
-
-	archiveFiles := tar.NewReader(gz)
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
