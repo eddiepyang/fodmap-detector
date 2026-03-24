@@ -9,18 +9,11 @@ import (
 	"fmt"
 	goio "io"
 	"log/slog"
-	"math"
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
-	"fodmap/data/io"
 	"fodmap/data/schemas"
-
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/reader"
-	"github.com/xitongsys/parquet-go/writer"
 )
 
 // DefaultArchivePath is the default path to the Yelp dataset TAR archive.
@@ -184,64 +177,3 @@ func ListDir() error {
 	return nil
 }
 
-// WriteBatchParquet reads JSONL records from fileScanner, parses them as Review records,
-// and writes them to outFile in Parquet format. Returns an error if writing fails.
-func WriteBatchParquet(outFile string, fileScanner *bufio.Scanner, limit int) error {
-	start := time.Now()
-
-	fw, err := local.NewLocalFileWriter(outFile)
-	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
-	}
-	defer fw.Close()
-
-	pw, err := writer.NewParquetWriter(fw, new(schemas.Review), 20)
-	if err != nil {
-		return fmt.Errorf("creating parquet writer: %w", err)
-	}
-
-	inChan := make(chan io.ParseResult, 3)
-	go io.ReadToChan(UnmarshalReview, inChan, fileScanner, limit)
-
-	var parseErrors int
-	for item := range inChan {
-		if item.Err != nil {
-			parseErrors++
-			slog.Error("skipping record due to parse error", "error", item.Err)
-			continue
-		}
-		if err = pw.Write(item.Record); err != nil {
-			return fmt.Errorf("writing to parquet: %w", err)
-		}
-	}
-
-	if err := pw.WriteStop(); err != nil {
-		return fmt.Errorf("finalizing parquet file: %w", err)
-	}
-
-	slog.Info("process completed", "duration", time.Since(start), "file", outFile, "parse_errors", parseErrors)
-	return nil
-}
-
-// ReadParquet reads up to earlyStop rows from fileName and returns them as []schemas.Review.
-func ReadParquet(fileName string, earlyStop int64) (any, error) {
-	fr, err := local.NewLocalFileReader(fileName)
-	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
-	}
-	defer fr.Close()
-
-	pr, err := reader.NewParquetReader(fr, new(schemas.Review), 4)
-	if err != nil {
-		return nil, fmt.Errorf("creating parquet reader: %w", err)
-	}
-
-	n := pr.GetNumRows()
-	stop := int(math.Min(float64(n), float64(earlyStop)))
-	slog.Info("reading rows", "count", stop)
-	rows := make([]schemas.Review, stop)
-	if err := pr.Read(&rows); err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
