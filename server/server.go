@@ -28,8 +28,7 @@ type Config struct {
 	WeaviateHost string // optional; if empty, the search endpoint returns 503
 }
 
-// New initialises the LLM client and job store. Returns an error if
-// GEMINI_API_KEY is unset or the prompt template cannot be parsed.
+// New initialises the server and Searcher client.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
 		port: cfg.Port,
