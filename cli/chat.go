@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,9 @@ const (
 	maxResponseLen    = 4000
 )
 
+//go:embed chat-instruction.txt
+var defaultChatInstruction string
+
 // injectionPatterns are case-insensitive substrings that indicate a prompt injection attempt.
 var injectionPatterns = []string{
 	"ignore previous instructions",
@@ -50,7 +54,7 @@ func init() {
 	rootCmd.AddCommand(chatCmd)
 	chatCmd.Flags().String("server", "http://localhost:8080", "Base URL of the fodmap server")
 	chatCmd.Flags().Int("limit", 20, "Max reviews to include in context")
-	chatCmd.Flags().String("prompt", "./chat-prompt.txt", "Path to the chat system prompt template")
+	chatCmd.Flags().String("instruction", "", "Optional path to a custom chat instruction template file (overrides the embedded default)")
 	chatCmd.Flags().String("category", "", "Filter businesses by category substring")
 	chatCmd.Flags().String("city", "", "Filter businesses by city (exact match)")
 	chatCmd.Flags().String("state", "", "Filter businesses by state (exact match)")
@@ -109,7 +113,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	query := args[0]
 	serverURL, _ := cmd.Flags().GetString("server")
 	limit, _ := cmd.Flags().GetInt("limit")
-	promptPath, _ := cmd.Flags().GetString("prompt")
+	instructionPath, _ := cmd.Flags().GetString("instruction")
 	category, _ := cmd.Flags().GetString("category")
 	city, _ := cmd.Flags().GetString("city")
 	state, _ := cmd.Flags().GetString("state")
@@ -133,7 +137,16 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Fetched %d reviews. Starting chat (type 'exit' to quit)...\n", len(reviews))
 
-	systemPrompt, err := renderChatSystemPrompt(promptPath, biz, reviews)
+	tmplStr := defaultChatInstruction
+	if instructionPath != "" {
+		b, err := os.ReadFile(instructionPath)
+		if err != nil {
+			return fmt.Errorf("reading custom instruction file: %w", err)
+		}
+		tmplStr = string(b)
+	}
+
+	systemPrompt, err := renderChatSystemPrompt(tmplStr, biz, reviews)
 	if err != nil {
 		return fmt.Errorf("rendering system prompt: %w", err)
 	}
@@ -533,14 +546,10 @@ type chatPromptData struct {
 	Reviews      string
 }
 
-func renderChatSystemPrompt(promptPath string, biz *chatBusiness, reviews []chatReview) (string, error) {
-	tmplBytes, err := os.ReadFile(promptPath)
+func renderChatSystemPrompt(tmplStr string, biz *chatBusiness, reviews []chatReview) (string, error) {
+	tmpl, err := template.New("chat").Parse(tmplStr)
 	if err != nil {
-		return "", fmt.Errorf("reading prompt %q: %w", promptPath, err)
-	}
-	tmpl, err := template.New("chat").Parse(string(tmplBytes))
-	if err != nil {
-		return "", fmt.Errorf("parsing prompt: %w", err)
+		return "", fmt.Errorf("parsing instruction template: %w", err)
 	}
 	var sb strings.Builder
 	for i, r := range reviews {

@@ -33,7 +33,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── cmd/
 │   └── cli/
 │       └── main.go          # CLI entry point
-├── chat-prompt.txt          # System prompt template for the interactive chat agent
+├── chat-instruction.txt          # System prompt template for the interactive chat agent
 │
 ├── cli/
 │   ├── root.go              # Root Cobra command
@@ -354,7 +354,7 @@ See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviation
 |------|---------|-------------|
 | `--server` | `http://localhost:8080` | Base URL of the running fodmap server |
 | `--limit` | `20` | Max reviews to include as context |
-| `--prompt` | `./chat-prompt.txt` | Path to the chat system prompt template |
+| `--prompt` | `./chat-instruction.txt` | Path to the chat system prompt template |
 | `--category` | `""` | Filter businesses by category substring |
 | `--city` | `""` | Filter businesses by city (exact match) |
 | `--state` | `""` | Filter businesses by state (exact match) |
