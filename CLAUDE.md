@@ -48,3 +48,7 @@ Project-level rules for this codebase.
 
 - Use `slog` throughout — not `log` or `fmt.Println`
 - Structured key/value pairs: `slog.Error("msg", "key", value)` — never bare string concatenation
+
+## Static Assets
+
+- Always use `//go:embed` for static text files, prompts, and templates instead of reading from disk with `os.ReadFile`. This bundles assets directly into the Go binary and guarantees they are present at deployment.
