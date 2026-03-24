@@ -44,7 +44,7 @@ def vectorize_batch(req: BatchRequest, response: Response):
     try:
         vectors = model.encode(
             req.texts,
-            batch_size=min(len(req.texts), 256),
+            batch_size=len(req.texts),
             normalize_embeddings=req.normalize,
             convert_to_numpy=True,
             show_progress_bar=False,

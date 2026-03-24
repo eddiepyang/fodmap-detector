@@ -150,7 +150,7 @@ Docker on macOS cannot directly access the GPU (Metal) hardware. To get massive 
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
-   uvicorn app:app --host 0.0.0.0 --port 8080 --workers 4
+   uvicorn app:app --host 0.0.0.0 --port 8080
    ```
 
 #### Option B: Linux / NVIDIA CUDA Setup
