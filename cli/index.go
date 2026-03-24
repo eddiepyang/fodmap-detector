@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,7 @@ func init() {
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
 	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes")
+	indexCmd.Flags().String("filter-city", "", "Filter reviews by city")
 }
 
 var vectorizerHTTPClient = &http.Client{Timeout: 5 * time.Minute}
@@ -129,6 +131,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	checkpointPath, _ := cmd.Flags().GetString("checkpoint")
 	startOffset, _ := cmd.Flags().GetInt("start-offset")
 	vectorizerHost, _ := cmd.Flags().GetString("vectorizer")
+	filterCity, _ := cmd.Flags().GetString("filter-city")
 	ctx := context.Background()
 
 	client, err := search.NewClient(host)
@@ -253,7 +256,9 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 			item.State = biz.State
 			item.Categories = biz.Categories
 		}
-
+		if filterCity != "" && !strings.EqualFold(filterCity, item.City) {
+			continue
+		}
 		batch = append(batch, item)
 		if len(batch) >= batchSize {
 			batchCh <- append([]search.IndexItem(nil), batch...)

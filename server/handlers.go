@@ -91,7 +91,7 @@ func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 	if s.searcher == nil {
 		http.Error(w, `{"error":"search service not configured"}`, http.StatusServiceUnavailable)
 		return
@@ -119,7 +119,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		State:    r.URL.Query().Get("state"),
 	}
 
-	result, err := s.searcher.Search(r.Context(), q, limit, filter)
+	result, err := s.searcher.GetBusinesses(r.Context(), q, limit, filter)
 	if err != nil {
 		slog.Error("search error", "error", err)
 		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
@@ -144,6 +144,72 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string][]business{"businesses": out}); err != nil {
+		slog.Error("encode error", "error", err)
+	}
+}
+
+func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.searcher == nil {
+		http.Error(w, `{"error":"search service not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.PathValue("query")
+	if q == "" {
+		http.Error(w, `{"error":"search query is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		n, err := strconv.Atoi(l)
+		if err != nil || n <= 0 {
+			http.Error(w, `{"error":"limit must be a positive integer"}`, http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+
+	filter := search.SearchFilter{
+		Category: r.URL.Query().Get("category"),
+		City:     r.URL.Query().Get("city"),
+		State:    r.URL.Query().Get("state"),
+	}
+
+	result, err := s.searcher.GetReviews(r.Context(), q, limit, filter)
+	if err != nil {
+		slog.Error("search error", "error", err)
+		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	type review struct {
+		Text         string  `json:"text"`
+		BusinessID   string  `json:"business_id"`
+		BusinessName string  `json:"business_name"`
+		City         string  `json:"city"`
+		State        string  `json:"state"`
+		Score        float64 `json:"score"`
+	}
+
+	// Ensure JSON encodes [] not null when there are no results.
+	if result.BusinessReviews == nil {
+		result.BusinessReviews = []search.RankedReview{}
+	}
+
+	out := make([]review, len(result.BusinessReviews))
+	for i, rr := range result.BusinessReviews {
+		out[i] = review{
+			Text:         rr.Review.Review.Text,
+			BusinessID:   rr.Review.Review.BusinessID,
+			BusinessName: rr.Review.BusinessName,
+			City:         rr.Review.City,
+			State:        rr.Review.State,
+			Score:        rr.Score,
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string][]review{"reviews": out}); err != nil {
 		slog.Error("encode error", "error", err)
 	}
 }
