@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -92,7 +94,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Found: %s (%s, %s)\n", biz.Name, biz.City, biz.State)
 
-	reviews, err := fetchChatReviews(ctx, serverURL, biz.ID, limit)
+	reviews, err := fetchChatReviews(ctx, serverURL, biz.ID, query, limit)
 	if err != nil {
 		return fmt.Errorf("fetching reviews: %w", err)
 	}
@@ -151,7 +153,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		response, err := sendWithToolCalls(ctx, chat, input)
+		response, err := sendWithToolCalls(ctx, serverURL, chat, input)
 		if err != nil {
 			fmt.Printf("[error] %v\n> ", err)
 			continue
@@ -197,43 +199,57 @@ func isFoodRelated(ctx context.Context, client *genai.Client, input string) (boo
 
 // sendWithToolCalls sends a user message and iterates until the model returns a
 // plain-text response, dispatching any function calls in between.
-func sendWithToolCalls(ctx context.Context, chat *genai.Chat, input string) (string, error) {
-	resp, err := chat.SendMessage(ctx, genai.Part{Text: input})
-	if err != nil {
-		return "", fmt.Errorf("send message: %w", err)
+func sendWithToolCalls(ctx context.Context, serverURL string, chat *genai.Chat, input string) (string, error) {
+	var parts []genai.Part
+	if input != "" {
+		parts = []genai.Part{{Text: input}}
 	}
+
+	var fullText strings.Builder
 	for {
+		parts = nil // clear for text next iteration if no tool calls
+
 		var toolParts []genai.Part
-		for _, candidate := range resp.Candidates {
+		for resp, err := range chat.SendMessageStream(ctx, parts...) {
+			if err != nil {
+				return "", fmt.Errorf("stream error: %w", err)
+			}
+			if len(resp.Candidates) == 0 {
+				continue
+			}
+			candidate := resp.Candidates[0]
 			if candidate.Content == nil {
 				continue
 			}
 			for _, part := range candidate.Content.Parts {
-				if part.FunctionCall == nil {
-					continue
+				if part.Text != "" {
+					fullText.WriteString(part.Text)
+					fmt.Print(part.Text)
 				}
-				result := dispatchTool(ctx, part.FunctionCall.Name, part.FunctionCall.Args)
-				toolParts = append(toolParts,
-					*genai.NewPartFromFunctionResponse(part.FunctionCall.Name, result),
-				)
+				if part.FunctionCall != nil {
+					result := dispatchTool(ctx, serverURL, part.FunctionCall.Name, part.FunctionCall.Args)
+					toolParts = append(toolParts,
+						*genai.NewPartFromFunctionResponse(part.FunctionCall.Name, result),
+					)
+					fmt.Printf("\n[Tool Call] %s\n", part.FunctionCall.Name)
+				}
 			}
 		}
-		if len(toolParts) == 0 {
-			break
+
+		if len(toolParts) > 0 {
+			parts = toolParts
+			continue
 		}
-		resp, err = chat.SendMessage(ctx, toolParts...)
-		if err != nil {
-			return "", fmt.Errorf("send tool response: %w", err)
-		}
+		break
 	}
-	return resp.Text(), nil
+	return fullText.String(), nil
 }
 
-func dispatchTool(ctx context.Context, name string, args map[string]any) map[string]any {
+func dispatchTool(ctx context.Context, serverURL, name string, args map[string]any) map[string]any {
 	ingredient, _ := args["ingredient"].(string)
 	switch name {
 	case "lookup_fodmap":
-		return lookupFODMAP(ingredient)
+		return lookupFODMAP(ctx, serverURL, ingredient)
 	case "lookup_allergens":
 		result, err := lookupAllergens(ctx, ingredient)
 		if err != nil {
@@ -316,8 +332,8 @@ func fetchTopBusiness(ctx context.Context, serverURL, query, category, city, sta
 	return &chatBusiness{ID: b.ID, Name: b.Name, City: b.City, State: b.State}, nil
 }
 
-func fetchChatReviews(ctx context.Context, serverURL, businessID string, limit int) ([]chatReview, error) {
-	u := serverURL + "/reviews?business_id=" + url.QueryEscape(businessID)
+func fetchChatReviews(ctx context.Context, serverURL, businessID, query string, limit int) ([]chatReview, error) {
+	u := serverURL + "/searchReview/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
@@ -328,14 +344,57 @@ func fetchChatReviews(ctx context.Context, serverURL, businessID string, limit i
 	}
 	defer resp.Body.Close()
 
-	var reviews []chatReview
-	if err := json.NewDecoder(resp.Body).Decode(&reviews); err != nil {
+	var data struct {
+		Reviews []chatReview `json:"reviews"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("decoding reviews response: %w", err)
 	}
-	if limit < len(reviews) {
-		reviews = reviews[:limit]
+	return data.Reviews, nil
+}
+
+func lookupFODMAP(ctx context.Context, serverURL, ingredient string) map[string]any {
+	u := serverURL + "/searchFodmap/" + url.PathEscape(ingredient)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
 	}
-	return reviews, nil
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return map[string]any{
+			"ingredient": ingredient,
+			"found":      false,
+			"message":    "ingredient not in database; consult the Monash University FODMAP app for accurate classification",
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return map[string]any{"error": fmt.Sprintf("server returned %d", resp.StatusCode)}
+	}
+
+	var data struct {
+		Level  string   `json:"level"`
+		Groups []string `json:"groups"`
+		Notes  string   `json:"notes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+
+	result := map[string]any{
+		"ingredient":    ingredient,
+		"found":         true,
+		"fodmap_level":  data.Level,
+		"fodmap_groups": data.Groups,
+	}
+	if data.Notes != "" {
+		result["notes"] = data.Notes
+	}
+	return result
 }
 
 // ---- system prompt rendering ----
@@ -379,7 +438,13 @@ var offClient = &http.Client{Timeout: 10 * time.Second}
 // offBaseURL is the Open Food Facts search endpoint. Overridden in tests.
 var offBaseURL = "https://world.openfoodfacts.org/cgi/search.pl"
 
+var allergenCache sync.Map
+
 func lookupAllergens(ctx context.Context, ingredient string) (map[string]any, error) {
+	if cached, ok := allergenCache.Load(ingredient); ok {
+		return cached.(map[string]any), nil
+	}
+
 	searchURL := offBaseURL + "?search_terms=" +
 		url.QueryEscape(ingredient) +
 		"&search_simple=1&action=process&json=1&page_size=3"
@@ -415,9 +480,11 @@ func lookupAllergens(ctx context.Context, ingredient string) (map[string]any, er
 			}
 		}
 	}
-	return map[string]any{
+	res := map[string]any{
 		"ingredient": ingredient,
 		"allergens":  allergens,
 		"source":     "Open Food Facts",
-	}, nil
+	}
+	allergenCache.Store(ingredient, res)
+	return res, nil
 }

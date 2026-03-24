@@ -129,37 +129,17 @@ func TestFetchTopBusiness_NoResults(t *testing.T) {
 
 // ---- fetchChatReviews ----
 
-func TestFetchChatReviews_CapAtLimit(t *testing.T) {
-	reviews := make([]map[string]any, 5)
-	for i := range reviews {
-		reviews[i] = map[string]any{"review_id": "r", "Stars": 4.0, "Text": "good food"}
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(reviews)
-	}))
-	defer srv.Close()
-
-	got, err := fetchChatReviews(t.Context(), srv.URL, "biz1", 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 3 {
-		t.Errorf("len = %d, want 3 (capped at limit)", len(got))
-	}
-}
-
 func TestFetchChatReviews_LimitLargerThanResults(t *testing.T) {
 	reviews := []map[string]any{
 		{"review_id": "r1", "Stars": 5.0, "Text": "amazing"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(reviews)
+		_ = json.NewEncoder(w).Encode(map[string]any{"reviews": reviews})
 	}))
 	defer srv.Close()
 
-	got, err := fetchChatReviews(t.Context(), srv.URL, "biz1", 20)
+	got, err := fetchChatReviews(t.Context(), srv.URL, "biz1", "pad thai", 20)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,17 +149,24 @@ func TestFetchChatReviews_LimitLargerThanResults(t *testing.T) {
 }
 
 func TestFetchChatReviews_ForwardsBusinessID(t *testing.T) {
-	var gotQuery string
+	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]any{})
+		_ = json.NewEncoder(w).Encode(map[string]any{"reviews": []any{}})
 	}))
 	defer srv.Close()
 
-	_, _ = fetchChatReviews(t.Context(), srv.URL, "my-biz-id", 5)
+	_, _ = fetchChatReviews(t.Context(), srv.URL, "my-biz-id", "pad thai", 5)
+	if gotPath != "/searchReview/pad%20thai" && gotPath != "/searchReview/pad thai" {
+		t.Errorf("path = %q, want /searchReview/pad%%20thai", gotPath)
+	}
 	if !strings.Contains(gotQuery, "business_id=my-biz-id") {
 		t.Errorf("query %q missing business_id param", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "limit=5") {
+		t.Errorf("query %q missing limit param", gotQuery)
 	}
 }
 
@@ -249,7 +236,23 @@ func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
 // ---- dispatchTool ----
 
 func TestDispatchTool_FODMAP_Known(t *testing.T) {
-	result := dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "garlic"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/searchFodmap/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ingredient": "garlic",
+			"level":      "high",
+			"groups":     []string{"fructans"},
+			"notes":      "Keep away",
+			"certainty":  0.95,
+		})
+	}))
+	defer srv.Close()
+
+	result := dispatchTool(t.Context(), srv.URL, "lookup_fodmap", map[string]any{"ingredient": "garlic"})
 	if result["found"] != true {
 		t.Errorf("found = %v, want true", result["found"])
 	}
@@ -259,14 +262,19 @@ func TestDispatchTool_FODMAP_Known(t *testing.T) {
 }
 
 func TestDispatchTool_FODMAP_Unknown(t *testing.T) {
-	result := dispatchTool(t.Context(), "lookup_fodmap", map[string]any{"ingredient": "unobtainium"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	result := dispatchTool(t.Context(), srv.URL, "lookup_fodmap", map[string]any{"ingredient": "unobtainium"})
 	if result["found"] != false {
 		t.Errorf("found = %v, want false", result["found"])
 	}
 }
 
 func TestDispatchTool_UnknownTool(t *testing.T) {
-	result := dispatchTool(t.Context(), "nonexistent_tool", map[string]any{})
+	result := dispatchTool(t.Context(), "", "nonexistent_tool", map[string]any{})
 	if _, ok := result["error"]; !ok {
 		t.Error("expected error key for unknown tool")
 	}
@@ -287,7 +295,7 @@ func TestDispatchTool_Allergens(t *testing.T) {
 	offBaseURL = srv.URL + "/cgi/search.pl"
 	t.Cleanup(func() { offBaseURL = orig })
 
-	result := dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "pasta"})
+	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "pasta"})
 	if _, ok := result["error"]; ok {
 		t.Fatalf("unexpected error in result: %v", result["error"])
 	}
@@ -316,7 +324,7 @@ func TestDispatchTool_AllergensDeduplicated(t *testing.T) {
 	offBaseURL = srv.URL + "/cgi/search.pl"
 	t.Cleanup(func() { offBaseURL = orig })
 
-	result := dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "pasta"})
+	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "pasta"})
 	allergens, ok := result["allergens"].([]string)
 	if !ok {
 		t.Fatalf("allergens not []string, got %T", result["allergens"])
@@ -343,12 +351,53 @@ func TestDispatchTool_AllergensNoProducts(t *testing.T) {
 	offBaseURL = srv.URL + "/cgi/search.pl"
 	t.Cleanup(func() { offBaseURL = orig })
 
-	result := dispatchTool(t.Context(), "lookup_allergens", map[string]any{"ingredient": "mystery food"})
+	result := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "mystery food"})
 	allergens, ok := result["allergens"].([]string)
 	if !ok {
 		t.Fatalf("allergens not []string, got %T", result["allergens"])
 	}
 	if len(allergens) != 0 {
 		t.Errorf("expected empty allergens for no products, got %v", allergens)
+	}
+}
+
+func TestDispatchTool_AllergensCached(t *testing.T) {
+	t.Cleanup(func() {
+		allergenCache.Range(func(key, value any) bool {
+			allergenCache.Delete(key)
+			return true
+		})
+	})
+	
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"products": []map[string]any{
+				{"allergens_tags": []string{"en:peanuts"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	orig := offBaseURL
+	offBaseURL = srv.URL + "/cgi/search.pl"
+	t.Cleanup(func() { offBaseURL = orig })
+
+	// First call should hit the HTTP server
+	result1 := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "peanut butter"})
+	if _, ok := result1["error"]; ok {
+		t.Fatalf("unexpected error: %v", result1["error"])
+	}
+
+	// Second call should return cached result
+	result2 := dispatchTool(t.Context(), "", "lookup_allergens", map[string]any{"ingredient": "peanut butter"})
+	if _, ok := result2["error"]; ok {
+		t.Fatalf("unexpected error: %v", result2["error"])
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected exactly 1 HTTP call (due to caching), got %d", callCount)
 	}
 }

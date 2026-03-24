@@ -205,22 +205,12 @@ from that plan and the reasoning behind each:
 
 ## Future Improvements
 
-### Short-term
+## Completed Improvements (March 2026)
 
-1. **Weaviate-backed FODMAP lookup** — Store FODMAP data in Weaviate with embeddings so
-   `lookup_fodmap("bean sprouts")` can fuzzy-match against "beans" via vector similarity, rather
-   than relying on substring matching. The function-calling interface stays identical.
-
-2. **Business ID filter on review search** — Add `BusinessID` to `search.SearchFilter` so the agent
-   can call `/searchReview/{query}?business_id={id}` to get semantically relevant reviews for the
-   found business, rather than fetching all reviews from the archive.
-
-3. **Streaming responses** — Replace `chat.SendMessage` with `chat.SendMessageStream` and print
-   tokens as they arrive. Significantly improves perceived latency for longer responses.
-
-4. **Allergen response caching** — Cache Open Food Facts results in a `sync.Map` keyed by
-   ingredient name. Avoids redundant HTTP calls when the model looks up the same ingredient
-   multiple times within a session.
+1. **Weaviate-backed FODMAP lookup** — Migrated static map lookups to Weaviate vector similarity matching, allowing `lookup_fodmap` to resolve gracefully via `/searchFodmap/{ingredient}`.
+2. **Business ID filter on review search** — Implemented semantic fallback `/searchReview/{query}?business_id={id}` so the agent fetches context-relevant reviews exclusively scoped to the active restaurant, avoiding hallucination.
+3. **Streaming responses** — Eliminated latency bottlenecks by replacing batch `.SendMessage` loops with native Go 1.23 `iter.Seq2` iterators wrapping `chat.SendMessageStream`.
+4. **Allergen response caching** — Placed a `sync.Map` cache layer in front of Open Food Facts HTTP requests inside `cli/chat.go` `lookupAllergens`, reducing redundant round-trips for common ingredients.
 
 ### Medium-term
 
