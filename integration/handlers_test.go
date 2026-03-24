@@ -33,12 +33,17 @@ func (s *stubAnalyzer) Analyze(_ context.Context, _ []schemas.Review) (string, e
 
 // stubSearcher is a test double for server.Searcher.
 type stubSearcher struct {
-	result search.SearchResult
-	err    error
+	result      search.SearchResult
+	reviewResult search.SearchReviews
+	err         error
 }
 
-func (s *stubSearcher) Search(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
+func (s *stubSearcher) GetBusinesses(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
 	return s.result, s.err
+}
+
+func (s *stubSearcher) GetReviews(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchReviews, error) {
+	return s.reviewResult, s.err
 }
 
 // newMux returns the handler mux used by the server, wired to the stub analyzer.
@@ -179,7 +184,7 @@ func TestReviewsHandler_ArchiveMissing(t *testing.T) {
 func TestSearchHandler_NoSearcherConfigured(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos", nil))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
@@ -189,7 +194,7 @@ func TestSearchHandler_NoSearcherConfigured(t *testing.T) {
 func TestSearchHandler_MissingQuery(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{})
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/", nil))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -205,7 +210,7 @@ func TestSearchHandler_ReturnsBusinesses(t *testing.T) {
 	}
 	mux := newMux(t, &stubAnalyzer{}, stub)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -234,7 +239,7 @@ func TestSearchHandler_InvalidLimit(t *testing.T) {
 	for _, limit := range cases {
 		t.Run("limit="+limit, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/tacos?limit="+limit, nil))
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos?limit="+limit, nil))
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("limit=%q: status = %d, want %d", limit, rec.Code, http.StatusBadRequest)
 			}
@@ -245,7 +250,7 @@ func TestSearchHandler_InvalidLimit(t *testing.T) {
 func TestSearchHandler_EmptyResultIsNotNull(t *testing.T) {
 	mux := newMux(t, &stubAnalyzer{}, &stubSearcher{result: search.SearchResult{}})
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search/noresults", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/noresults", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)

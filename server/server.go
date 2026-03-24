@@ -19,7 +19,8 @@ type Analyzer interface {
 // Searcher is the interface satisfied by search.Client. Extracted so the server
 // can be constructed with a stub in tests.
 type Searcher interface {
-	Search(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
+	GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
+	GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
 }
 
 type Server struct {
@@ -74,7 +75,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /analyze", s.analyzeHandler)
 	mux.HandleFunc("GET /results/{job_id}", s.resultsHandler)
 	mux.HandleFunc("GET /reviews", s.reviewsHandler)
-	mux.HandleFunc("GET /search/{query...}", s.searchHandler)
+	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
 	return mux
 }
 
