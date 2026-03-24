@@ -9,8 +9,8 @@ Project-level rules for this codebase.
 ## Testing
 
 - Always use Test-Driven Development (TDD). Write tests before writing the implementation.
-- Always run `go test ./...` after any code change
 - Running the golang linter is not optional. Always run `golangci-lint run ./...` — it mirrors the CI lint step (install: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.3`)
+- Always run `go test ./...` after passing the linter
 - Do not mock — use stub types that implement interfaces (see `integration/handlers_test.go` for the pattern)
 - Always write tests for new functionality — every new exported function, HTTP handler, or CLI helper must have accompanying tests in a `_test.go` file in the same package
 - For functions that call external HTTP endpoints, extract the base URL to a package-level `var` (e.g. `var offBaseURL = "https://..."`) so tests can redirect to an `httptest.NewServer` without mocking
