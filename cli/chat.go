@@ -87,19 +87,18 @@ func runChat(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating Gemini client: %w", err)
 	}
 
-	chatSession, err := geminiClient.Chats.Create(ctx, model, &genai.GenerateContentConfig{
+	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{{Text: systemPrompt}},
 		},
 		Tools: []*genai.Tool{chat.FodmapAllergenTools()},
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("creating chat session: %w", err)
 	}
 
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
+		Model:          model,
+		Config:         config,
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -126,7 +125,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		result, err := session.SendWithToolCalls(ctx, chatSession, input, func(text string) {
+		result, err := session.SendWithToolCalls(ctx, geminiClient, input, func(text string) {
 			fmt.Print(text)
 		})
 		if err != nil {

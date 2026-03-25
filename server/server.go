@@ -21,11 +21,13 @@ type Searcher interface {
 }
 
 type Server struct {
-	searcher       Searcher           // nil when Weaviate is not configured
-	port           int
-	geminiFactory  GeminiChatFactory  // nil when chat is not configured
-	chatAPIKey     string             // bearer token for /chat route
-	chatRateLimiter *ipRateLimiter
+	searcher          Searcher           // nil when Weaviate is not configured
+	port              int
+	geminiFactory     GeminiChatFactory  // nil when chat is not configured
+	geminiApiKey      string             // for manual session creation
+	geminiModel       string             // for manual session creation
+	chatAPIKey        string             // bearer token for /chat route
+	chatRateLimiter   *ipRateLimiter
 	chatMaxConcurrent int
 }
 
@@ -73,6 +75,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			model = "gemini-3-flash-preview"
 		}
 		s.geminiFactory = newGeminiChatFactory(cfg.GeminiAPIKey, model)
+		s.geminiApiKey = cfg.GeminiAPIKey
+		s.geminiModel = model
 		s.chatAPIKey = cfg.ChatAPIKey
 
 		rl := cfg.ChatRateLimit
