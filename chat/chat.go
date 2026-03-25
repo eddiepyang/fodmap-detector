@@ -147,7 +147,13 @@ func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input
 	var result SendResult
 	var fullText strings.Builder
 	for {
-		var toolParts []genai.Part
+		// Collect function calls from the stream without dispatching them.
+		type pendingCall struct {
+			Name string
+			Args map[string]any
+		}
+		var pendingCalls []pendingCall
+
 		for resp, err := range chat.SendMessageStream(ctx, parts...) {
 			if err != nil {
 				return SendResult{}, fmt.Errorf("stream error: %w", err)
@@ -167,11 +173,10 @@ func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input
 					}
 				}
 				if part.FunctionCall != nil {
-					toolResult := s.DispatchTool(ctx, part.FunctionCall.Name, part.FunctionCall.Args)
-					toolParts = append(toolParts,
-						*genai.NewPartFromFunctionResponse(part.FunctionCall.Name, ToMap(toolResult)),
-					)
-					result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", part.FunctionCall.Name, part.FunctionCall.Args["ingredient"]))
+					pendingCalls = append(pendingCalls, pendingCall{
+						Name: part.FunctionCall.Name,
+						Args: part.FunctionCall.Args,
+					})
 					if onText != nil {
 						onText(fmt.Sprintf("\n[Tool Call] %s\n", part.FunctionCall.Name))
 					}
@@ -179,7 +184,16 @@ func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input
 			}
 		}
 
-		if len(toolParts) > 0 {
+		// Stream is fully consumed. Now dispatch all tool calls and build responses.
+		if len(pendingCalls) > 0 {
+			var toolParts []genai.Part
+			for _, call := range pendingCalls {
+				toolResult := s.DispatchTool(ctx, call.Name, call.Args)
+				toolParts = append(toolParts,
+					*genai.NewPartFromFunctionResponse(call.Name, ToMap(toolResult)),
+				)
+				result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
+			}
 			parts = toolParts
 			continue
 		}
