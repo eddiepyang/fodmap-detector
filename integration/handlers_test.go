@@ -17,15 +17,17 @@ import (
 
 // stubSearcher is a test double for server.Searcher.
 type stubSearcher struct {
-	result           search.SearchResult
-	reviewResult     search.SearchReviews
-	fodmapResult     search.FodmapResult
-	fodmapCertainty  float64
-	err              error
-	lastReviewFilter search.SearchFilter
+	result              search.SearchResult
+	reviewResult        search.SearchReviews
+	fodmapResult        search.FodmapResult
+	fodmapCertainty     float64
+	err                 error
+	lastReviewFilter    search.SearchFilter
+	lastBusinessFilter  search.SearchFilter
 }
 
-func (s *stubSearcher) GetBusinesses(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
+func (s *stubSearcher) GetBusinesses(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchResult, error) {
+	s.lastBusinessFilter = filter
 	return s.result, s.err
 }
 
@@ -225,11 +227,11 @@ func TestFodmapHandler_ReturnsIngredient(t *testing.T) {
 	}
 
 	var resp struct {
-		Ingredient  string   `json:"ingredient"`
-		Level       string   `json:"level"`
-		Groups      []string `json:"groups"`
-		Notes       string   `json:"notes"`
-		Certainty   float64  `json:"certainty"`
+		Ingredient string   `json:"ingredient"`
+		Level      string   `json:"level"`
+		Groups     []string `json:"groups"`
+		Notes      string   `json:"notes"`
+		Certainty  float64  `json:"certainty"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -239,5 +241,61 @@ func TestFodmapHandler_ReturnsIngredient(t *testing.T) {
 	}
 	if len(resp.Groups) != 1 || resp.Groups[0] != "fructans" {
 		t.Errorf("got groups %v, want [fructans]", resp.Groups)
+	}
+}
+
+// --- filter pass-through ---
+
+func TestSearchBusinessHandler_PassesCityStateFilters(t *testing.T) {
+	stub := &stubSearcher{result: search.SearchResult{}}
+	mux := newMux(t, stub)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos?city=Austin&state=TX", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if stub.lastBusinessFilter.City != "Austin" {
+		t.Errorf("city filter = %q, want %q", stub.lastBusinessFilter.City, "Austin")
+	}
+	if stub.lastBusinessFilter.State != "TX" {
+		t.Errorf("state filter = %q, want %q", stub.lastBusinessFilter.State, "TX")
+	}
+}
+
+func TestSearchBusinessHandler_PassesAllFilters(t *testing.T) {
+	stub := &stubSearcher{result: search.SearchResult{}}
+	mux := newMux(t, stub)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza?category=Italian&city=Chicago&state=IL", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if stub.lastBusinessFilter.Category != "Italian" {
+		t.Errorf("category filter = %q, want %q", stub.lastBusinessFilter.Category, "Italian")
+	}
+	if stub.lastBusinessFilter.City != "Chicago" {
+		t.Errorf("city filter = %q, want %q", stub.lastBusinessFilter.City, "Chicago")
+	}
+	if stub.lastBusinessFilter.State != "IL" {
+		t.Errorf("state filter = %q, want %q", stub.lastBusinessFilter.State, "IL")
+	}
+}
+
+func TestSearchReviewHandler_EmptyResultIsNotNull(t *testing.T) {
+	mux := newMux(t, &stubSearcher{reviewResult: search.SearchReviews{}})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/searchReview/noodles", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp map[string]json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if string(resp["reviews"]) == "null" {
+		t.Error("reviews should be [] not null")
 	}
 }

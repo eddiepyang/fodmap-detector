@@ -31,7 +31,10 @@ const (
 //go:embed chat-instruction.txt
 var defaultChatInstruction string
 
-// injectionPatterns are case-insensitive substrings that indicate a prompt injection attempt.
+// injectionPatterns are case-insensitive substrings used as a first-line defense
+// against common prompt injection attempts. This is defense-in-depth alongside
+// the per-turn Gemini topic pre-screen — not a security boundary. Known gaps:
+// Unicode lookalike characters and base64/ROT13-encoded payloads are not covered.
 var injectionPatterns = []string{
 	"ignore previous instructions",
 	"ignore all previous",
@@ -42,6 +45,10 @@ var injectionPatterns = []string{
 	"<|system|>",
 	"<|im_start|>",
 }
+
+// offBaseURL is the Open Food Facts search endpoint. Exposed as a package-level
+// var so tests can redirect it to an httptest.Server without mocking.
+var offBaseURL = "https://world.openfoodfacts.org/cgi/search.pl"
 
 var chatCmd = &cobra.Command{
 	Use:   "chat <query>",
@@ -480,7 +487,7 @@ type OpenFoodFactsClient struct {
 
 func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
 	if baseURL == "" {
-		baseURL = "https://world.openfoodfacts.org/cgi/search.pl"
+		baseURL = offBaseURL
 	}
 	return &OpenFoodFactsClient{
 		baseURL: baseURL,
