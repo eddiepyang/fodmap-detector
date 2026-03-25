@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"fodmap/chat"
@@ -129,16 +130,27 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Create Gemini session and send the message.
-	geminiClient, geminiChat, err := s.geminiFactory(ctx, systemPrompt)
+	// 4. Create Gemini client and message configuration.
+	apiKey := s.geminiApiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
-		slog.Error("chat: create gemini session", "error", err)
+		slog.Error("chat: create gemini client", "error", err)
 		http.Error(w, `{"error":"failed to initialize chat"}`, http.StatusInternalServerError)
 		return
 	}
+	model := s.geminiModel
+	if model == "" {
+		model = "gemini-3-flash-preview"
+	}
 
 	// Topic pre-screen.
-	if foodRelated, err := chat.IsFoodRelated(ctx, geminiClient, req.Message); err != nil {
+	if foodRelated, err := chat.IsFoodRelated(ctx, client, req.Message); err != nil {
 		slog.Warn("chat: topic screen error", "error", err)
 	} else if !foodRelated {
 		http.Error(w, `{"error":"I can only help with food, ingredients, FODMAP, and allergen questions"}`, http.StatusBadRequest)
@@ -154,9 +166,16 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
+		Model:          model,
+		Config: &genai.GenerateContentConfig{
+			SystemInstruction: &genai.Content{
+				Parts: []*genai.Part{{Text: systemPrompt}},
+			},
+			Tools: []*genai.Tool{chat.FodmapAllergenTools()},
+		},
 	}
 
-	result, err := session.SendWithToolCalls(ctx, geminiChat, req.Message, nil)
+	result, err := session.SendWithToolCalls(ctx, client, req.Message, nil)
 	if err != nil {
 		slog.Error("chat: send message", "error", err)
 		http.Error(w, `{"error":"chat processing failed"}`, http.StatusInternalServerError)

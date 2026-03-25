@@ -123,10 +123,16 @@ func IsFoodRelated(ctx context.Context, client *genai.Client, input string) (boo
 
 // ---- chat session (tool-call loop) ----
 
-// Session manages tool dispatch for a Gemini chat with FODMAP/allergen tools.
+// Session manages manual history and tool dispatch for a Gemini chat.
+// We manage history manually to bypass a bug in the genai.Chat SDK where
+// stream chunks are recorded as separate model turns, corrupting the
+// tool-call sequence.
 type Session struct {
 	FodmapClient   FodmapServerClient
 	AllergenClient AllergenClient
+	Model          string
+	Config         *genai.GenerateContentConfig
+	History        []*genai.Content
 }
 
 // SendResult contains the outcome of a chat turn.
@@ -137,35 +143,43 @@ type SendResult struct {
 
 // SendWithToolCalls sends a user message and iterates until the model returns a
 // plain-text response, dispatching any function calls in between.
-// The optional onText callback is invoked for each streamed text chunk (for CLI printing).
-func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input string, onText func(string)) (SendResult, error) {
-	var parts []genai.Part
+// The optional onText callback is invoked for each streamed text chunk.
+func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, input string, onText func(string)) (SendResult, error) {
 	if input != "" {
-		parts = []genai.Part{{Text: input}}
+		s.History = append(s.History, &genai.Content{
+			Role:  "user",
+			Parts: []*genai.Part{{Text: input}},
+		})
 	}
 
 	var result SendResult
 	var fullText strings.Builder
-	for {
-		// Collect function calls from the stream without dispatching them.
-		type pendingCall struct {
-			Name string
-			Args map[string]any
-		}
-		var pendingCalls []pendingCall
 
-		for resp, err := range chat.SendMessageStream(ctx, parts...) {
+	for {
+		// Prepare a single Content for this model turn.
+		modelTurn := &genai.Content{Role: "model"}
+		
+		// 1. Initial/Streaming Turn
+		for resp, err := range client.Models.GenerateContentStream(ctx, s.Model, s.History, s.Config) {
 			if err != nil {
 				return SendResult{}, fmt.Errorf("stream error: %w", err)
 			}
-			if len(resp.Candidates) == 0 {
+			if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
 				continue
 			}
-			candidate := resp.Candidates[0]
-			if candidate.Content == nil {
-				continue
-			}
-			for _, part := range candidate.Content.Parts {
+			// Merge parts from this chunk into our single model turn.
+			for _, part := range resp.Candidates[0].Content.Parts {
+				// Skip empty parts that stream chunks sometimes include.
+				if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil &&
+					part.InlineData == nil && part.FileData == nil &&
+					part.ExecutableCode == nil && part.CodeExecutionResult == nil {
+					continue
+				}
+
+				// Record for history
+				modelTurn.Parts = append(modelTurn.Parts, part)
+				
+				// Handle display/result
 				if part.Text != "" {
 					fullText.WriteString(part.Text)
 					if onText != nil {
@@ -173,10 +187,6 @@ func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input
 					}
 				}
 				if part.FunctionCall != nil {
-					pendingCalls = append(pendingCalls, pendingCall{
-						Name: part.FunctionCall.Name,
-						Args: part.FunctionCall.Args,
-					})
 					if onText != nil {
 						onText(fmt.Sprintf("\n[Tool Call] %s\n", part.FunctionCall.Name))
 					}
@@ -184,21 +194,41 @@ func (s *Session) SendWithToolCalls(ctx context.Context, chat *genai.Chat, input
 			}
 		}
 
-		// Stream is fully consumed. Now dispatch all tool calls and build responses.
-		if len(pendingCalls) > 0 {
-			var toolParts []genai.Part
-			for _, call := range pendingCalls {
-				toolResult := s.DispatchTool(ctx, call.Name, call.Args)
-				toolParts = append(toolParts,
-					*genai.NewPartFromFunctionResponse(call.Name, ToMap(toolResult)),
-				)
-				result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
-			}
-			parts = toolParts
-			continue
+		// Record the complete model turn (all chunks merged) into history.
+		s.History = append(s.History, modelTurn)
+
+		// 2. Scan model turn for tool calls
+		var pendingCalls []struct {
+			Name string
+			Args map[string]any
 		}
-		break
+		for _, p := range modelTurn.Parts {
+			if p.FunctionCall != nil {
+				pendingCalls = append(pendingCalls, struct {
+					Name string
+					Args map[string]any
+				}{Name: p.FunctionCall.Name, Args: p.FunctionCall.Args})
+			}
+		}
+
+		if len(pendingCalls) == 0 {
+			break
+		}
+
+		// 3. Dispatch tool calls and add response turn
+		responseTurn := &genai.Content{Role: "user"}
+		for _, call := range pendingCalls {
+			toolResult := s.DispatchTool(ctx, call.Name, call.Args)
+			responseTurn.Parts = append(responseTurn.Parts,
+				genai.NewPartFromFunctionResponse(call.Name, ToMap(toolResult)),
+			)
+			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
+		}
+		s.History = append(s.History, responseTurn)
+		
+		// Loop back to get the model's reaction to the tool responses.
 	}
+
 	result.Text = fullText.String()
 	return result, nil
 }
