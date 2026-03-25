@@ -2,6 +2,25 @@
 
 Project-level rules for this codebase.
 
+## Go Style
+
+- Follow the [Google Go Style Guide](https://google.github.io/styleguide/go/)
+- No `os.Exit` or `panic` in library code — only CLI entry points may call `os.Exit`
+- No logging inside functions that also return errors — let callers decide whether to log
+- Initialism casing: `ID` not `Id`, `URL` not `Url`
+- Remove dead code — no commented-out code, TODO stubs, or unused types
+- Use `errors.Is` for sentinel errors (`errors.Is(err, io.EOF)` not `err == io.EOF`)
+- Import grouping: stdlib, then project packages, then third-party, each separated by a blank line
+- Doc comments on all exported identifiers — must begin with the exported name
+
+## Architecture
+
+- **`chat` package** (`chat/chat.go`) is the shared core for FODMAP/allergen chat — CLI and server are thin wrappers
+- **Chat endpoint** (`POST /chat/{query...}`) requires bearer token auth, per-IP rate limiting, concurrency limiter
+- **Middleware** (`server/middleware.go`): `bearerAuth` → `rateLimitMiddleware` → `concurrencyLimiter` via `chain()`; auth runs outermost so unauthenticated requests don't consume rate limit tokens
+- **`GeminiChatFactory`** function type enables test stubbing without mocking `genai.Chat`
+- **Test constructors**: `server.NewServerWithChat()` for integration tests, `noopGeminiFactory` for tests that don't reach Gemini
+
 ## Git Workflow
 
 - Always pull the latest changes from `main` (`git pull origin main`) before starting a new task or creating a branch.
