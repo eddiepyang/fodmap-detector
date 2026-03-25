@@ -36,7 +36,7 @@ type Config struct {
 
 	// Chat endpoint configuration.
 	GeminiAPIKey      string  // Gemini API key; omit to disable /chat
-	GeminiModel       string  // Gemini model ID (default: gemini-3.1-flash)
+	GeminiModel       string  // Gemini model ID (default: gemini-3-flash-preview)
 	ChatAPIKey        string  // Bearer token clients must present for /chat
 	ChatRateLimit     float64 // requests per second per IP (default: 2)
 	ChatRateBurst     int     // burst allowance (default: 5)
@@ -70,7 +70,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.GeminiAPIKey != "" && cfg.ChatAPIKey != "" {
 		model := cfg.GeminiModel
 		if model == "" {
-			model = "gemini-3.1-flash"
+			model = "gemini-3-flash-preview"
 		}
 		s.geminiFactory = newGeminiChatFactory(cfg.GeminiAPIKey, model)
 		s.chatAPIKey = cfg.ChatAPIKey

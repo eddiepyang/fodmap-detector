@@ -38,8 +38,8 @@ var serveCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
-	serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
+	serveCmd.Flags().IntP("port", "p", 8081, "Port to listen on")
 	serveCmd.Flags().String("weaviate", "", "Weaviate host:port (e.g. localhost:8090); omit to disable search")
 	serveCmd.Flags().String("chat-api-key", "", "Bearer token for /chat endpoint; omit to disable chat")
-	serveCmd.Flags().String("gemini-model", "gemini-3.1-flash", "Gemini model ID for chat sessions")
+	serveCmd.Flags().String("gemini-model", "gemini-3-flash-preview", "Gemini model ID for chat sessions")
 }

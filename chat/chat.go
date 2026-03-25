@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	ScreenGeminiModel = "gemini-3.1-flash-lite"
+	ScreenGeminiModel = "gemini-3.1-flash-lite-preview"
 	MaxInputLen       = 2000
 	MaxResponseLen    = 4000
 )
@@ -393,9 +393,12 @@ func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient st
 }
 
 type OpenFoodFactsClient struct {
-	baseURL string
-	client  *http.Client
-	cache   sync.Map
+	baseURL  string
+	client   *http.Client
+	cache    sync.Map
+	mu       sync.Mutex    // serializes requests to avoid rate-limiting
+	lastCall time.Time     // tracks last request time
+	minDelay time.Duration // minimum delay between requests
 }
 
 func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
@@ -403,8 +406,9 @@ func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
 		baseURL = offBaseURL
 	}
 	return &OpenFoodFactsClient{
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		baseURL:  baseURL,
+		client:   &http.Client{Timeout: 10 * time.Second},
+		minDelay: 500 * time.Millisecond,
 	}
 }
 
@@ -413,6 +417,13 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 		return cached.(AllergenToolResponse), nil
 	}
 
+	// Rate-limit: serialize requests and enforce minimum delay
+	c.mu.Lock()
+	if elapsed := time.Since(c.lastCall); elapsed < c.minDelay {
+		time.Sleep(c.minDelay - elapsed)
+	}
+	c.lastCall = time.Now()
+	c.mu.Unlock()
 	searchURL := c.baseURL + "?search_terms=" +
 		url.QueryEscape(ingredient) +
 		"&search_simple=1&action=process&json=1&page_size=3"
@@ -427,6 +438,21 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return AllergenToolResponse{
+			Ingredient: ingredient,
+			Error:      fmt.Sprintf("Open Food Facts returned status %d", resp.StatusCode),
+		}, nil
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") && !strings.Contains(ct, "text/json") {
+		return AllergenToolResponse{
+			Ingredient: ingredient,
+			Error:      "Open Food Facts returned non-JSON response; service may be temporarily unavailable",
+		}, nil
+	}
+
 	body, _ := io.ReadAll(resp.Body)
 	var result struct {
 		Products []struct {
@@ -434,7 +460,10 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 		} `json:"products"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return AllergenToolResponse{}, fmt.Errorf("decoding OFF response: %w", err)
+		return AllergenToolResponse{
+			Ingredient: ingredient,
+			Error:      "could not parse Open Food Facts response",
+		}, nil
 	}
 
 	seen := make(map[string]bool)

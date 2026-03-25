@@ -133,6 +133,8 @@ EventWriter.Write()
 
 You must run Weaviate and the embedding vectorizer to enable semantic search. The setup differs depending on whether you want to use Mac Apple Silicon (Metal/MPS) or a Linux machine with an NVIDIA GPU.
 
+*(Note: The chat app will gracefully fall back to BM25 keyword search if the vectorizer isn't running, meaning you only strictly need the python vectorizer for indexing or specialized semantic queries).*
+
 #### Option A: Mac M2 / CPU Setup (Best for Apple Silicon)
 
 Docker on macOS cannot directly access the GPU (Metal) hardware. To get massive acceleration using Apple's `mps` backend, run Weaviate in Docker but run the python vectorizer natively:
@@ -224,7 +226,7 @@ go run . serve --weaviate localhost:8090
 go run . serve
 ```
 
-Default port is `8080`.
+Default port is `8081`.
 
 #### Endpoints
 
@@ -241,10 +243,10 @@ Find restaurants or review texts matching a natural-language description:
 
 ```sh
 # Business search — returns top 10 businesses ranked by review relevance
-curl "localhost:8080/searchBusiness/cozy%20Italian%20with%20great%20pasta"
+curl "localhost:8081/searchBusiness/cozy%20Italian%20with%20great%20pasta"
 
 # Filter by category, city, state
-curl "localhost:8080/searchBusiness/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
+curl "localhost:8081/searchBusiness/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
 ```
 
 **Business search response:**
@@ -259,7 +261,7 @@ curl "localhost:8080/searchBusiness/best%20tacos?category=Mexican&city=Las%20Veg
 
 ```sh
 # Review search — returns top K review texts ranked by semantic similarity
-curl "localhost:8080/searchReview/gluten%20free%20options?limit=5"
+curl "localhost:8081/searchReview/gluten%20free%20options?limit=5"
 ```
 
 **Review search response:**
@@ -333,11 +335,11 @@ The agent uses Gemini for reasoning and calls two built-in tools mid-conversatio
 
 ```sh
 # Find the top Thai restaurant in Las Vegas and start a chat about its dishes
-GEMINI_API_KEY=your_key go run . chat "pad thai" --city "Las Vegas" --state NV
+GEMINI_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
 
 # Output:
 # Found: Lotus of Siam (Las Vegas, NV)
-# Fetched 20 reviews. Starting chat (type 'exit' to quit)...
+# Fetched 5 reviews. Starting chat (type 'exit' to quit)...
 # > does the pad thai have garlic?
 # Garlic is listed as high FODMAP (fructans). Based on review #3, the pad thai
 # sauce does appear to contain garlic...
@@ -363,13 +365,13 @@ See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviation
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server` | `http://localhost:8080` | Base URL of the running fodmap server |
-| `--limit` | `20` | Max reviews to include as context |
+| `--server` | `http://localhost:8081` | Base URL of the running fodmap server |
+| `--limit` | `5` | Max reviews to include as context |
 | `--instruction` | `""` | Optional path to a custom chat instruction template file (overrides the embedded default) |
 | `--category` | `""` | Filter businesses by category substring |
 | `--city` | `""` | Filter businesses by city (exact match) |
 | `--state` | `""` | Filter businesses by state (exact match) |
-| `--model` | `gemini-3.1-flash` | Gemini model ID for the chat session |
+| `--model` | `gemini-3-flash-preview` | Gemini model ID for the chat session |
 
 ---
 

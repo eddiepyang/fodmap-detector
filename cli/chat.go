@@ -14,7 +14,7 @@ import (
 	"google.golang.org/genai"
 )
 
-const chatGeminiModel = "gemini-3.1-flash"
+const chatGeminiModel = "gemini-3-flash-preview"
 
 var chatCmd = &cobra.Command{
 	Use:   "chat <query>",
@@ -25,8 +25,8 @@ var chatCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
-	chatCmd.Flags().String("server", "http://localhost:8080", "Base URL of the fodmap server")
-	chatCmd.Flags().Int("limit", 20, "Max reviews to include in context")
+	chatCmd.Flags().String("server", "http://localhost:8081", "Base URL of the fodmap server")
+	chatCmd.Flags().Int("limit", 5, "Max reviews to include in context")
 	chatCmd.Flags().String("instruction", "", "Optional path to a custom chat instruction template file (overrides the embedded default)")
 	chatCmd.Flags().String("category", "", "Filter businesses by category substring")
 	chatCmd.Flags().String("city", "", "Filter businesses by city (exact match)")
