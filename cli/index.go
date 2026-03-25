@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -133,6 +134,12 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	vectorizerHost, _ := cmd.Flags().GetString("vectorizer")
 	filterCity, _ := cmd.Flags().GetString("filter-city")
 	ctx := context.Background()
+
+	if vectorizerHost != "" {
+		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
+			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
+		}
+	}
 
 	client, err := search.NewClient(host)
 	if err != nil {
@@ -304,8 +311,11 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 				slog.Info("indexed batch", "total", n)
 
 				if checkpointPath != "" {
-					// Safe rewind checkpointing: rewind assuming 8 parallel buffers of size (batchSize)
-					// to guarantee we never drop in-flight parallel batches if there is a crash.
+					// Rewind the checkpoint behind n to cover batches still in-flight across
+					// the three pipeline stages (rawLineCh, batchCh, vectorizedCh) plus active
+					// workers. Upserts are idempotent (deterministic SHA1 UUIDs), so re-processing
+					// these items on restart is safe — this only trades a small amount of
+					// duplicate work for a guaranteed-consistent restart position.
 					safeOffset := n - int64(8*numWorkers*batchSize)
 					if safeOffset < 0 {
 						safeOffset = 0
