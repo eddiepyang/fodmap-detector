@@ -109,12 +109,15 @@ func ValidateChatInput(input string) error {
 
 // IsFoodRelated runs a lightweight single-turn Gemini call to check whether the
 // user's message is on-topic. Fails open on error to avoid blocking valid queries.
-func IsFoodRelated(ctx context.Context, client *genai.Client, input string) (bool, error) {
+func IsFoodRelated(ctx context.Context, client *genai.Client, model, input string) (bool, error) {
+	if model == "" {
+		model = ScreenGeminiModel
+	}
 	prompt := fmt.Sprintf(
 		"Is the following message asking about food, restaurants, ingredients, dietary restrictions, allergens, or FODMAP content? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
 		input,
 	)
-	resp, err := client.Models.GenerateContent(ctx, ScreenGeminiModel, genai.Text(prompt), nil)
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
 	if err != nil {
 		return true, fmt.Errorf("topic screen: %w", err)
 	}

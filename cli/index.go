@@ -24,6 +24,7 @@ import (
 	"fodmap/search"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var indexCmd = &cobra.Command{
@@ -125,15 +126,22 @@ func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) 
 }
 
 func runIndex(cmd *cobra.Command, _ []string) error {
-	host, _ := cmd.Flags().GetString("weaviate")
-	batchSize, _ := cmd.Flags().GetInt("batch-size")
-	numWorkers, _ := cmd.Flags().GetInt("workers")
-	archivePath, _ := cmd.Flags().GetString("archive")
-	checkpointPath, _ := cmd.Flags().GetString("checkpoint")
-	startOffset, _ := cmd.Flags().GetInt("start-offset")
-	vectorizerHost, _ := cmd.Flags().GetString("vectorizer")
-	filterCity, _ := cmd.Flags().GetString("filter-city")
+	host := viper.GetString("weaviate")
+	batchSize := viper.GetInt("batch-size")
+	numWorkers := viper.GetInt("workers")
+	archivePath := viper.GetString("archive")
+	checkpointPath := viper.GetString("checkpoint")
+	startOffset := viper.GetInt("start-offset")
+	vectorizerHost := viper.GetString("vectorizer")
+	filterCity := viper.GetString("filter-city")
 	ctx := context.Background()
+
+	if batchSize <= 0 {
+		return fmt.Errorf("batch-size must be greater than 0")
+	}
+	if numWorkers <= 0 {
+		return fmt.Errorf("workers must be greater than 0")
+	}
 
 	if vectorizerHost != "" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {

@@ -1,0 +1,61 @@
+# FODMAP Detector Configuration (service.yaml)
+# Defaults for all CLI commands. Command line flags will override these values.
+
+# ---- global/shared settings ----
+# Host and port for the Weaviate vector database. 
+weaviate: "localhost:8090"
+
+# Gemini model ID used for chat sessions and topic filtering.
+chat-model: "gemini-3-flash-preview"
+filter-model: "gemini-3.1-flash-lite-preview"
+
+
+# ---- serve command settings ----
+# Port to listen on HTTP
+port: 8081
+
+# Bearer token clients must present for /chat endpoint. Omit to disable chat.
+chat-api-key: ""
+
+
+# ---- chat command settings ----
+# Base URL of the fodmap server
+server: "http://localhost:8081"
+
+# Max reviews to include in context
+limit: 5
+
+# Optional path to a custom chat instruction template file (overrides the embedded default)
+instruction: ""
+
+# Filter businesses by category substring
+category: ""
+
+# Filter businesses by city (exact match)
+city: ""
+
+# Filter businesses by state (exact match)
+state: ""
+
+
+# ---- index command settings ----
+# Number of reviews per Weaviate batch
+batch-size: 512
+
+# Number of concurrent batch upload goroutines
+workers: 4
+
+# Path to the Yelp dataset TAR archive
+archive: "data/yelp_dataset.tar"
+
+# Path to checkpoint file (empty string disables checkpointing)
+checkpoint: "index.checkpoint"
+
+# Skip this many reviews before indexing (overrides checkpoint)
+start-offset: 0
+
+# t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes
+vectorizer: ""
+
+# Filter reviews by city
+filter-city: ""

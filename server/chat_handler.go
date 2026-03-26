@@ -144,13 +144,13 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to initialize chat"}`, http.StatusInternalServerError)
 		return
 	}
-	model := s.geminiModel
-	if model == "" {
-		model = "gemini-3-flash-preview"
+	chatModel := s.chatModel
+	if chatModel == "" {
+		chatModel = "gemini-3-flash-preview"
 	}
 
 	// Topic pre-screen.
-	if foodRelated, err := chat.IsFoodRelated(ctx, client, req.Message); err != nil {
+	if foodRelated, err := chat.IsFoodRelated(ctx, client, s.filterModel, req.Message); err != nil {
 		slog.Warn("chat: topic screen error", "error", err)
 	} else if !foodRelated {
 		http.Error(w, `{"error":"I can only help with food, ingredients, FODMAP, and allergen questions"}`, http.StatusBadRequest)
@@ -166,7 +166,7 @@ func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
-		Model:          model,
+		Model:          chatModel,
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{
 				Parts: []*genai.Part{{Text: systemPrompt}},

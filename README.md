@@ -129,6 +129,31 @@ EventWriter.Write()
   export GEMINI_API_KEY=your_key_here
   ```
 
+### Configuration
+
+The project uses [Viper](https://github.com/spf13/viper) for configuration management. You can manage default settings via a `service.yaml` file in the root directory.
+
+#### `service.yaml`
+
+A `service.yaml` file is automatically detected on startup. Command-line flags always take precedence over values defined in the configuration file.
+
+Example `service.yaml`:
+```yaml
+port: 8081
+weaviate: "localhost:8090"
+chat-model: "gemini-3-flash-preview"
+filter-model: "gemini-3.1-flash-lite-preview"
+batch-size: 512
+workers: 4
+```
+
+#### Validation
+
+The CLI performs validation on startup. For example:
+- `port` must be between 1 and 65535.
+- `batch-size` and `workers` must be greater than 0.
+- `chat-model` is required if `chat-api-key` is set.
+
 ### 1. Start Vector Search Infrastructure
 
 You must run Weaviate and the embedding vectorizer to enable semantic search. The setup differs depending on whether you want to use Mac Apple Silicon (Metal/MPS) or a Linux machine with an NVIDIA GPU.
@@ -289,6 +314,8 @@ go run .
 
 #### Commands
 
+All commands support configuration via the `service.yaml` file or environment variables, in addition to standard flags.
+
 ##### Index (Weaviate)
 
 ```sh
@@ -371,7 +398,8 @@ See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviation
 | `--category` | `""` | Filter businesses by category substring |
 | `--city` | `""` | Filter businesses by city (exact match) |
 | `--state` | `""` | Filter businesses by state (exact match) |
-| `--model` | `gemini-3-flash-preview` | Gemini model ID for the chat session |
+| `--chat-model` | `gemini-3-flash-preview` | Gemini model ID for the chat session |
+| `--filter-model` | `gemini-3.1-flash-lite-preview` | Gemini model ID for topic filtering |
 
 ---
 
