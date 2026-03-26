@@ -11,6 +11,7 @@ import (
 	"fodmap/chat"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"google.golang.org/genai"
 )
 
@@ -31,18 +32,24 @@ func init() {
 	chatCmd.Flags().String("category", "", "Filter businesses by category substring")
 	chatCmd.Flags().String("city", "", "Filter businesses by city (exact match)")
 	chatCmd.Flags().String("state", "", "Filter businesses by state (exact match)")
-	chatCmd.Flags().String("model", chatGeminiModel, "Gemini model ID for the chat session")
+	chatCmd.Flags().String("chat-model", "gemini-3-flash-preview", "Gemini model ID for the chat session")
+	chatCmd.Flags().String("filter-model", "gemini-3.1-flash-lite-preview", "Gemini model ID for topic filtering")
 }
 
 func runChat(cmd *cobra.Command, args []string) error {
 	query := args[0]
-	serverURL, _ := cmd.Flags().GetString("server")
-	limit, _ := cmd.Flags().GetInt("limit")
-	instructionPath, _ := cmd.Flags().GetString("instruction")
-	category, _ := cmd.Flags().GetString("category")
-	city, _ := cmd.Flags().GetString("city")
-	state, _ := cmd.Flags().GetString("state")
-	model, _ := cmd.Flags().GetString("model")
+	serverURL := viper.GetString("server")
+	limit := viper.GetInt("limit")
+	instructionPath := viper.GetString("instruction")
+	category := viper.GetString("category")
+	city := viper.GetString("city")
+	state := viper.GetString("state")
+	chatModel := viper.GetString("chat-model")
+	filterModel := viper.GetString("filter-model")
+
+	if serverURL == "" {
+		return fmt.Errorf("server URL cannot be empty")
+	}
 
 	ctx := context.Background()
 
@@ -97,7 +104,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
-		Model:          model,
+		Model:          chatModel,
 		Config:         config,
 	}
 
@@ -118,7 +125,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if foodRelated, err := chat.IsFoodRelated(ctx, geminiClient, input); err != nil {
+		if foodRelated, err := chat.IsFoodRelated(ctx, geminiClient, filterModel, input); err != nil {
 			slog.Warn("topic screen error", "error", err)
 		} else if !foodRelated {
 			fmt.Print("Sorry, I can only help with food, ingredients, FODMAP, and allergen questions.\n> ")

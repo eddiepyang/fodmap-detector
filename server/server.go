@@ -25,7 +25,8 @@ type Server struct {
 	port              int
 	geminiFactory     GeminiChatFactory  // nil when chat is not configured
 	geminiApiKey      string             // for manual session creation
-	geminiModel       string             // for manual session creation
+	chatModel         string             // for manual session creation
+	filterModel       string             // for topic screening
 	chatAPIKey        string             // bearer token for /chat route
 	chatRateLimiter   *ipRateLimiter
 	chatMaxConcurrent int
@@ -38,7 +39,8 @@ type Config struct {
 
 	// Chat endpoint configuration.
 	GeminiAPIKey      string  // Gemini API key; omit to disable /chat
-	GeminiModel       string  // Gemini model ID (default: gemini-3-flash-preview)
+	ChatModel         string  // Gemini model ID for chat (default: gemini-3-flash-preview)
+	FilterModel       string  // Gemini model ID for filtering (default: gemini-3.1-flash-lite-preview)
 	ChatAPIKey        string  // Bearer token clients must present for /chat
 	ChatRateLimit     float64 // requests per second per IP (default: 2)
 	ChatRateBurst     int     // burst allowance (default: 5)
@@ -70,13 +72,18 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 
 	// Chat endpoint setup.
 	if cfg.GeminiAPIKey != "" && cfg.ChatAPIKey != "" {
-		model := cfg.GeminiModel
-		if model == "" {
-			model = "gemini-3-flash-preview"
+		chatModel := cfg.ChatModel
+		if chatModel == "" {
+			chatModel = "gemini-3-flash-preview"
 		}
-		s.geminiFactory = newGeminiChatFactory(cfg.GeminiAPIKey, model)
+		filterModel := cfg.FilterModel
+		if filterModel == "" {
+			filterModel = "gemini-3.1-flash-lite-preview"
+		}
+		s.geminiFactory = newGeminiChatFactory(cfg.GeminiAPIKey, chatModel)
 		s.geminiApiKey = cfg.GeminiAPIKey
-		s.geminiModel = model
+		s.chatModel = chatModel
+		s.filterModel = filterModel
 		s.chatAPIKey = cfg.ChatAPIKey
 
 		rl := cfg.ChatRateLimit
@@ -93,7 +100,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if s.chatMaxConcurrent <= 0 {
 			s.chatMaxConcurrent = 10
 		}
-		slog.Info("chat endpoint enabled", "model", model)
+		slog.Info("chat endpoint enabled", "model", chatModel)
 	}
 
 	return s, nil
