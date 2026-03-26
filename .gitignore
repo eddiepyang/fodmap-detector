@@ -11,3 +11,5 @@ vendor
 
 # VS Code settings
 .vscode
+
+tmp/*
