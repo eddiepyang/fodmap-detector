@@ -1,14 +1,20 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 
+	"fodmap/auth"
 	"golang.org/x/time/rate"
 )
+
+type contextKey string
+
+const userContextKey contextKey = "user_id"
 
 // bearerAuth returns middleware that validates a Bearer token in the
 // Authorization header. Returns 401 if the token is missing or wrong.
@@ -91,6 +97,90 @@ func concurrencyLimiter(maxConcurrent int) func(http.Handler) http.Handler {
 			default:
 				http.Error(w, `{"error":"server busy, try again later"}`, http.StatusServiceUnavailable)
 			}
+		})
+	}
+}
+
+// corsMiddleware adds CORS headers to the response.
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			allowed := false
+			for _, o := range allowedOrigins {
+				if o == "*" || o == origin {
+					allowed = true
+					break
+				}
+			}
+
+			if allowed {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+				w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+			}
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// jwtAuth returns middleware that validates a JWT in the Authorization header.
+func jwtAuth(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if !strings.HasPrefix(authHeader, prefix) {
+				http.Error(w, `{"error":"missing or invalid Authorization header"}`, http.StatusUnauthorized)
+				return
+			}
+			tokenStr := authHeader[len(prefix):]
+
+			claims, err := auth.ValidateToken(tokenStr, secret)
+			if err != nil {
+				slog.Warn("jwt auth failed", "error", err)
+				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), userContextKey, claims.UserID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// combinedAuth returns middleware that validates either a JWT or a Bearer token.
+func combinedAuth(jwtSecret, bearerToken string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if !strings.HasPrefix(authHeader, prefix) {
+				http.Error(w, `{"error":"missing or invalid Authorization header"}`, http.StatusUnauthorized)
+				return
+			}
+			got := authHeader[len(prefix):]
+
+			// 1. Try JWT
+			if claims, err := auth.ValidateToken(got, jwtSecret); err == nil {
+				ctx := context.WithValue(r.Context(), userContextKey, claims.UserID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// 2. Try Bearer token
+			if subtle.ConstantTimeCompare([]byte(got), []byte(bearerToken)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 		})
 	}
 }

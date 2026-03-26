@@ -15,7 +15,10 @@ import (
 	"google.golang.org/genai"
 )
 
-const chatGeminiModel = "gemini-3-flash-preview"
+// chatGeminiModel is unused or replaced by server config.
+const (
+	_ = iota
+)
 
 var chatCmd = &cobra.Command{
 	Use:   "chat <query>",

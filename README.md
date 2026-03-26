@@ -21,7 +21,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Streaming format | Apache Avro (OCF) via [hamba/avro](https://github.com/hamba/avro) |
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
-| Vector search | [Weaviate](https://weaviate.io) with `text2vec-transformers` (local embeddings) |
+| Vector search | [Weaviate](https://weaviate.io) (Local) or [Pinecone](https://pinecone.io) (Cloud) |
+| Embeddings | Locally-run transformers via Python proxy or internal Weaviate |
 
 ---
 
@@ -53,7 +54,9 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │       └── schemas.go       # Review + Business structs + Avro EventSchema
 │
 ├── search/
-│   └── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
+│   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
+│   ├── pinecone.go          # Pinecone client: REST-based query and upsert
+│   └── vectorizer.go        # Go client for the local embedding server (JSON/Binary)
 │
 ├── docs/
 │   ├── search.md                    # Search service design decisions and API reference
@@ -189,6 +192,21 @@ docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d
 ```
 *(This starts both Weaviate and the CUDA-accelerated vectorizer entirely inside Docker).*
 
+#### Option C: Pinecone (Cloud + Local Vectorizer)
+
+Pinecone is a managed vector database. Use this if you want to offload storage to the cloud while keeping embeddings local.
+
+1. **Start the Vectorizer (Native or Docker):**
+   Follow the steps in Option A or B to start the `vectorizer-proxy`.
+
+2. **Run with Pinecone Flags:**
+   ```sh
+   go run . serve \
+     --pinecone-api-key YOUR_KEY \
+     --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
+     --vectorizer-url http://localhost:8000
+   ```
+
 ### 2. Index reviews into Weaviate
 
 ```sh
@@ -244,8 +262,12 @@ The flag only affects throughput, not correctness, so it can be omitted on CPU-o
 ### 3. Start the HTTP server
 
 ```sh
-# With search enabled
+```sh
+# With search enabled (Weaviate local)
 go run . serve --weaviate localhost:8090
+
+# With search enabled (Pinecone Cloud)
+go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --vectorizer-url http://localhost:8000
 
 # Without search (search endpoint returns 503)
 go run . serve
