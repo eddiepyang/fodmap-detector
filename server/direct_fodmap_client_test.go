@@ -33,6 +33,14 @@ func (m *MockSearcher) SearchFodmap(ctx context.Context, ingredient string) (sea
 	return search.FodmapResult{}, 0, nil
 }
 
+func (m *MockSearcher) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockSearcher) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 func (m *MockSearcher) BatchUpsertFodmap(ctx context.Context, _ map[string]data.FodmapEntry) error {
 	return m.Err
 }

@@ -192,13 +192,15 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		{Name: "_additional { certainty }"},
 	}
 
-	nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
-
 	getter := c.wv.GraphQL().Get().
 		WithClassName(collectionName).
 		WithFields(fields...).
-		WithNearText(nearText).
 		WithLimit(limit * 20)
+
+	if query != "" {
+		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
+		getter = getter.WithNearText(nearText)
+	}
 
 	if where := buildWhereFilter(filter); where != nil {
 		getter = getter.WithWhere(where)

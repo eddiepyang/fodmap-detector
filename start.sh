@@ -7,6 +7,7 @@ cleanup() {
     echo "Shutting down..."
     kill $VECTORIZER_PID 2>/dev/null || true
     kill $SERVER_PID 2>/dev/null || true
+    pkill -f "fodmap-detector serve" 2>/dev/null || true
     wait 2>/dev/null
     echo "Done."
 }
@@ -51,7 +52,7 @@ done
 
 # 3. Start the Go server in the background
 echo "[3/3] Starting Go server on port 8081..."
-go run . serve --weaviate localhost:8090 &
+go run . serve &
 SERVER_PID=$!
 
 echo ""

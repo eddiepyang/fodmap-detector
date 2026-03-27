@@ -20,6 +20,8 @@ type Searcher interface {
 	GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
 	GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
 	SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error)
+	EnsureSchema(ctx context.Context) error
+	EnsureFodmapSchema(ctx context.Context) error
 	BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error
 }
 
@@ -84,13 +86,19 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 
 	if s.searcher != nil {
+		if err := s.searcher.EnsureSchema(ctx); err != nil {
+			slog.Warn("ensure yelp schema failed", "error", err)
+		}
+		if err := s.searcher.EnsureFodmapSchema(ctx); err != nil {
+			slog.Warn("ensure fodmap schema failed", "error", err)
+		}
 		if err := s.searcher.BatchUpsertFodmap(ctx, data.FodmapDB); err != nil {
 			slog.Warn("batch upsert fodmap failed", "error", err)
 		}
 	}
 
 	// Chat endpoint setup.
-	if cfg.GeminiAPIKey != "" && cfg.ChatAPIKey != "" {
+	if cfg.GeminiAPIKey != "" && (cfg.ChatAPIKey != "" || cfg.JWTSecret != "") {
 		chatModel := cfg.ChatModel
 		if chatModel == "" {
 			chatModel = "gemini-3-flash-preview"
@@ -200,16 +208,26 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.getConversationHandler)))
 	mux.Handle("DELETE /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.deleteConversationHandler)))
 
-	// Chat endpoint with auth, rate limiting, and concurrency control.
-	if s.geminiFactory != nil && (s.chatAPIKey != "" || s.jwtSecret != "") {
-		chatHandler := chain(
-			s.chatHandler(s.genaiClient),
-			combinedAuth(s.jwtSecret, s.chatAPIKey),
-			rateLimitMiddleware(s.chatRateLimiter),
-			concurrencyLimiter(s.chatMaxConcurrent),
-		)
-		mux.Handle("POST /chat/{query...}", chatHandler)
-	}
+	// Conversation creation (protected by JWT, rate limited)
+	createConvMid := chain(
+		http.HandlerFunc(s.createConversationHandler),
+		jwtAuth(s.jwtSecret),
+		rateLimitMiddleware(s.chatRateLimiter),
+		concurrencyLimiter(s.chatMaxConcurrent),
+	)
+	mux.Handle("POST /api/v1/conversations", createConvMid)
+
+	// Chat message stream (protected by JWT/API Key, rate limited)
+	postChatMid := chain(
+		s.chatHandler(s.genaiClient),
+		combinedAuth(s.jwtSecret, s.chatAPIKey),
+		rateLimitMiddleware(s.chatRateLimiter),
+		concurrencyLimiter(s.chatMaxConcurrent),
+	)
+	mux.Handle("POST /api/v1/conversations/{id}/messages", postChatMid)
+	
+	// Legacy Chat endpoint
+	mux.Handle("POST /chat/{query...}", postChatMid)
 
 	return corsMiddleware(s.corsAllowedOrigins)(mux)
 }

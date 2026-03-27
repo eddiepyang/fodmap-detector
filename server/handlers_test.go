@@ -36,6 +36,14 @@ func (m *handlersTestSearcher) SearchFodmap(_ context.Context, _ string) (search
 	return m.fodmapResult, m.fodmapCert, m.fodmapErr
 }
 
+func (m *handlersTestSearcher) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+func (m *handlersTestSearcher) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 func (m *handlersTestSearcher) BatchUpsertFodmap(_ context.Context, _ map[string]data.FodmapEntry) error {
 	return nil
 }

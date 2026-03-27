@@ -16,20 +16,36 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the HTTP analysis server.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Use viper for initial values, then override if flags were explicitly set.
 		port := viper.GetInt("port")
+		
 		weaviateHost := viper.GetString("weaviate")
+		if cmd.Flags().Changed("weaviate") {
+			weaviateHost, _ = cmd.Flags().GetString("weaviate")
+		}
+		
 		chatAPIKey := viper.GetString("chat-api-key")
 		chatModel := viper.GetString("chat-model")
 		filterModel := viper.GetString("filter-model")
+		
 		corsOrigins := viper.GetStringSlice("cors-origins")
+		if cmd.Flags().Changed("cors-origins") {
+			corsOrigins, _ = cmd.Flags().GetStringSlice("cors-origins")
+		}
+		if len(corsOrigins) == 0 {
+			corsOrigins = []string{"http://localhost:5173", "http://localhost:3000"}
+		}
+		
 		dbPath := viper.GetString("db")
 		jwtSecret := viper.GetString("jwt-secret")
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
 		vectorizerURL := viper.GetString("vectorizer-url")
-
 		if jwtSecret == "" {
 			jwtSecret = os.Getenv("JWT_SECRET")
+		}
+		if jwtSecret == "" {
+			jwtSecret = "change-me-in-production"
 		}
 		if jwtSecret == "" {
 			jwtSecret = "change-me-in-production" // Fallback but warn or error? 
