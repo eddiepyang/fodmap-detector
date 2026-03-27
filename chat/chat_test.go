@@ -559,9 +559,3 @@ func (m *mockFodmapClient) FetchChatReviews(ctx context.Context, businessID, que
 func (m *mockFodmapClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
 	return FodmapToolResponse{Ingredient: ingredient, Found: true, FodmapLevel: "high"}, nil
 }
-
-type mockAllergenClient struct{}
-
-func (m *mockAllergenClient) LookupAllergens(ctx context.Context, ingredient string) (AllergenToolResponse, error) {
-	return AllergenToolResponse{Ingredient: ingredient, Allergens: []string{"milk"}}, nil
-}
