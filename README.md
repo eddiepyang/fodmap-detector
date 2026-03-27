@@ -58,6 +58,13 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── pinecone.go          # Pinecone client: REST-based query and upsert
 │   └── vectorizer.go        # Go client for the local embedding server (JSON/Binary)
 │
+├── auth/
+│   ├── store.go             # Unified Store interface
+│   ├── sqlite_store.go      # SQLite implementation
+│   ├── postgres_store.go    # PostgreSQL implementation
+│   ├── jwt.go               # Token generation/validation
+│   └── user.go              # User model
+│
 ├── docs/
 │   ├── search.md                    # Search service design decisions and API reference
 │   ├── chat.md                      # Chat agent design decisions, tradeoffs, and future work
@@ -262,7 +269,6 @@ The flag only affects throughput, not correctness, so it can be omitted on CPU-o
 ### 3. Start the HTTP server
 
 ```sh
-```sh
 # With search enabled (Weaviate local)
 go run . serve --weaviate localhost:8090
 
@@ -279,7 +285,6 @@ Default port is `8081`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-
 | `GET` | `/reviews` | List reviews for a business |
 | `GET` | `/searchBusiness/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
 | `GET` | `/searchReview/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
@@ -296,34 +301,6 @@ curl "localhost:8081/searchBusiness/cozy%20Italian%20with%20great%20pasta"
 curl "localhost:8081/searchBusiness/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
 ```
 
-**Business search response:**
-```json
-{
-  "businesses": [
-    {"id": "abc123", "name": "Joe's Diner", "city": "Las Vegas", "state": "NV", "score": 0.91},
-    {"id": "def456", "name": "Pasta Palace", "city": "Las Vegas", "state": "NV", "score": 0.87}
-  ]
-}
-```
-
-```sh
-# Review search — returns top K review texts ranked by semantic similarity
-curl "localhost:8081/searchReview/gluten%20free%20options?limit=5"
-```
-
-**Review search response:**
-```json
-{
-  "reviews": [
-    {"text": "Great gluten-free pasta...", "business_id": "abc123", "business_name": "Joe's Diner", "city": "Las Vegas", "state": "NV", "score": 0.94}
-  ]
-}
-```
-
-Businesses are ranked by **Top-K average similarity** — the average of the top 5 most relevant
-reviews per restaurant. This avoids volume bias (popular chains don't dominate) and outlier
-noise (one lucky review can't carry a poor fit).
-
 See [docs/search.md](docs/search.md) for full API reference and design decisions.
 
 ### CLI
@@ -335,8 +312,6 @@ go run .
 ```
 
 #### Commands
-
-All commands support configuration via the `service.yaml` file or environment variables, in addition to standard flags.
 
 ##### Index (Weaviate)
 
@@ -350,78 +325,50 @@ go run . index --weaviate localhost:8090
 | `--batch-size` | `512` | Reviews per batch |
 | `--workers` | `4` | Concurrent batch upload goroutines |
 | `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
-| `--checkpoint` | `index.checkpoint` | Checkpoint file path (empty string disables) |
-| `--start-offset` | `0` | Skip this many reviews before indexing (overrides checkpoint) |
-| `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization (e.g. `localhost:8091`); omit to let Weaviate vectorize |
-
-
-
-##### Avro (event)
-
-```sh
-# Write reviews from archive to Avro OCF
-go run . event write -o output.avro
-
-# Limit to 500 records
-go run . event write -o output.avro -n 500
-
-# Read and dump an Avro file
-go run . event read -i output.avro
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-o, --output` | `test.avro` | Output file path |
-| `-n, --limit` | `0` | Max records to write (0 = no limit) |
+| `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization |
 
 ##### Chat (interactive FODMAP/allergen agent)
-
-Start an interactive chat session grounded in real reviews for a restaurant matching your query.
-The agent uses Gemini for reasoning and calls two built-in tools mid-conversation to verify claims:
-
-- `lookup_fodmap` — checks a curated static database (60+ ingredients) for FODMAP level and groups
-- `lookup_allergens` — queries the [Open Food Facts](https://openfoodfacts.org) API for allergen data
 
 ```sh
 # Find the top Thai restaurant in Las Vegas and start a chat about its dishes
 GEMINI_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
-
-# Output:
-# Found: Lotus of Siam (Las Vegas, NV)
-# Fetched 5 reviews. Starting chat (type 'exit' to quit)...
-# > does the pad thai have garlic?
-# Garlic is listed as high FODMAP (fructans). Based on review #3, the pad thai
-# sauce does appear to contain garlic...
-# > exit
 ```
 
-The command requires the server to be running (`go run . serve --weaviate localhost:8090`).
+See [docs/chat.md](docs/chat.md) for design decisions and tradeoffs.
 
-See [docs/chat.md](docs/chat.md) for design decisions, tradeoffs, plan deviations, and future improvements.
+---
 
-**Guardrails:**
+## Testing
 
-| Layer | Guardrail |
-|-------|-----------|
-| Prompt | Scope restricted to food/FODMAP/allergen questions |
-| Prompt | No medical diagnoses; always refers to a registered dietitian |
-| Prompt | Must call `lookup_fodmap` tool rather than guessing FODMAP status |
-| Prompt | Grounded in provided reviews; flags dishes not mentioned |
-| Code | Input length capped at 2,000 characters |
-| Code | Injection pattern detection (8 patterns) |
-| Code | Per-turn topic pre-screen via lightweight Gemini call |
-| Code | Long-response warning logged via `slog` |
+The project maintains a high test coverage standard (minimum **70%** for non-CLI packages) to ensure reliability.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--server` | `http://localhost:8081` | Base URL of the running fodmap server |
-| `--limit` | `5` | Max reviews to include as context |
-| `--instruction` | `""` | Optional path to a custom chat instruction template file (overrides the embedded default) |
-| `--category` | `""` | Filter businesses by category substring |
-| `--city` | `""` | Filter businesses by city (exact match) |
-| `--state` | `""` | Filter businesses by state (exact match) |
-| `--chat-model` | `gemini-3-flash-preview` | Gemini model ID for the chat session |
-| `--filter-model` | `gemini-3.1-flash-lite-preview` | Gemini model ID for topic filtering |
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests and generate coverage report
+go test -coverprofile=coverage.out ./...
+
+# View coverage summary by function
+go tool cover -func=coverage.out
+```
+
+### Coverage Threshold (CI)
+
+The GitHub Actions pipeline is configured to enforce a 70% coverage threshold. If total coverage (excluding the `cli/` package) drops below this level, the build will fail. 
+
+To run the same check locally:
+```bash
+go test ./... -coverprofile=coverage.out
+grep -v "fodmap/cli" coverage.out > coverage_filtered.out
+go tool cover -func=coverage_filtered.out | grep total:
+```
+
+### Mocking
+
+Many tests (especially in `chat/` and `search/`) use `httptest.Server` to mock external APIs like Gemini and Weaviate. This allows for fast, deterministic unit testing without requiring real API keys or running infrastructure.
 
 ---
 

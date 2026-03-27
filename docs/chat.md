@@ -241,11 +241,12 @@ from that plan and the reasoning behind each:
 
 ## Files
 
-| File | Role |
-|---|---|
-| `cli/chat.go` | Command entry point, REPL loop, HTTP helpers, guardrails, tool dispatch, allergen lookup |
-| `cli/fodmap_data.go` | Static FODMAP ingredient database (~60 entries) and `lookupFODMAP` function |
-| `cli/chat-instruction.txt` | Go `text/template` for the chat system instruction (embedded directly into the binary) |
-| `cli/chat_test.go` | Tests for guardrails, HTTP helpers, template rendering, tool dispatch |
-| `cli/fodmap_data_test.go` | Tests for FODMAP lookup (exact, partial, case-insensitive, not-found) |
+| File | Role | Coverage |
+|---|---|---|
+| `chat/chat.go` | Chat session logic, tool dispatch, HTTP clients | 87.6% |
+| `cli/chat.go` | Command entry point, REPL loop, guardrails | — |
+| `server/chat_handler.go` | SSE streaming handler, model factory | 68.7% |
+| `cli/fodmap_data.go` | Static FODMAP ingredient database (~60 entries) | 100% |
+| `cli/chat_test.go` | Tests for guardrails, template rendering, tool dispatch | — |
+| `server/conversation_handler_test.go` | Tests for conversation CRUD and error paths | — |
 ```

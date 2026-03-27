@@ -76,7 +76,7 @@ Populate Weaviate from the Yelp archive. The command reads `./data/archive.tar.g
 and business data, and upserts to Weaviate in batches:
 
 ```bash
-go run ./cmd/cli index --weaviate localhost:8090
+go run . index --weaviate localhost:8090
 ```
 
 Flags:
@@ -265,3 +265,21 @@ Note: `all-mpnet-base-v2` is ~5× larger and significantly slower on CPU — a G
 **Decision:** `text2vec-transformers` keeps the entire pipeline local and removes the need for any
 explicit embedding code. The only trade-off is the extra Docker container and ~90 MB model download,
 which is a one-time cost.
+
+---
+
+## Testing
+
+The search clients (`weaviate.go` and `pinecone.go`) are tested using `httptest.Server` to mock the vector database APIs. This ensures that logic like schema enforcement, batching, and score aggregation is verified without requiring a running database.
+
+**Example: Mocking Weaviate GraphQL**
+```go
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    if r.URL.Path == "/v1/graphql" {
+        // Return a mocked GraphQL response
+        json.NewEncoder(w).Encode(map[string]any{"data": ...})
+    }
+}))
+```
+
+See `search/weaviate_test.go` for full implementation details.

@@ -1,6 +1,7 @@
 *.avro
 *.old
 *.backup
+linter_issues.json
 index.checkpoint
 vendor
 *.parquet
