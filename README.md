@@ -151,6 +151,8 @@ Example `service.yaml`:
 ```yaml
 port: 8081
 weaviate: "localhost:8090"
+cors-origins:
+  - "http://localhost:5173"
 chat-model: "gemini-3-flash-preview"
 filter-model: "gemini-3.1-flash-lite-preview"
 batch-size: 512

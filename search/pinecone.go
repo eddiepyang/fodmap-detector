@@ -45,6 +45,16 @@ type PineconeQueryResponse struct {
 	} `json:"matches"`
 }
 
+// EnsureSchema is a no-op for Pinecone as it uses implicit namespaces.
+func (c *PineconeClient) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+// EnsureFodmapSchema is a no-op for Pinecone as it uses implicit namespaces.
+func (c *PineconeClient) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 // GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
 func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	vec, err := c.Vectorizer.VectorizeSingle(ctx, query)

@@ -20,9 +20,16 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+type authUserResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
 type authResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	AccessToken  string           `json:"access_token"`
+	Token        string           `json:"token"` // Alias for frontend compatibility
+	RefreshToken string           `json:"refresh_token"`
+	User         authUserResponse `json:"user"`
 }
 
 type refreshRequest struct {
@@ -61,7 +68,25 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate tokens for automatic initial login after registration
+	access, refresh, err := auth.GenerateTokens(user.ID, s.jwtSecret)
+	if err != nil {
+		// User is created but tokens failed; return success with error message?
+		// No, return 201 Created and let login handle it or just return tokens now.
+		slog.Warn("user created but token generation failed", "user_id", user.ID, "error", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(authResponse{
+		AccessToken:  access,
+		Token:        access,
+		RefreshToken: refresh,
+		User: authUserResponse{
+			ID:    user.ID,
+			Email: user.Email,
+		},
+	})
 }
 
 func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +121,12 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(authResponse{
 		AccessToken:  access,
+		Token:        access,
 		RefreshToken: refresh,
+		User: authUserResponse{
+			ID:    user.ID,
+			Email: user.Email,
+		},
 	})
 }
 

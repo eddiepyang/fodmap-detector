@@ -152,6 +152,14 @@ func (m *chatMockSearcher) SearchFodmap(ctx context.Context, ingredient string) 
 	return search.FodmapResult{}, 0, nil
 }
 
+func (m *chatMockSearcher) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+func (m *chatMockSearcher) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 func (m *chatMockSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	return nil
 }

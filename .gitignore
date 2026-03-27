@@ -5,6 +5,7 @@ linter_issues.json
 index.checkpoint
 vendor
 *.parquet
+*.db
 
 # Jupyter notebooks
 *.ipynb

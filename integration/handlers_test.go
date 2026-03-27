@@ -36,6 +36,14 @@ func (s *stubSearcher) SearchFodmap(_ context.Context, _ string) (search.FodmapR
 	return s.fodmapResult, s.fodmapCertainty, s.err
 }
 
+func (s *stubSearcher) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+func (s *stubSearcher) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 func (s *stubSearcher) GetReviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
 	s.lastReviewFilter = filter
 	return s.reviewResult, s.err
