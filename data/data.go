@@ -80,8 +80,12 @@ func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, erro
 }
 
 // GetReviewsByBusiness returns all reviews in the archive for the given businessID.
-func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
-	files, err := os.Open(DefaultArchivePath)
+// If archivePath is empty, DefaultArchivePath is used.
+func GetReviewsByBusiness(archivePath, businessID string) ([]schemas.Review, error) {
+	if archivePath == "" {
+		archivePath = DefaultArchivePath
+	}
+	files, err := os.Open(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
@@ -128,8 +132,12 @@ func GetReviewsByBusiness(businessID string) ([]schemas.Review, error) {
 
 // GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
 // The caller can use the map for O(1) lookups when joining reviews with business metadata.
-func GetBusinessMap() (map[string]schemas.Business, error) {
-	files, err := os.Open(DefaultArchivePath)
+// If archivePath is empty, DefaultArchivePath is used.
+func GetBusinessMap(archivePath string) (map[string]schemas.Business, error) {
+	if archivePath == "" {
+		archivePath = DefaultArchivePath
+	}
+	files, err := os.Open(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}

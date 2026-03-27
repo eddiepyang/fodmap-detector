@@ -1,13 +1,17 @@
 package server
 
 import (
+	"fodmap/auth"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
 func okHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if userID, ok := r.Context().Value(userContextKey).(string); ok {
+			w.Header().Set("X-User-ID", userID)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 }
@@ -59,6 +63,87 @@ func TestBearerAuth_NoBearerPrefix(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
+}
+
+// ---- jwtAuth ----
+
+func TestJwtAuth_ValidToken(t *testing.T) {
+	secret := "jwt-secret"
+	userID := "user-123"
+	token, _, _ := auth.GenerateTokens(userID, secret)
+
+	h := jwtAuth(secret)(okHandler())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("X-User-ID"); got != userID {
+		t.Errorf("X-User-ID = %q, want %q", got, userID)
+	}
+}
+
+func TestJwtAuth_InvalidToken(t *testing.T) {
+	h := jwtAuth("jwt-secret")(okHandler())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// ---- combinedAuth ----
+
+func TestCombinedAuth(t *testing.T) {
+	jwtSecret := "jwt-secret"
+	bearerToken := "bearer-token"
+	userID := "user-123"
+	jwtToken, _, _ := auth.GenerateTokens(userID, jwtSecret)
+
+	h := combinedAuth(jwtSecret, bearerToken)(okHandler())
+
+	t.Run("Valid JWT", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+jwtToken)
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+		if got := rec.Header().Get("X-User-ID"); got != userID {
+			t.Errorf("X-User-ID = %q, want %q", got, userID)
+		}
+	})
+
+	t.Run("Valid Bearer", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+		// Bearer auth doesn't set user ID in context in this implementation
+		if got := rec.Header().Get("X-User-ID"); got != "" {
+			t.Errorf("X-User-ID = %q, want empty", got)
+		}
+	})
+
+	t.Run("Invalid Both", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", "Bearer wrong")
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
 }
 
 // ---- rateLimitMiddleware ----
@@ -123,6 +208,66 @@ func TestConcurrencyLimiter_RejectsWhenFull(t *testing.T) {
 	}
 
 	close(release)
+}
+
+// ---- corsMiddleware ----
+
+func TestCorsMiddleware_AllowedOrigin(t *testing.T) {
+	allowedOrigins := []string{"http://localhost:3000"}
+	h := corsMiddleware(allowedOrigins)(okHandler())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, "http://localhost:3000")
+	}
+}
+
+func TestCorsMiddleware_DisallowedOrigin(t *testing.T) {
+	allowedOrigins := []string{"http://localhost:3000"}
+	h := corsMiddleware(allowedOrigins)(okHandler())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "http://disallowed.com")
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want empty string", got)
+	}
+}
+
+func TestCorsMiddleware_Preflight(t *testing.T) {
+	allowedOrigins := []string{"http://localhost:3000"}
+	h := corsMiddleware(allowedOrigins)(okHandler())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, "http://localhost:3000")
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "POST, GET, OPTIONS, PUT, DELETE" {
+		t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, "POST, GET, OPTIONS, PUT, DELETE")
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization" {
+		t.Errorf("Access-Control-Allow-Headers = %q, want %q", got, "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+	}
 }
 
 // ---- chain ----

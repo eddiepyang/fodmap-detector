@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"fodmap/auth"
 	"fodmap/server"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,25 @@ var serveCmd = &cobra.Command{
 		chatAPIKey := viper.GetString("chat-api-key")
 		chatModel := viper.GetString("chat-model")
 		filterModel := viper.GetString("filter-model")
+		corsOrigins := viper.GetStringSlice("cors-origins")
+		dbPath := viper.GetString("db")
+		jwtSecret := viper.GetString("jwt-secret")
+		pineconeAPIKey := viper.GetString("pinecone-api-key")
+		pineconeIndexHost := viper.GetString("pinecone-index-host")
+		vectorizerURL := viper.GetString("vectorizer-url")
+
+		if jwtSecret == "" {
+			jwtSecret = os.Getenv("JWT_SECRET")
+		}
+		if jwtSecret == "" {
+			jwtSecret = "change-me-in-production" // Fallback but warn or error? 
+		}
+
+		userStore, err := auth.NewSQLiteStore(dbPath)
+		if err != nil {
+			return fmt.Errorf("initializing user store: %w", err)
+		}
+		defer userStore.Close()
 
 		if port <= 0 || port > 65535 {
 			return fmt.Errorf("invalid port: %d (must be between 1 and 65535)", port)
@@ -29,12 +49,18 @@ var serveCmd = &cobra.Command{
 		}
 
 		srv, err := server.New(context.Background(), server.Config{
-			Port:         port,
-			WeaviateHost: weaviateHost,
-			GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
-			ChatModel:    chatModel,
-			FilterModel:  filterModel,
-			ChatAPIKey:   chatAPIKey,
+			Port:              port,
+			WeaviateHost:      weaviateHost,
+			GeminiAPIKey:      os.Getenv("GEMINI_API_KEY"),
+			ChatModel:         chatModel,
+			FilterModel:       filterModel,
+			ChatAPIKey:        chatAPIKey,
+			CORSAllowedOrigins: corsOrigins,
+			UserStore:          userStore,
+			JWTSecret:          jwtSecret,
+			PineconeAPIKey:     pineconeAPIKey,
+			PineconeIndexHost:  pineconeIndexHost,
+			VectorizerURL:      vectorizerURL,
 		})
 		if err != nil {
 			return fmt.Errorf("initializing server: %w", err)
@@ -53,4 +79,12 @@ func init() {
 	serveCmd.Flags().String("chat-api-key", "", "Bearer token for /chat endpoint; omit to disable chat")
 	serveCmd.Flags().String("chat-model", "gemini-3-flash-preview", "Gemini model ID for chat sessions")
 	serveCmd.Flags().String("filter-model", "gemini-3.1-flash-lite-preview", "Gemini model ID for topic filtering")
+	serveCmd.Flags().StringSlice("cors-origins", []string{"http://localhost:3000", "https://app.example.com"}, "Comma-separated list of allowed CORS origins")
+	serveCmd.Flags().String("db", "fodmap.db", "Path to the SQLite database for user storage")
+	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
+	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
+	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
+	serveCmd.Flags().String("vectorizer-url", "http://localhost:8000", "Base URL for the vectorizer-proxy")
+	
+	_ = viper.BindPFlags(serveCmd.Flags())
 }

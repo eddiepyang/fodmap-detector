@@ -11,6 +11,7 @@ import (
 	"testing"
 	"fodmap/search"
 	"fodmap/server"
+	"fodmap/data"
 )
 
 
@@ -38,6 +39,10 @@ func (s *stubSearcher) SearchFodmap(_ context.Context, _ string) (search.FodmapR
 func (s *stubSearcher) GetReviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
 	s.lastReviewFilter = filter
 	return s.reviewResult, s.err
+}
+
+func (s *stubSearcher) BatchUpsertFodmap(_ context.Context, _ map[string]data.FodmapEntry) error {
+	return s.err
 }
 
 // newMux returns the handler mux used by the server, wired to the stub analyzer.
