@@ -12,20 +12,25 @@ well their reviews match the query — optionally filtered by category, city, an
                           ┌─────────────────────────────┐
   GET /search/...    ───► │     Go HTTP Server           │
                           │  searchHandler               │
-                          │    ↓ nearText query          │
-                          │  Weaviate Client             │
                           └──────────┬──────────────────┘
-                                     │ GraphQL (port 8090)
-                          ┌──────────▼──────────────────┐
-                          │  Weaviate                    │
-                          │  Collection: YelpReview      │
-                          │  (one object per review)     │
-                          └──────────┬──────────────────┘
-                                     │ HTTP inference API
-                          ┌──────────▼──────────────────┐
-                          │  t2v-transformers            │
-                          │  multi-qa-MiniLM-L6-cos-v1  │
-                          └─────────────────────────────┘
+                                     │
+                  ┌──────────────────┴──────────────────┐
+                  │                                     │
+        (Local Path)                           (Cloud Path)
+                  │                                     │
+      ┌──────────▼──────────┐               ┌──────────▼──────────┐
+      │  Weaviate Client    │               │  Pinecone Client    │
+      └──────────┬──────────┘               └──────────┬──────────┘
+                 │ GraphQL                             │ REST
+      ┌──────────▼──────────┐               ┌──────────▼──────────┐
+      │  Weaviate           │               │  Pinecone (Cloud)   │
+      │  Collection: Yelp   │               │  Namespace: yelp    │
+      └──────────┬──────────┘               └──────────▲──────────┘
+                 │                                     │
+      ┌──────────▼──────────┐               ┌──────────┴──────────┐
+      │  t2v-transformers    │ ◄──────────── │    vectorizer-proxy │
+      │  Inference Sidecar   │               │    (Python/FastAPI) │
+      └─────────────────────┘               └─────────────────────┘
 ```
 
 **Data flow at index time:**
@@ -49,27 +54,19 @@ well their reviews match the query — optionally filtered by category, city, an
 ### Prerequisites
 - Docker and Docker Compose
 
-### Start Weaviate
+### Start Search Infrastructure
 
-```bash
-docker compose up -d
-```
+#### Option A: Weaviate (Local)
+Run Weaviate and the transformers sidecar using `docker compose up -d`. Weaviate handles vectorization internally by calling the sidecar.
 
-Two containers start:
-- **weaviate** — vector database, REST/GraphQL on host port `8090`
-- **t2v-transformers** — transformer inference sidecar (internal to Docker network)
+#### Option B: Pinecone (Cloud)
+Pinecone requires an external vectorizer. You must run the `vectorizer-proxy` (Python) to generate embeddings before sending them to Pinecone.
 
-**First run:** the transformer image downloads the `multi-qa-MiniLM-L6-cos-v1` model (~90 MB).
-Wait for this log line before running `index`:
-
-```
-t2v-transformers  | Application startup complete.
-```
-
-Check readiness:
-```bash
-docker compose logs t2v-transformers | grep "startup complete"
-```
+**Vectorizer Proxy API:**
+- `POST /vectors` (JSON): Single string to vector.
+- `POST /vectors/batch` (Binary): Efficient multi-vector response.
+  - Returns `<II` (rows, dim) little-endian uint32 header.
+  - Followed by `float32` vector data.
 
 ---
 
@@ -79,7 +76,7 @@ Populate Weaviate from the Yelp archive. The command reads `./data/archive.tar.g
 and business data, and upserts to Weaviate in batches:
 
 ```bash
-go run ./cmd/cli index --weaviate localhost:8090
+go run . index --weaviate localhost:8090
 ```
 
 Flags:
@@ -153,11 +150,14 @@ If `--weaviate` is omitted, the server starts normally but `GET /search/<query>`
 
 ## Configuration Reference
 
-### `serve` flags (relevant to search)
+### `serve` flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--weaviate` | `""` (disabled) | Weaviate host:port; omit to disable search endpoint |
+| `--weaviate` | `""` | Weaviate host:port |
+| `--pinecone-api-key` | `""` | Pinecone API key |
+| `--pinecone-index-host` | `""` | Pinecone host URL |
+| `--vectorizer-url` | `http://localhost:8000` | URL for the `vectorizer-proxy` |
 
 ### `index` flags
 
@@ -224,14 +224,9 @@ approach that keeps the pipeline simple while still enabling restaurant-level ra
 | Redis Stack | No | Moderate | Official | Low | Familiar ops; weaker vector quality |
 | In-memory (flat file) | No | Manual | None | None | Prototyping only; O(N) scan |
 
-**Decision:** Weaviate's `text2vec-transformers` module is the decisive advantage. The `index`
-command sends raw review text; Weaviate calls the transformer container and stores the vector
-automatically. Every alternative requires an explicit embed-then-store pipeline (call API, receive
-float arrays, insert with vector). That pipeline makes sense at production scale but is unnecessary
-complexity here.
+**Decision:** Weaviate's `text2vec-transformers` module is the decisive advantage for local-first development. It removes the need for explicit embedding code. 
 
-If an external embedding API (Gemini, OpenAI) were already in use, **Qdrant** would be the better
-choice: simpler ops, better raw performance, no sidecar container.
+However, for managed cloud deployments, we now support **Pinecone**. Pinecone is better suited for production scale but requires client-side embedding, which we handle via the `vectorizer-proxy`.
 
 ---
 
@@ -270,3 +265,21 @@ Note: `all-mpnet-base-v2` is ~5× larger and significantly slower on CPU — a G
 **Decision:** `text2vec-transformers` keeps the entire pipeline local and removes the need for any
 explicit embedding code. The only trade-off is the extra Docker container and ~90 MB model download,
 which is a one-time cost.
+
+---
+
+## Testing
+
+The search clients (`weaviate.go` and `pinecone.go`) are tested using `httptest.Server` to mock the vector database APIs. This ensures that logic like schema enforcement, batching, and score aggregation is verified without requiring a running database.
+
+**Example: Mocking Weaviate GraphQL**
+```go
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    if r.URL.Path == "/v1/graphql" {
+        // Return a mocked GraphQL response
+        json.NewEncoder(w).Encode(map[string]any{"data": ...})
+    }
+}))
+```
+
+See `search/weaviate_test.go` for full implementation details.

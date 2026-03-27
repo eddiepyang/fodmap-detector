@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"fodmap/auth"
 	"fodmap/data"
 	"fodmap/search"
 
 	"golang.org/x/time/rate"
+	"google.golang.org/genai"
 )
 
 // Searcher is the interface satisfied by search.Client. Extracted so the server
@@ -18,6 +20,7 @@ type Searcher interface {
 	GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
 	GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
 	SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error)
+	BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error
 }
 
 type Server struct {
@@ -30,12 +33,20 @@ type Server struct {
 	chatAPIKey        string             // bearer token for /chat route
 	chatRateLimiter   *ipRateLimiter
 	chatMaxConcurrent int
+	corsAllowedOrigins []string
+	genaiClient       *genai.Client
+	userStore         auth.Store
+	jwtSecret         string
 }
 
 type Config struct {
 	Port int
 
-	WeaviateHost string // optional; if empty, the search endpoint returns 503
+	// Search configuration.
+	WeaviateHost string // optional; if empty, Weaviate is not used
+	PineconeAPIKey     string // optional
+	PineconeIndexHost  string // optional (must start with https://)
+	VectorizerURL      string // required for Pinecone; optional otherwise
 
 	// Chat endpoint configuration.
 	GeminiAPIKey      string  // Gemini API key; omit to disable /chat
@@ -45,28 +56,36 @@ type Config struct {
 	ChatRateLimit     float64 // requests per second per IP (default: 2)
 	ChatRateBurst     int     // burst allowance (default: 5)
 	ChatMaxConcurrent int     // max simultaneous chat requests (default: 10)
+	CORSAllowedOrigins []string
+	UserStore          auth.Store
+	JWTSecret         string
 }
 
 // New initialises the server and Searcher client.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
 		port: cfg.Port,
+		corsAllowedOrigins: cfg.CORSAllowedOrigins,
+		userStore:          cfg.UserStore,
+		jwtSecret:          cfg.JWTSecret,
 	}
 
-	if cfg.WeaviateHost != "" {
+	if cfg.PineconeAPIKey != "" && cfg.PineconeIndexHost != "" {
+		v := search.NewVectorizerClient(cfg.VectorizerURL)
+		s.searcher = search.NewPineconeClient(cfg.PineconeAPIKey, cfg.PineconeIndexHost, v)
+		slog.Info("pinecone search enabled", "host", cfg.PineconeIndexHost)
+	} else if cfg.WeaviateHost != "" {
 		sc, err := search.NewClient(cfg.WeaviateHost)
 		if err != nil {
 			return nil, fmt.Errorf("initializing weaviate client: %w", err)
 		}
 		s.searcher = sc
 		slog.Info("weaviate search enabled", "host", cfg.WeaviateHost)
+	}
 
-		if err := sc.EnsureFodmapSchema(ctx); err != nil {
-			slog.Warn("ensuring fodmap schema failed", "error", err)
-		} else {
-			if err := sc.BatchUpsertFodmap(ctx, data.FodmapDB); err != nil {
-				slog.Warn("batch upsert fodmap failed", "error", err)
-			}
+	if s.searcher != nil {
+		if err := s.searcher.BatchUpsertFodmap(ctx, data.FodmapDB); err != nil {
+			slog.Warn("batch upsert fodmap failed", "error", err)
 		}
 	}
 
@@ -100,6 +119,15 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if s.chatMaxConcurrent <= 0 {
 			s.chatMaxConcurrent = 10
 		}
+
+		client, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  cfg.GeminiAPIKey,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating gemini client: %w", err)
+		}
+		s.genaiClient = client
 		slog.Info("chat endpoint enabled", "model", chatModel)
 	}
 
@@ -110,7 +138,12 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 // where the real LLM and Weaviate clients should not be initialised. Pass nil for searcher
 // to disable the search endpoint.
 func NewServer(searcher Searcher, port int) *Server {
-	return &Server{searcher: searcher, port: port}
+	return &Server{
+		searcher:  searcher,
+		port:      port,
+		jwtSecret: "test-secret", // default for tests
+		userStore: newMockStore(),
+	}
 }
 
 // ChatConfig holds optional chat-related overrides for NewServerWithChat.
@@ -143,6 +176,8 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 		chatAPIKey:        cfg.ChatAPIKey,
 		chatRateLimiter:   newIPRateLimiter(rl, burst),
 		chatMaxConcurrent: maxConc,
+		genaiClient:       nil, // tests inject their own geminiFactory or mock
+		userStore:         newMockStore(),
 	}
 }
 
@@ -155,18 +190,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
 	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
 
+	// Auth handlers
+	mux.HandleFunc("POST /api/v1/auth/register", s.registerHandler)
+	mux.HandleFunc("POST /api/v1/auth/login", s.loginHandler)
+	mux.HandleFunc("POST /api/v1/auth/refresh", s.refreshHandler)
+
+	// Conversation handlers (protected by JWT)
+	mux.Handle("GET /api/v1/conversations", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.listConversationsHandler)))
+	mux.Handle("GET /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.getConversationHandler)))
+	mux.Handle("DELETE /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.deleteConversationHandler)))
+
 	// Chat endpoint with auth, rate limiting, and concurrency control.
-	if s.geminiFactory != nil && s.chatAPIKey != "" {
+	if s.geminiFactory != nil && (s.chatAPIKey != "" || s.jwtSecret != "") {
 		chatHandler := chain(
-			http.HandlerFunc(s.chatHandler),
-			bearerAuth(s.chatAPIKey),
+			s.chatHandler(s.genaiClient),
+			combinedAuth(s.jwtSecret, s.chatAPIKey),
 			rateLimitMiddleware(s.chatRateLimiter),
 			concurrencyLimiter(s.chatMaxConcurrent),
 		)
 		mux.Handle("POST /chat/{query...}", chatHandler)
 	}
 
-	return mux
+	return corsMiddleware(s.corsAllowedOrigins)(mux)
 }
 
 // Start registers routes and begins serving HTTP requests.

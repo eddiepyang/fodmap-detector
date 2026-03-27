@@ -18,5 +18,18 @@ jobs:
         with:
           version: v2.11.3
 
-      - name: Test
-        run: go test ./...
+      - name: Test with coverage
+        run: go test ./... -coverprofile=coverage.out
+
+      - name: Report coverage
+        run: |
+          grep -v "fodmap/cli" coverage.out > coverage_filtered.out
+          go tool cover -func=coverage_filtered.out
+          echo ""
+          echo "--- Total (excluding cli) ---"
+          TOTAL=$(go tool cover -func=coverage_filtered.out | grep total: | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: $TOTAL%"
+          if (( $(echo "$TOTAL < 70" | bc -l) )); then
+            echo "Coverage is below 70%! Failing build."
+            exit 1
+          fi
