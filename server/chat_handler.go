@@ -12,6 +12,7 @@ import (
 	"fodmap/chat"
 	"fodmap/search"
 
+	"github.com/google/uuid"
 	"google.golang.org/genai"
 )
 
@@ -162,7 +163,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			}
 
 			// 4. Create new conversation in DB.
-			convID := "conv-" + time.Now().Format("20060102150405")
+			convID := uuid.New().String()
 			if userID == "" {
 				userID = "anonymous"
 			}
@@ -188,13 +189,23 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			}
 			biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
 			
-			reviewResult, _ := s.searcher.GetReviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
+			reviewResult, err := s.searcher.GetReviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
+			if err != nil {
+				slog.Error("chat: reload reviews", "error", err)
+				respondError(w, "failed to reload review context", http.StatusInternalServerError)
+				return
+			}
 			reviews := make([]chat.Review, len(reviewResult.BusinessReviews))
 			for i, rr := range reviewResult.BusinessReviews {
 				reviews[i] = chat.Review{Stars: float32(rr.Score), Text: rr.Review.Review.Text}
 			}
 			chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
-			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, reviews)
+			systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, reviews)
+			if err != nil {
+				slog.Error("chat: render prompt on resume", "error", err)
+				respondError(w, "failed to build chat context", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		chatModel := s.chatModel

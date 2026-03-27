@@ -104,3 +104,155 @@ func TestAuthHandlers(t *testing.T) {
 		}
 	})
 }
+
+func TestAuthHandler_RegisterMissingFields(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	cases := []struct {
+		name string
+		body map[string]string
+	}{
+		{"empty email", map[string]string{"email": "", "password": "pass123"}},
+		{"empty password", map[string]string{"email": "a@b.com", "password": ""}},
+		{"both empty", map[string]string{"email": "", "password": ""}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody, _ := json.Marshal(tc.body)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(reqBody))
+			rec := httptest.NewRecorder()
+
+			s.registerHandler(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestAuthHandler_RegisterInvalidJSON(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader([]byte("not json")))
+	rec := httptest.NewRecorder()
+
+	s.registerHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAuthHandler_RegisterNoStore(t *testing.T) {
+	s := &Server{userStore: nil, jwtSecret: "test-secret"}
+
+	reqBody, _ := json.Marshal(map[string]string{"email": "a@b.com", "password": "pass123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.registerHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestAuthHandler_LoginNoStore(t *testing.T) {
+	s := &Server{userStore: nil, jwtSecret: "test-secret"}
+
+	reqBody, _ := json.Marshal(map[string]string{"email": "a@b.com", "password": "pass123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.loginHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestAuthHandler_LoginInvalidJSON(t *testing.T) {
+	store := newMockStore()
+	s := &Server{userStore: store, jwtSecret: "test-secret"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader([]byte("{bad")))
+	rec := httptest.NewRecorder()
+
+	s.loginHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAuthHandler_RefreshInvalidToken(t *testing.T) {
+	s := &Server{jwtSecret: "test-secret"}
+
+	reqBody, _ := json.Marshal(map[string]string{"refresh_token": "garbage"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.refreshHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthHandler_RefreshNoSecret(t *testing.T) {
+	s := &Server{jwtSecret: ""}
+
+	reqBody, _ := json.Marshal(map[string]string{"refresh_token": "anything"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.refreshHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestAuthHandler_RefreshInvalidJSON(t *testing.T) {
+	s := &Server{jwtSecret: "test-secret"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader([]byte("{bad")))
+	rec := httptest.NewRecorder()
+
+	s.refreshHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAuthHandler_RefreshUserNotFound(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	// Generate a valid refresh token for a user ID that doesn't exist in the store.
+	_, refreshToken, _ := auth.GenerateTokens("nonexistent-user-id", "test-secret")
+
+	reqBody, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.refreshHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}

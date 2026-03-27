@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"fodmap/search"
@@ -64,6 +65,13 @@ func TestDirectFodmapClient_LookupFODMAP(t *testing.T) {
 			ingredient:    "unknown",
 			expectedFound: false,
 			expectedErr:   false,
+		},
+		{
+			name:          "Search error",
+			searcher:      &MockSearcher{Err: errors.New("search unavailable")},
+			ingredient:    "garlic",
+			expectedFound: false,
+			expectedErr:   true,
 		},
 	}
 

@@ -64,4 +64,22 @@ func TestSQLiteStore(t *testing.T) {
 	if missing != nil {
 		t.Errorf("Expected nil for missing user, got %+v", missing)
 	}
+
+	// 5. Get by non-existent ID
+	missingByID, err := store.GetUserByID(ctx, "nonexistent-id")
+	if err != nil {
+		t.Fatalf("GetUserByID failed for missing user: %v", err)
+	}
+	if missingByID != nil {
+		t.Errorf("Expected nil for missing ID, got %+v", missingByID)
+	}
+
+	// 6. Create duplicate user (email conflict)
+	err = store.CreateUser(ctx, &User{
+		ID:    uuid.New().String(),
+		Email: user.Email, // same email
+	})
+	if err == nil {
+		t.Error("expected error when creating user with duplicate email")
+	}
 }

@@ -19,7 +19,7 @@ func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reviews, err := data.GetReviewsByBusiness(businessID)
+	reviews, err := data.GetReviewsByBusiness("", businessID)
 	if err != nil {
 		slog.Error("reviewsHandler error", "error", err)
 		http.Error(w, `{"error":"failed to read archive"}`, http.StatusInternalServerError)

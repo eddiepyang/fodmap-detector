@@ -7,7 +7,139 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"google.golang.org/genai"
 )
+
+// ---- IsFoodRelated ----
+
+func TestIsFoodRelated_Yes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{
+							map[string]any{"text": "yes"},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey: "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	got, err := IsFoodRelated(context.Background(), client, "", "is pizza low fodmap?")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected true for 'yes' response")
+	}
+}
+
+func TestIsFoodRelated_No(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{
+							map[string]any{"text": "no"},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey: "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	got, err := IsFoodRelated(context.Background(), client, "", "write me a poem")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected false for 'no' response")
+	}
+}
+
+func TestIsFoodRelated_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey: "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	_, err := IsFoodRelated(context.Background(), client, "", "test")
+	if err == nil {
+		t.Error("expected error for 500 response")
+	}
+}
+
+// ---- SendWithToolCalls ----
+
+func TestSession_SendWithToolCalls(t *testing.T) {
+	var turn int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		turn++
+		if turn == 1 {
+			// First turn: model returns a tool call
+			body := "data: " + `{"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup_fodmap", "args": {"ingredient": "garlic"}}}]}}]}` + "\n\n"
+			_, _ = w.Write([]byte(body))
+		} else {
+			// Second turn: model returns text after seeing tool response
+			body := "data: " + `{"candidates": [{"content": {"parts": [{"text": "Garlic is high FODMAP."}]}}]}` + "\n\n"
+			_, _ = w.Write([]byte(body))
+		}
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey: "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	mockFodmap := &mockFodmapClient{}
+	s := &Session{
+		FodmapClient: mockFodmap,
+		Model:        "test-model",
+	}
+
+	var chunks []string
+	res, err := s.SendWithToolCalls(context.Background(), client, "hello", func(s string) {
+		chunks = append(chunks, s)
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(res.Text, "Garlic is high") {
+		t.Errorf("got text %q", res.Text)
+	}
+	if len(res.ToolCalls) != 1 || !strings.Contains(res.ToolCalls[0], "lookup_fodmap") {
+		t.Errorf("got tool calls %v", res.ToolCalls)
+	}
+	if len(s.History) != 4 { // [user1, model_tool, user_resp, model_text]
+		t.Errorf("history len = %d, want 4", len(s.History))
+	}
+}
 
 // ---- ValidateChatInput ----
 
@@ -412,4 +544,24 @@ func TestFodmapAllergenTools_HasBothDeclarations(t *testing.T) {
 	if !names["lookup_fodmap"] || !names["lookup_allergens"] {
 		t.Errorf("missing expected tool declarations: %v", names)
 	}
+}
+
+// --- Mocks ---
+
+type mockFodmapClient struct{}
+
+func (m *mockFodmapClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
+	return &Business{ID: "b1", Name: "Mock Biz"}, nil
+}
+func (m *mockFodmapClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
+	return []Review{{ReviewID: "r1", Text: "Mock Review"}}, nil
+}
+func (m *mockFodmapClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
+	return FodmapToolResponse{Ingredient: ingredient, Found: true, FodmapLevel: "high"}, nil
+}
+
+type mockAllergenClient struct{}
+
+func (m *mockAllergenClient) LookupAllergens(ctx context.Context, ingredient string) (AllergenToolResponse, error) {
+	return AllergenToolResponse{Ingredient: ingredient, Allergens: []string{"milk"}}, nil
 }

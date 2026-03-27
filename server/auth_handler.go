@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"fodmap/auth"
+
+	"github.com/google/uuid"
 )
 
 type registerRequest struct {
@@ -45,6 +47,7 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := &auth.User{
+		ID:    uuid.New().String(),
 		Email: req.Email,
 	}
 	if err := user.SetPassword(req.Password); err != nil {
@@ -74,7 +77,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.userStore.GetUserByEmail(r.Context(), req.Email)
-	if err != nil {
+	if err != nil || user == nil {
 		respondError(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -116,8 +119,8 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.userStore != nil {
-		_, err := s.userStore.GetUserByID(r.Context(), claims.UserID)
-		if err != nil {
+		user, err := s.userStore.GetUserByID(r.Context(), claims.UserID)
+		if err != nil || user == nil {
 			respondError(w, "user not found", http.StatusUnauthorized)
 			return
 		}

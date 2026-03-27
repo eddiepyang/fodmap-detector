@@ -1,8 +1,15 @@
 package search
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"fodmap/data"
+	"fodmap/data/schemas"
 	"github.com/weaviate/weaviate/entities/models"
 )
 
@@ -231,3 +238,290 @@ func TestParseFodmapResult_Valid(t *testing.T) {
 		t.Errorf("got certainty %f, want 0.95", certainty)
 	}
 }
+
+// --- getReviews tests ---
+
+// makeReviewData constructs the shape of GraphQL data for review-based queries.
+func makeReviewData(items []struct {
+	businessID   string
+	businessName string
+	city         string
+	state        string
+	text         string
+	certainty    float64
+}) map[string]models.JSONObject {
+	rawItems := make([]any, len(items))
+	for i, item := range items {
+		rawItems[i] = map[string]any{
+			"businessId":   item.businessID,
+			"businessName": item.businessName,
+			"city":         item.city,
+			"state":        item.state,
+			"text":         item.text,
+			"_additional": map[string]any{
+				"certainty": item.certainty,
+			},
+		}
+	}
+	return map[string]models.JSONObject{
+		"Get": map[string]any{
+			collectionName: rawItems,
+		},
+	}
+}
+
+func TestGetReviews_HappyPath(t *testing.T) {
+	data := makeReviewData([]struct {
+		businessID   string
+		businessName string
+		city         string
+		state        string
+		text         string
+		certainty    float64
+	}{
+		{"biz1", "Pizza Place", "NYC", "NY", "Great pizza", 0.9},
+		{"biz2", "Taco Shop", "LA", "CA", "Good tacos", 0.8},
+	})
+	result := getReviews(data, 10)
+	if len(result.BusinessReviews) != 2 {
+		t.Fatalf("got %d reviews, want 2", len(result.BusinessReviews))
+	}
+	if result.BusinessReviews[0].Review.Review.Text != "Great pizza" {
+		t.Errorf("first review text = %q, want %q", result.BusinessReviews[0].Review.Review.Text, "Great pizza")
+	}
+}
+
+func TestGetReviews_EmptyData(t *testing.T) {
+	result := getReviews(map[string]models.JSONObject{}, 10)
+	if len(result.BusinessReviews) != 0 {
+		t.Errorf("expected 0 reviews for empty data, got %d", len(result.BusinessReviews))
+	}
+}
+
+func TestGetReviews_LimitTruncation(t *testing.T) {
+	data := makeReviewData([]struct {
+		businessID   string
+		businessName string
+		city         string
+		state        string
+		text         string
+		certainty    float64
+	}{
+		{"biz1", "A", "C", "S", "review 1", 0.9},
+		{"biz2", "B", "C", "S", "review 2", 0.8},
+		{"biz3", "C", "C", "S", "review 3", 0.7},
+	})
+	result := getReviews(data, 2)
+	if len(result.BusinessReviews) != 2 {
+		t.Errorf("got %d reviews, want 2 (limit=2)", len(result.BusinessReviews))
+	}
+}
+
+func TestGetReviews_SortedByScore(t *testing.T) {
+	data := makeReviewData([]struct {
+		businessID   string
+		businessName string
+		city         string
+		state        string
+		text         string
+		certainty    float64
+	}{
+		{"biz1", "A", "C", "S", "low score", 0.3},
+		{"biz2", "B", "C", "S", "high score", 0.9},
+		{"biz3", "C", "C", "S", "mid score", 0.6},
+	})
+	result := getReviews(data, 10)
+	if len(result.BusinessReviews) != 3 {
+		t.Fatalf("got %d reviews, want 3", len(result.BusinessReviews))
+	}
+	if result.BusinessReviews[0].Score != 0.9 {
+		t.Errorf("first review score = %f, want 0.9", result.BusinessReviews[0].Score)
+	}
+	if result.BusinessReviews[2].Score != 0.3 {
+		t.Errorf("last review score = %f, want 0.3", result.BusinessReviews[2].Score)
+	}
+}
+
+func TestGetReviews_MissingGetKey(t *testing.T) {
+	data := map[string]models.JSONObject{
+		"NotGet": map[string]any{},
+	}
+	result := getReviews(data, 10)
+	if len(result.BusinessReviews) != 0 {
+		t.Errorf("expected 0 reviews for missing Get key, got %d", len(result.BusinessReviews))
+	}
+}
+
+func TestGetReviews_SkipsEmptyBusinessID(t *testing.T) {
+	rawItems := []any{
+		map[string]any{
+			"businessId":   "",
+			"businessName": "NoID",
+			"text":         "should be skipped",
+			"_additional":  map[string]any{"certainty": 0.9},
+		},
+		map[string]any{
+			"businessId":   "biz1",
+			"businessName": "HasID",
+			"text":         "included",
+			"_additional":  map[string]any{"certainty": 0.8},
+		},
+	}
+	data := map[string]models.JSONObject{
+		"Get": map[string]any{
+			collectionName: rawItems,
+		},
+	}
+	result := getReviews(data, 10)
+	if len(result.BusinessReviews) != 1 {
+		t.Fatalf("got %d reviews, want 1 (empty businessId should be skipped)", len(result.BusinessReviews))
+	}
+}
+
+// --- Mocked Client Tests ---
+
+func TestClient_EnsureSchema(t *testing.T) {
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/v1/schema/"+collectionName) {
+			w.WriteHeader(http.StatusNotFound) // assume not exists
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	if err := client.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+	if !created {
+		t.Error("expected schema to be created")
+	}
+}
+
+func TestClient_BatchUpsert(t *testing.T) {
+	var count int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/batch/objects" {
+			var body struct {
+				Objects []any `json:"objects"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			count = len(body.Objects)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	items := []IndexItem{
+		{Review: schemas.Review{ReviewID: "r1"}},
+		{Review: schemas.Review{ReviewID: "r2"}},
+	}
+	if err := client.BatchUpsert(context.Background(), items); err != nil {
+		t.Fatalf("BatchUpsert failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 items, got %d", count)
+	}
+}
+
+func TestClient_GetBusinesses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := makeData([]struct {
+				businessID   string
+				businessName string
+				certainty    float64
+			}{
+				{"biz1", "Pizza", 0.9},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	res, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
+	if err != nil {
+		t.Fatalf("GetBusinesses failed: %v", err)
+	}
+	if len(res.Businesses) != 1 || res.Businesses[0].ID != "biz1" {
+		t.Errorf("got %v", res)
+	}
+}
+
+func TestClient_SearchFodmap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := map[string]any{
+				"Get": map[string]any{
+					fodmapCollectionName: []any{
+						map[string]any{
+							"ingredient": "garlic",
+							"level":      "high",
+							"_additional": map[string]any{"certainty": 0.99},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	res, cert, err := client.SearchFodmap(context.Background(), "garlic")
+	if err != nil {
+		t.Fatalf("SearchFodmap failed: %v", err)
+	}
+	if res.Ingredient != "garlic" || cert != 0.99 {
+		t.Errorf("got %+v, cert %f", res, cert)
+	}
+}
+
+func TestClient_BatchUpsertFodmap(t *testing.T) {
+	var count int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/batch/objects" {
+			var body struct {
+				Objects []any `json:"objects"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			count = len(body.Objects)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	items := map[string]data.FodmapEntry{
+		"garlic": {Level: "high"},
+		"onion":  {Level: "high"},
+	}
+	if err := client.BatchUpsertFodmap(context.Background(), items); err != nil {
+		t.Fatalf("BatchUpsertFodmap failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 items, got %d", count)
+	}
+}
+

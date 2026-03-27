@@ -51,6 +51,7 @@ func NewSQLiteStore(dataSourceName string) (*SQLiteStore, error) {
 			sequence        INTEGER NOT NULL,
 			created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sequence);`,
 	}
 
 	for _, s := range schemas {

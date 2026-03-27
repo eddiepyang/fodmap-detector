@@ -159,7 +159,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	}
 
 	slog.Info("loading business metadata")
-	businessMap, err := data.GetBusinessMap()
+	businessMap, err := data.GetBusinessMap("")
 	if err != nil {
 		return fmt.Errorf("loading business map: %w", err)
 	}

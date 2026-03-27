@@ -33,7 +33,11 @@ func (s *Server) getConversationHandler(w http.ResponseWriter, r *http.Request) 
 
 	convID := r.PathValue("id")
 	conv, err := s.userStore.GetConversation(r.Context(), convID)
-	if err != nil || conv == nil {
+	if err != nil {
+		respondError(w, "failed to load conversation", http.StatusInternalServerError)
+		return
+	}
+	if conv == nil {
 		respondError(w, "conversation not found", http.StatusNotFound)
 		return
 	}
@@ -70,7 +74,11 @@ func (s *Server) deleteConversationHandler(w http.ResponseWriter, r *http.Reques
 
 	convID := r.PathValue("id")
 	conv, err := s.userStore.GetConversation(r.Context(), convID)
-	if err != nil || conv == nil {
+	if err != nil {
+		respondError(w, "failed to load conversation", http.StatusInternalServerError)
+		return
+	}
+	if conv == nil {
 		respondError(w, "conversation not found", http.StatusNotFound)
 		return
 	}

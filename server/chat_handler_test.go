@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"fodmap/auth"
+	"fodmap/chat"
 	"fodmap/data"
 	"fodmap/data/schemas"
 	"fodmap/search"
@@ -152,4 +154,76 @@ func (m *chatMockSearcher) SearchFodmap(ctx context.Context, ingredient string) 
 
 func (m *chatMockSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	return nil
+}
+
+// ---- messagesToContent ----
+
+func TestMessagesToContent_TextMessages(t *testing.T) {
+	msgs := []*auth.Message{
+		{ID: "1", Role: "user", Content: "Hello"},
+		{ID: "2", Role: "model", Content: "Hi there"},
+	}
+	result := messagesToContent(msgs)
+	if len(result) != 2 {
+		t.Fatalf("got %d contents, want 2", len(result))
+	}
+	if result[0].Role != "user" || result[0].Parts[0].Text != "Hello" {
+		t.Errorf("first content = %+v", result[0])
+	}
+	if result[1].Role != "model" || result[1].Parts[0].Text != "Hi there" {
+		t.Errorf("second content = %+v", result[1])
+	}
+}
+
+func TestMessagesToContent_SkipsToolMessages(t *testing.T) {
+	msgs := []*auth.Message{
+		{ID: "1", Role: "user", Content: "What about garlic?"},
+		{ID: "2", Role: "tool_call", Content: "lookup_fodmap(garlic)"},
+		{ID: "3", Role: "tool_response", Content: `{"found": true}`},
+		{ID: "4", Role: "model", Content: "Garlic is high FODMAP"},
+	}
+	result := messagesToContent(msgs)
+	if len(result) != 2 {
+		t.Fatalf("got %d contents, want 2 (tool messages should be skipped)", len(result))
+	}
+	if result[0].Role != "user" {
+		t.Errorf("first role = %q, want %q", result[0].Role, "user")
+	}
+	if result[1].Role != "model" {
+		t.Errorf("second role = %q, want %q", result[1].Role, "model")
+	}
+}
+
+func TestMessagesToContent_Empty(t *testing.T) {
+	result := messagesToContent(nil)
+	if result != nil {
+		t.Errorf("expected nil for empty input, got %v", result)
+	}
+}
+
+// ---- saveModelResponse ----
+
+func TestSaveModelResponse(t *testing.T) {
+	store := newMockStore()
+	convID := "conv-save-test"
+	_ = store.CreateConversation(context.Background(), &auth.Conversation{
+		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
+	})
+
+	result := chat.SendResult{Text: "Model says hello", ToolCalls: []string{"lookup_fodmap(garlic)"}}
+	saveModelResponse(context.Background(), store, convID, result, 1)
+
+	msgs, err := store.GetMessages(context.Background(), convID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].Role != "model" {
+		t.Errorf("role = %q, want %q", msgs[0].Role, "model")
+	}
+	if msgs[0].Content != "Model says hello" {
+		t.Errorf("content = %q, want %q", msgs[0].Content, "Model says hello")
+	}
 }
