@@ -14,6 +14,7 @@ import (
 type createConversationRequest struct {
 	Query             string `json:"query"`
 	BusinessID        string `json:"business_id"`
+	BusinessName      string `json:"business_name"`
 	SearchCategory    string `json:"search_category"`
 	SearchCity        string `json:"search_city"`
 	SearchState       string `json:"search_state"`
@@ -38,13 +39,16 @@ func (s *Server) createConversationHandler(w http.ResponseWriter, r *http.Reques
 	if req.BusinessID != "" {
 		// Use provided business ID
 		businessID = req.BusinessID
-		// We should probably fetch the name too for the title, 
-		// but for now we can just search for it or use a default.
-		bizResult, err := s.searcher.GetBusinesses(r.Context(), "", 1, search.SearchFilter{BusinessID: businessID})
-		if err == nil && len(bizResult.Businesses) > 0 {
-			businessName = bizResult.Businesses[0].Name
+		if req.BusinessName != "" {
+			businessName = req.BusinessName
 		} else {
-			businessName = "Restaurant"
+			// Fallback: fetch the name if not provided
+			bizResult, err := s.searcher.GetBusinesses(r.Context(), "", 1, search.SearchFilter{BusinessID: businessID})
+			if err == nil && len(bizResult.Businesses) > 0 {
+				businessName = bizResult.Businesses[0].Name
+			} else {
+				businessName = "Restaurant"
+			}
 		}
 	} else {
 		// Search based on query
@@ -61,6 +65,7 @@ func (s *Server) createConversationHandler(w http.ResponseWriter, r *http.Reques
 		ID:                uuid.New().String(),
 		UserID:            userID,
 		BusinessID:        businessID,
+		BusinessName:      businessName,
 		Title:             "Chat about " + businessName,
 		SearchCategory:    req.SearchCategory,
 		SearchCity:        req.SearchCity,
@@ -86,12 +91,14 @@ func (s *Server) createConversationHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if err := s.userStore.CreateConversation(r.Context(), conv); err != nil {
-		slog.Error("failed to create conversation", "error", err)
+		slog.Error("Failed to create conversation in DB", "error", err, "business_id", businessID, "user_id", userID)
 		respondError(w, "failed to create conversation", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{"conversation": conv})
+	if err := json.NewEncoder(w).Encode(map[string]any{"conversation": conv}); err != nil {
+		slog.Error("Failed to encode conversation response", "error", err)
+	}
 }

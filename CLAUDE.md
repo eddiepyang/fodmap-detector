@@ -13,6 +13,12 @@ Project-level rules for this codebase.
 - Import grouping: stdlib, then project packages, then third-party, each separated by a blank line
 - Doc comments on all exported identifiers — must begin with the exported name
 
+## UI & API Mapping
+- **Main Chat Logic**: `chat/chat.go` (Server) -> `POST /chat`
+- **Conversation CRUD**: `server/handlers.go` -> `/conversations` (List, Create, Get, Delete)
+- **Restaurant Search**: `server/handlers.go` -> used by `NewChatWorkflow.tsx` for initial selection
+- **Authentication**: `server/middleware.go` (bearerAuth middleware)
+
 ## Architecture
 
 - **`chat` package** (`chat/chat.go`) is the shared core for FODMAP/allergen chat — CLI and server are thin wrappers
