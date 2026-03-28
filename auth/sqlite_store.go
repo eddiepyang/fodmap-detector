@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -61,6 +62,13 @@ func NewSQLiteStore(dataSourceName string) (*SQLiteStore, error) {
 		}
 	}
 
+	// Add new columns if they don't exist (migrations).
+	_, _ = db.Exec("ALTER TABLE conversations ADD COLUMN review_context TEXT;")
+	_, _ = db.Exec("ALTER TABLE conversations ADD COLUMN search_category TEXT;")
+	_, _ = db.Exec("ALTER TABLE conversations ADD COLUMN search_city TEXT;")
+	_, _ = db.Exec("ALTER TABLE conversations ADD COLUMN search_state TEXT;")
+	_, _ = db.Exec("ALTER TABLE conversations ADD COLUMN search_description TEXT;")
+
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -112,8 +120,18 @@ func (s *SQLiteStore) CreateConversation(ctx context.Context, conv *Conversation
 	if conv.UpdatedAt.IsZero() {
 		conv.UpdatedAt = conv.CreatedAt
 	}
-	query := `INSERT INTO conversations (id, user_id, business_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, query, conv.ID, conv.UserID, conv.BusinessID, conv.Title, conv.CreatedAt, conv.UpdatedAt)
+
+	var contextJSON []byte
+	var err error
+	if len(conv.ReviewContext) > 0 {
+		contextJSON, err = json.Marshal(conv.ReviewContext)
+		if err != nil {
+			return fmt.Errorf("failed to marshal review context: %w", err)
+		}
+	}
+
+	query := `INSERT INTO conversations (id, user_id, business_id, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = s.db.ExecContext(ctx, query, conv.ID, conv.UserID, conv.BusinessID, conv.Title, conv.CreatedAt, conv.UpdatedAt, string(contextJSON), conv.SearchCategory, conv.SearchCity, conv.SearchState, conv.SearchDescription)
 	if err != nil {
 		return fmt.Errorf("failed to create conversation: %w", err)
 	}
@@ -122,7 +140,7 @@ func (s *SQLiteStore) CreateConversation(ctx context.Context, conv *Conversation
 
 // ListConversations returns all conversations for a user.
 func (s *SQLiteStore) ListConversations(ctx context.Context, userID string) ([]*Conversation, error) {
-	query := `SELECT id, user_id, business_id, title, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC`
+	query := `SELECT id, user_id, business_id, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations WHERE user_id = ? ORDER BY updated_at DESC`
 	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -132,8 +150,19 @@ func (s *SQLiteStore) ListConversations(ctx context.Context, userID string) ([]*
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ID, &c.UserID, &c.BusinessID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var contextStr sql.NullString
+		var category, city, state, description sql.NullString
+		if err := rows.Scan(&c.ID, &c.UserID, &c.BusinessID, &c.Title, &c.CreatedAt, &c.UpdatedAt, &contextStr, &category, &city, &state, &description); err != nil {
 			return nil, err
+		}
+		c.SearchCategory = category.String
+		c.SearchCity = city.String
+		c.SearchState = state.String
+		c.SearchDescription = description.String
+		if contextStr.Valid && contextStr.String != "" && contextStr.String != "null" {
+			if err := json.Unmarshal([]byte(contextStr.String), &c.ReviewContext); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal review context: %w", err)
+			}
 		}
 		convs = append(convs, c)
 	}
@@ -143,14 +172,25 @@ func (s *SQLiteStore) ListConversations(ctx context.Context, userID string) ([]*
 // GetConversation retrieves a conversation by ID.
 func (s *SQLiteStore) GetConversation(ctx context.Context, id string) (*Conversation, error) {
 	c := &Conversation{}
-	query := `SELECT id, user_id, business_id, title, created_at, updated_at FROM conversations WHERE id = ?`
+	var contextStr sql.NullString
+	query := `SELECT id, user_id, business_id, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
-	err := row.Scan(&c.ID, &c.UserID, &c.BusinessID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	var category, city, state, description sql.NullString
+	err := row.Scan(&c.ID, &c.UserID, &c.BusinessID, &c.Title, &c.CreatedAt, &c.UpdatedAt, &contextStr, &category, &city, &state, &description)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	c.SearchCategory = category.String
+	c.SearchCity = city.String
+	c.SearchState = state.String
+	c.SearchDescription = description.String
+	if contextStr.Valid && contextStr.String != "" && contextStr.String != "null" {
+		if err := json.Unmarshal([]byte(contextStr.String), &c.ReviewContext); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal review context: %w", err)
+		}
 	}
 	return c, nil
 }

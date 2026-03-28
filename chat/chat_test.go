@@ -35,7 +35,7 @@ func TestIsFoodRelated_Yes(t *testing.T) {
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	got, err := IsFoodRelated(context.Background(), client, "", "is pizza low fodmap?")
+	got, err := IsFoodRelated(context.Background(), client, "", "is pizza low fodmap?", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestIsFoodRelated_No(t *testing.T) {
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	got, err := IsFoodRelated(context.Background(), client, "", "write me a poem")
+	got, err := IsFoodRelated(context.Background(), client, "", "write me a poem", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,9 +86,41 @@ func TestIsFoodRelated_Error(t *testing.T) {
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	_, err := IsFoodRelated(context.Background(), client, "", "test")
+	_, err := IsFoodRelated(context.Background(), client, "", "test", false)
 	if err == nil {
 		t.Error("expected error for 500 response")
+	}
+}
+
+func TestIsFoodRelated_FollowUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{
+							map[string]any{"text": "yes"},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:      "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	// "Anything else?" should pass when isFollowUp is true.
+	got, err := IsFoodRelated(context.Background(), client, "", "Anything else?", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected true for follow-up 'Anything else?'")
 	}
 }
 
@@ -180,8 +212,7 @@ func TestValidateChatInput_InjectionCaseInsensitive(t *testing.T) {
 
 func TestRenderChatSystemPrompt_OK(t *testing.T) {
 	biz := &Business{Name: "TestBiz", City: "C", State: "S"}
-	reviews := []Review{{Stars: 5.0, Text: "great"}}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, reviews)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +222,7 @@ func TestRenderChatSystemPrompt_OK(t *testing.T) {
 }
 
 func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
-	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{}, nil)
+	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{})
 	if err == nil {
 		t.Error("expected error for invalid template")
 	}
@@ -199,7 +230,7 @@ func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
 
 func TestRenderChatSystemPrompt_NoReviews(t *testing.T) {
 	biz := &Business{Name: "B", City: "C", State: "S"}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, nil)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,19 +239,17 @@ func TestRenderChatSystemPrompt_NoReviews(t *testing.T) {
 	}
 }
 
-func TestRenderChatSystemPrompt_ReviewNumbering(t *testing.T) {
-	biz := &Business{Name: "B", City: "C", State: "S"}
+func TestFormatReviewsContext(t *testing.T) {
 	reviews := []Review{
 		{Stars: 5.0, Text: "first"},
 		{Stars: 3.0, Text: "second"},
 	}
-	tmpl := `{{.Reviews}}`
-	result, err := RenderChatSystemPrompt(tmpl, biz, reviews)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := FormatReviewsContext("TestBiz", reviews)
 	if !strings.Contains(result, "Review 1") || !strings.Contains(result, "Review 2") {
-		t.Error("expected review numbering")
+		t.Error("expected review numbering in context")
+	}
+	if !strings.Contains(result, "first") || !strings.Contains(result, "second") {
+		t.Error("missing review text")
 	}
 }
 

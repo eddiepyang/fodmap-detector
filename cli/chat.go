@@ -80,9 +80,18 @@ func runChat(cmd *cobra.Command, args []string) error {
 		tmplStr = string(b)
 	}
 
-	systemPrompt, err := chat.RenderChatSystemPrompt(tmplStr, biz, reviews)
+	systemPrompt, err := chat.RenderChatSystemPrompt(tmplStr, biz)
 	if err != nil {
 		return fmt.Errorf("rendering system prompt: %w", err)
+	}
+
+	var history []*genai.Content
+	if len(reviews) > 0 {
+		contextContent := chat.FormatReviewsContext(biz.Name, reviews)
+		history = append(history, &genai.Content{
+			Role:  "model",
+			Parts: []*genai.Part{{Text: contextContent}},
+		})
 	}
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
@@ -108,6 +117,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
 		Model:          chatModel,
+		History:        history,
 		Config:         config,
 	}
 
@@ -128,7 +138,8 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if foodRelated, err := chat.IsFoodRelated(ctx, geminiClient, filterModel, input); err != nil {
+		firstMessage := len(session.History) == 0
+		if foodRelated, err := chat.IsFoodRelated(ctx, geminiClient, filterModel, input, !firstMessage); err != nil {
 			slog.Warn("topic screen error", "error", err)
 		} else if !foodRelated {
 			fmt.Print("Sorry, I can only help with food, ingredients, FODMAP, and allergen questions.\n> ")

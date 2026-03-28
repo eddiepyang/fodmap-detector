@@ -125,6 +125,8 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 	// filter by business ID if provided
 	if filter.BusinessID != "" {
 		payload["filter"] = map[string]any{"business_id": map[string]string{"$eq": filter.BusinessID}}
+	} else if len(filter.ReviewIDs) > 0 {
+		payload["filter"] = map[string]any{"review_id": map[string]any{"$in": filter.ReviewIDs}}
 	}
 
 	res, err := c.doQuery(ctx, payload)

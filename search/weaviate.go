@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"fodmap/data"
@@ -35,11 +36,12 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID    string
-	Name  string
-	City  string
-	State string
-	Score float64
+	ID     string
+	Name   string
+	City   string
+	State  string
+	Stars  float64
+	Score  float64
 }
 
 // SearchResult holds the ranked list of businesses returned by a search query.
@@ -62,10 +64,11 @@ type SearchReviews struct {
 
 // SearchFilter holds optional filters to narrow the search by category, city, and/or state.
 type SearchFilter struct {
-	Category   string // substring match against categories field; empty = no filter
-	City       string // exact match; empty = no filter
-	State      string // exact match; empty = no filter
-	BusinessID string // exact match; empty = no filter
+	Category   string   // substring match against categories field; empty = no filter
+	City       string   // exact match; empty = no filter
+	State      string   // exact match; empty = no filter
+	BusinessID string   // exact match; empty = no filter
+	ReviewIDs  []string // exact match for any of the provided IDs; empty = no filter
 }
 
 // IndexItem pairs a review with its associated business metadata for indexing.
@@ -189,17 +192,26 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		{Name: "businessName"},
 		{Name: "city"},
 		{Name: "state"},
+		{Name: "stars"},
 		{Name: "_additional { certainty }"},
 	}
 
 	getter := c.wv.GraphQL().Get().
 		WithClassName(collectionName).
-		WithFields(fields...).
-		WithLimit(limit * 20)
+		WithFields(fields...)
 
 	if query != "" {
 		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
 		getter = getter.WithNearText(nearText)
+		getter = getter.WithLimit(limit * 20)
+	} else {
+		// If no query, we are likely fetching by specific ID or just getting top recent ones.
+		// Use a smaller limit if we have an ID filter to avoid scanning everything.
+		fetchLimit := 100
+		if filter.BusinessID != "" {
+			fetchLimit = limit * 20
+		}
+		getter = getter.WithLimit(fetchLimit)
 	}
 
 	if where := buildWhereFilter(filter); where != nil {
@@ -211,7 +223,7 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		return SearchResult{}, fmt.Errorf("graphql query: %w", err)
 	}
 	if resp.Errors != nil {
-		return SearchResult{}, fmt.Errorf("graphql errors: %v", resp.Errors)
+		return SearchResult{}, fmt.Errorf("graphql errors: %s", formatGraphQLErrors(resp.Errors))
 	}
 
 	return aggregateTopK(resp.Data, limit), nil
@@ -229,13 +241,17 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		{Name: "_additional { certainty }"},
 	}
 
-	nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
-
 	getter := c.wv.GraphQL().Get().
 		WithClassName(collectionName).
-		WithFields(fields...).
-		WithNearText(nearText).
-		WithLimit(limit * 20)
+		WithFields(fields...)
+
+	if query != "" {
+		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
+		getter = getter.WithNearText(nearText)
+		getter = getter.WithLimit(limit * 20)
+	} else {
+		getter = getter.WithLimit(limit * 10)
+	}
 
 	if where := buildWhereFilter(filter); where != nil {
 		getter = getter.WithWhere(where)
@@ -246,7 +262,7 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		return SearchReviews{}, fmt.Errorf("graphql query: %w", err)
 	}
 	if resp.Errors != nil {
-		return SearchReviews{}, fmt.Errorf("graphql errors: %v", resp.Errors)
+		return SearchReviews{}, fmt.Errorf("graphql errors: %s", formatGraphQLErrors(resp.Errors))
 	}
 
 	return getReviews(resp.Data, limit), nil
@@ -268,15 +284,15 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 		operands = append(operands,
 			filters.Where().
 				WithPath([]string{"city"}).
-				WithOperator(filters.Equal).
-				WithValueText(f.City))
+				WithOperator(filters.Like).
+				WithValueText("*"+f.City+"*"))
 	}
 	if f.State != "" {
 		operands = append(operands,
 			filters.Where().
 				WithPath([]string{"state"}).
-				WithOperator(filters.Equal).
-				WithValueText(f.State))
+				WithOperator(filters.Like).
+				WithValueText("*"+f.State+"*"))
 	}
 	if f.BusinessID != "" {
 		operands = append(operands,
@@ -284,6 +300,22 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 				WithPath([]string{"businessId"}).
 				WithOperator(filters.Equal).
 				WithValueText(f.BusinessID))
+	}
+	if len(f.ReviewIDs) > 0 {
+		var idOperands []*filters.WhereBuilder
+		for _, id := range f.ReviewIDs {
+			idOperands = append(idOperands,
+				filters.Where().
+					WithPath([]string{"reviewId"}).
+					WithOperator(filters.Equal).
+					WithValueText(id))
+		}
+		if len(idOperands) > 0 {
+			operands = append(operands,
+				filters.Where().
+					WithOperator(filters.Or).
+					WithOperands(idOperands))
+		}
 	}
 
 	switch len(operands) {
@@ -322,6 +354,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		city   string
 		state  string
 		scores []float64
+		stars  []float64
 	}
 	entries := make(map[string]*bizEntry)
 	for _, raw := range items {
@@ -333,11 +366,16 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		if businessID == "" {
 			continue
 		}
-		additional, _ := obj["_additional"].(map[string]any)
-		if additional == nil {
-			continue
+		certainty := 0.0
+		if additional, _ := obj["_additional"].(map[string]any); additional != nil {
+			certainty, _ = additional["certainty"].(float64)
 		}
-		certainty, _ := additional["certainty"].(float64)
+		if certainty == 0 {
+			certainty = 1.0 // Default to high certainty for exact filter matches (e.g. by ID)
+		}
+
+		stars, _ := obj["stars"].(float64)
+
 		e := entries[businessID]
 		if e == nil {
 			name, _ := obj["businessName"].(string)
@@ -347,15 +385,19 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			entries[businessID] = e
 		}
 		e.scores = append(e.scores, certainty)
+		if stars > 0 {
+			e.stars = append(e.stars, stars)
+		}
 	}
 
 	// Compute top-K average per business.
 	type ranked struct {
-		id    string
-		name  string
-		city  string
-		state string
-		score float64
+		id     string
+		name   string
+		city   string
+		state  string
+		stars  float64
+		score  float64
 	}
 	results := make([]ranked, 0, len(entries))
 	for id, e := range entries {
@@ -363,17 +405,40 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		sort.Slice(s, func(i, j int) bool { return s[i] > s[j] })
 		k := min(topKReviews, len(s))
 		var sum float64
-		for i := range k {
+		for i := 0; i < k; i++ {
 			sum += s[i]
 		}
-		results = append(results, ranked{id: id, name: e.name, city: e.city, state: e.state, score: sum / float64(k)})
+		results = append(results, ranked{
+			id:    id,
+			name:  e.name,
+			city:  e.city,
+			state: e.state,
+			score: sum / float64(k),
+			stars: func() float64 {
+				if len(e.stars) == 0 {
+					return 0
+				}
+				var sSum float64
+				for _, s := range e.stars {
+					sSum += s
+				}
+				return sSum / float64(len(e.stars))
+			}(),
+		})
 	}
 
 	sort.Slice(results, func(i, j int) bool { return results[i].score > results[j].score })
 
 	out := make([]BusinessResult, 0, min(limit, len(results)))
 	for i := 0; i < limit && i < len(results); i++ {
-		out = append(out, BusinessResult{ID: results[i].id, Name: results[i].name, City: results[i].city, State: results[i].state, Score: results[i].score})
+		out = append(out, BusinessResult{
+			ID:    results[i].id,
+			Name:  results[i].name,
+			City:  results[i].city,
+			State: results[i].state,
+			Stars: results[i].stars,
+			Score: results[i].score,
+		})
 	}
 	return SearchResult{Businesses: out}
 }
@@ -404,21 +469,25 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 			continue
 		}
 		businessID, _ := obj["businessId"].(string)
-		if businessID == "" {
+		reviewID, _ := obj["reviewId"].(string)
+		if businessID == "" || reviewID == "" {
 			continue
 		}
-		additional, _ := obj["_additional"].(map[string]any)
-		if additional == nil {
-			continue
+		certainty := 0.0
+		if additional, _ := obj["_additional"].(map[string]any); additional != nil {
+			certainty, _ = additional["certainty"].(float64)
 		}
-		certainty, _ := additional["certainty"].(float64)
+		if certainty == 0 {
+			certainty = 1.0 // Default to high certainty for exact ID matches
+		}
+
 		name, _ := obj["businessName"].(string)
 		city, _ := obj["city"].(string)
 		state, _ := obj["state"].(string)
 		text, _ := obj["text"].(string)
 		results = append(results, RankedReview{
 			Review: IndexItem{
-				Review:       schemas.Review{BusinessID: businessID, Text: text},
+				Review:       schemas.Review{BusinessID: businessID, ReviewID: reviewID, Text: text},
 				BusinessName: name,
 				City:         city,
 				State:        state,
@@ -529,7 +598,7 @@ func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapRes
 		return FodmapResult{}, 0, fmt.Errorf("graphql query: %w", err)
 	}
 	if resp.Errors != nil {
-		return FodmapResult{}, 0, fmt.Errorf("graphql errors: %v", resp.Errors)
+		return FodmapResult{}, 0, fmt.Errorf("graphql errors: %s", formatGraphQLErrors(resp.Errors))
 	}
 
 	res, cert, ok := ParseFodmapResult(resp.Data)
@@ -578,4 +647,14 @@ func ParseFodmapResult(result map[string]models.JSONObject) (FodmapResult, float
 		Groups:     groups,
 		Notes:      notes,
 	}, certainty, true
+}
+func formatGraphQLErrors(errs []*models.GraphQLError) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	msgs := make([]string, len(errs))
+	for i, e := range errs {
+		msgs[i] = e.Message
+	}
+	return strings.Join(msgs, "; ")
 }
