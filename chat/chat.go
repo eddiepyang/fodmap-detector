@@ -338,6 +338,37 @@ func FormatReviewsContext(bizName string, reviews []Review) string {
 	return sb.String()
 }
 
+// summarizeReviewsPrompt is the single-turn Gemini prompt used by SummarizeReviews.
+// First %s is the business name; second %s is the raw review context from FormatReviewsContext.
+const summarizeReviewsPrompt = `You are a concise food analyst. Given the following customer reviews for %s, produce a structured summary focused exclusively on dishes and menu items.
+
+For each dish or menu item mentioned across the reviews:
+- Name the dish
+- Show the average star rating from reviews that mention it (e.g. ★4.5 avg)
+- Note any recurring descriptions about taste, ingredients, or preparation
+
+Format your response as a plain-text list. Do not include headers, markdown, or commentary beyond the dish entries. If no specific dishes are mentioned, write "No specific dishes mentioned in reviews."
+
+%s`
+
+// SummarizeReviews calls Gemini to produce a dish-focused summary of the provided
+// customer reviews, suitable for injection as a model context message at the start
+// of a chat history. On error, callers should fall back to FormatReviewsContext.
+func SummarizeReviews(ctx context.Context, client *genai.Client, model, bizName string, reviews []Review) (string, error) {
+	if len(reviews) == 0 {
+		return "", fmt.Errorf("summarize reviews: no reviews provided")
+	}
+	if model == "" {
+		model = ScreenGeminiModel
+	}
+	prompt := fmt.Sprintf(summarizeReviewsPrompt, bizName, FormatReviewsContext(bizName, reviews))
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
+	if err != nil {
+		return "", fmt.Errorf("summarize reviews: %w", err)
+	}
+	return strings.TrimSpace(resp.Text()), nil
+}
+
 // ---- HTTP Clients ----
 
 type HTTPFodmapServerClient struct {
