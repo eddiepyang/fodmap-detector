@@ -63,7 +63,7 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.searcher.GetBusinesses(r.Context(), q, limit, filter)
 	if err != nil {
-		slog.Error("search error", "error", err)
+		slog.Error("Search error in getBusinessesHandler", "error", err, "query", q, "filter", filter)
 		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
 		return
 	}

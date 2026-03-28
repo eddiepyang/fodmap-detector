@@ -7,6 +7,7 @@ type Conversation struct {
 	ID                string        `json:"id"`
 	UserID            string        `json:"user_id"`
 	BusinessID        string        `json:"business_id"`
+	BusinessName      string        `json:"business_name,omitempty"`
 	Title             string        `json:"title"`
 	SearchCategory    string        `json:"search_category,omitempty"`
 	SearchCity        string        `json:"search_city,omitempty"`

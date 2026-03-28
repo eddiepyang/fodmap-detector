@@ -37,6 +37,8 @@ var serveCmd = &cobra.Command{
 		}
 		
 		dbPath := viper.GetString("db")
+		storeType := viper.GetString("store-type")
+		postgresDSN := viper.GetString("postgres-dsn")
 		jwtSecret := viper.GetString("jwt-secret")
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
@@ -51,7 +53,18 @@ var serveCmd = &cobra.Command{
 			jwtSecret = "change-me-in-production" // Fallback but warn or error? 
 		}
 
-		userStore, err := auth.NewSQLiteStore(dbPath)
+		var userStore auth.Store
+		var err error
+
+		if storeType == "postgres" {
+			if postgresDSN == "" {
+				return fmt.Errorf("postgres-dsn is required when store-type is postgres")
+			}
+			userStore, err = auth.NewPostgresStore(context.Background(), postgresDSN)
+		} else {
+			userStore, err = auth.NewSQLiteStore(dbPath)
+		}
+		
 		if err != nil {
 			return fmt.Errorf("initializing user store: %w", err)
 		}
@@ -97,6 +110,8 @@ func init() {
 	serveCmd.Flags().String("filter-model", "gemini-3.1-flash-lite-preview", "Gemini model ID for topic filtering")
 	serveCmd.Flags().StringSlice("cors-origins", []string{"http://localhost:3000", "https://app.example.com"}, "Comma-separated list of allowed CORS origins")
 	serveCmd.Flags().String("db", "fodmap.db", "Path to the SQLite database for user storage")
+	serveCmd.Flags().String("store-type", "sqlite", "Store backend to use: sqlite or postgres")
+	serveCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if store-type is postgres)")
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")

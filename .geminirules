@@ -2,6 +2,12 @@
 
 Project-level rules for this codebase.
 
+## UI & API Mapping
+- **Main Chat Logic**: `chat/chat.go` (Server) -> `POST /chat`
+- **Conversation CRUD**: `server/handlers.go` -> `/conversations` (List, Create, Get, Delete)
+- **Restaurant Search**: `server/handlers.go` -> used by `NewChatWorkflow.tsx` for initial selection
+- **Authentication**: `server/middleware.go` (bearerAuth middleware)
+
 ## Git Workflow
 
 - Always pull the latest changes from `main` (`git pull origin main`) before starting a new task or creating a branch.
