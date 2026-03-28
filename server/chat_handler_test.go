@@ -235,3 +235,70 @@ func TestSaveModelResponse(t *testing.T) {
 		t.Errorf("content = %q, want %q", msgs[0].Content, "Model says hello")
 	}
 }
+func TestChatHandler_InitialContextInjection(t *testing.T) {
+	geminiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "Answer with exactly") {
+			// Topic filter (GenerateContent)
+			_, _ = io.WriteString(w, `{"candidates": [{"content": {"parts": [{"text": "yes"}]}}]}`)
+		} else {
+			// Actual chat (GenerateContentStream) expects SSE format
+			_, _ = io.WriteString(w, "data: " + `{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}` + "\n\n")
+		}
+	}))
+	defer geminiServer.Close()
+
+	store := newMockStore()
+	convID := "ctx-test-1"
+	_ = store.CreateConversation(context.Background(), &auth.Conversation{
+		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
+	})
+
+	mockSearcher := &chatMockSearcher{}
+	s := &Server{
+		userStore: store,
+		searcher:  mockSearcher,
+	}
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey: "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: geminiServer.URL + "/"},
+	})
+	s.genaiClient = client
+
+	// Perform chat request.
+	reqBody := `{"message": "is the chicken safe?", "conversation_id": "ctx-test-1"}`
+	req := httptest.NewRequest("POST", "/chat/test", strings.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.chatHandler(client).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify messages in store.
+	msgs, _ := store.GetMessages(context.Background(), convID)
+	// We expect 2 messages: 
+	// 1. Context message (role: model, seq: 0)
+	// 2. User message (role: user, seq: 1)
+	// 3. Model response (role: model, seq: 2) -> wait, chatHandler saves model response too.
+	if len(msgs) < 3 {
+		t.Fatalf("got %d messages, want at least 3", len(msgs))
+	}
+
+	if msgs[0].Role != "model" || !strings.Contains(msgs[0].Content, "[CONTEXT: Customer Reviews") {
+		t.Errorf("first message should be context, got role=%q content=%q", msgs[0].Role, msgs[0].Content)
+	}
+	if msgs[0].Sequence != 0 {
+		t.Errorf("context message sequence = %d, want 0", msgs[0].Sequence)
+	}
+
+	if msgs[1].Role != "user" || msgs[1].Content != "is the chicken safe?" {
+		t.Errorf("second message should be user, got role=%q content=%q", msgs[1].Role, msgs[1].Content)
+	}
+	if msgs[1].Sequence != 1 {
+		t.Errorf("user message sequence = %d, want 1", msgs[1].Sequence)
+	}
+}

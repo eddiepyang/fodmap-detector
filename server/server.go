@@ -193,10 +193,10 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /reviews", s.reviewsHandler)
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
-	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
+	mux.HandleFunc("GET /api/v1/reviews", s.reviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/fodmap/{ingredient...}", s.getFodmapHandler)
 
 	// Auth handlers
 	mux.HandleFunc("POST /api/v1/auth/register", s.registerHandler)

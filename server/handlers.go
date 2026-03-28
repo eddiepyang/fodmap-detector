@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"fodmap/data"
 	"fodmap/search"
@@ -55,9 +56,9 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := search.SearchFilter{
-		Category: r.URL.Query().Get("category"),
-		City:     r.URL.Query().Get("city"),
-		State:    r.URL.Query().Get("state"),
+		Category: strings.TrimSpace(r.URL.Query().Get("category")),
+		City:     strings.TrimSpace(r.URL.Query().Get("city")),
+		State:    strings.TrimSpace(r.URL.Query().Get("state")),
 	}
 
 	result, err := s.searcher.GetBusinesses(r.Context(), q, limit, filter)
@@ -73,15 +74,16 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type business struct {
-		ID    string  `json:"id"`
-		Name  string  `json:"name"`
-		City  string  `json:"city"`
-		State string  `json:"state"`
-		Score float64 `json:"score"`
+		ID     string  `json:"id"`
+		Name   string  `json:"name"`
+		City   string  `json:"city"`
+		State  string  `json:"state"`
+		Rating float64 `json:"rating"`
+		Score  float64 `json:"score"`
 	}
 	out := make([]business, len(result.Businesses))
 	for i, b := range result.Businesses {
-		out[i] = business{ID: b.ID, Name: b.Name, City: b.City, State: b.State, Score: b.Score}
+		out[i] = business{ID: b.ID, Name: b.Name, City: b.City, State: b.State, Rating: b.Stars, Score: b.Score}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string][]business{"businesses": out}); err != nil {

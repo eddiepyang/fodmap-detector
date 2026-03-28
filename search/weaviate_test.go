@@ -244,6 +244,7 @@ func TestParseFodmapResult_Valid(t *testing.T) {
 // makeReviewData constructs the shape of GraphQL data for review-based queries.
 func makeReviewData(items []struct {
 	businessID   string
+	reviewID     string
 	businessName string
 	city         string
 	state        string
@@ -254,6 +255,7 @@ func makeReviewData(items []struct {
 	for i, item := range items {
 		rawItems[i] = map[string]any{
 			"businessId":   item.businessID,
+			"reviewId":     item.reviewID,
 			"businessName": item.businessName,
 			"city":         item.city,
 			"state":        item.state,
@@ -273,14 +275,15 @@ func makeReviewData(items []struct {
 func TestGetReviews_HappyPath(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
+		reviewID     string
 		businessName string
 		city         string
 		state        string
 		text         string
 		certainty    float64
 	}{
-		{"biz1", "Pizza Place", "NYC", "NY", "Great pizza", 0.9},
-		{"biz2", "Taco Shop", "LA", "CA", "Good tacos", 0.8},
+		{"biz1", "rev1", "Pizza Place", "NYC", "NY", "Great pizza", 0.9},
+		{"biz2", "rev2", "Taco Shop", "LA", "CA", "Good tacos", 0.8},
 	})
 	result := getReviews(data, 10)
 	if len(result.BusinessReviews) != 2 {
@@ -301,15 +304,16 @@ func TestGetReviews_EmptyData(t *testing.T) {
 func TestGetReviews_LimitTruncation(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
+		reviewID     string
 		businessName string
 		city         string
 		state        string
 		text         string
 		certainty    float64
 	}{
-		{"biz1", "A", "C", "S", "review 1", 0.9},
-		{"biz2", "B", "C", "S", "review 2", 0.8},
-		{"biz3", "C", "C", "S", "review 3", 0.7},
+		{"biz1", "r1", "A", "C", "S", "review 1", 0.9},
+		{"biz2", "r2", "B", "C", "S", "review 2", 0.8},
+		{"biz3", "r3", "C", "C", "S", "review 3", 0.7},
 	})
 	result := getReviews(data, 2)
 	if len(result.BusinessReviews) != 2 {
@@ -320,15 +324,16 @@ func TestGetReviews_LimitTruncation(t *testing.T) {
 func TestGetReviews_SortedByScore(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
+		reviewID     string
 		businessName string
 		city         string
 		state        string
 		text         string
 		certainty    float64
 	}{
-		{"biz1", "A", "C", "S", "low score", 0.3},
-		{"biz2", "B", "C", "S", "high score", 0.9},
-		{"biz3", "C", "C", "S", "mid score", 0.6},
+		{"biz1", "r1", "A", "C", "S", "low score", 0.3},
+		{"biz2", "r2", "B", "C", "S", "high score", 0.9},
+		{"biz3", "r3", "C", "C", "S", "mid score", 0.6},
 	})
 	result := getReviews(data, 10)
 	if len(result.BusinessReviews) != 3 {
@@ -356,12 +361,14 @@ func TestGetReviews_SkipsEmptyBusinessID(t *testing.T) {
 	rawItems := []any{
 		map[string]any{
 			"businessId":   "",
+			"reviewId":     "r1",
 			"businessName": "NoID",
 			"text":         "should be skipped",
 			"_additional":  map[string]any{"certainty": 0.9},
 		},
 		map[string]any{
 			"businessId":   "biz1",
+			"reviewId":     "r2",
 			"businessName": "HasID",
 			"text":         "included",
 			"_additional":  map[string]any{"certainty": 0.8},

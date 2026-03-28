@@ -109,14 +109,22 @@ func ValidateChatInput(input string) error {
 
 // IsFoodRelated runs a lightweight single-turn Gemini call to check whether the
 // user's message is on-topic. Fails open on error to avoid blocking valid queries.
-func IsFoodRelated(ctx context.Context, client *genai.Client, model, input string) (bool, error) {
+func IsFoodRelated(ctx context.Context, client *genai.Client, model, input string, isFollowUp bool) (bool, error) {
 	if model == "" {
 		model = ScreenGeminiModel
 	}
+	
 	prompt := fmt.Sprintf(
 		"Is the following message asking about food, restaurants, ingredients, dietary restrictions, allergens, or FODMAP content? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
 		input,
 	)
+	if isFollowUp {
+		prompt = fmt.Sprintf(
+			"The user is already in a conversation about a restaurant. Is the following follow-up message still potentially relevant to the food/restaurant topic? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
+			input,
+		)
+	}
+
 	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
 	if err != nil {
 		return true, fmt.Errorf("topic screen: %w", err)
@@ -300,28 +308,34 @@ type PromptData struct {
 	BusinessName string
 	City         string
 	State        string
-	Reviews      string
 }
 
-func RenderChatSystemPrompt(tmplStr string, biz *Business, reviews []Review) (string, error) {
+func RenderChatSystemPrompt(tmplStr string, biz *Business) (string, error) {
 	tmpl, err := template.New("chat").Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing instruction template: %w", err)
-	}
-	var sb strings.Builder
-	for i, r := range reviews {
-		fmt.Fprintf(&sb, "--- Review %d (stars: %.1f) ---\n%s\n\n", i+1, r.Stars, r.Text)
 	}
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, PromptData{
 		BusinessName: biz.Name,
 		City:         biz.City,
 		State:        biz.State,
-		Reviews:      sb.String(),
 	}); err != nil {
 		return "", fmt.Errorf("executing prompt: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// FormatReviewsContext builds a context message that establishes the model's
+// grounding in specific customer reviews.
+func FormatReviewsContext(bizName string, reviews []Review) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "[CONTEXT: Customer Reviews for %s]\n", bizName)
+	fmt.Fprintf(&sb, "I have reviewed these %d customer data points to ground our conversation.\n\n", len(reviews))
+	for i, r := range reviews {
+		fmt.Fprintf(&sb, "--- Review %d (stars: %.1f) ---\n%s\n\n", i+1, r.Stars, r.Text)
+	}
+	return sb.String()
 }
 
 // ---- HTTP Clients ----
@@ -339,7 +353,7 @@ func NewHTTPFodmapServerClient(serverURL string) *HTTPFodmapServerClient {
 }
 
 func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
-	u := c.serverURL + "/searchBusiness/" + url.PathEscape(query) + "?limit=1"
+	u := c.serverURL + "/api/v1/search/businesses/" + url.PathEscape(query) + "?limit=1"
 	if category != "" {
 		u += "&category=" + url.QueryEscape(category)
 	}
@@ -358,6 +372,11 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
 
 	var body struct {
 		Businesses []struct {
@@ -378,7 +397,7 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 }
 
 func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
-	u := c.serverURL + "/searchReview/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
+	u := c.serverURL + "/api/v1/search/reviews/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
@@ -388,6 +407,11 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
 
 	var data struct {
 		Reviews []Review `json:"reviews"`
@@ -399,7 +423,7 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 }
 
 func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
-	u := c.serverURL + "/searchFodmap/" + url.PathEscape(ingredient)
+	u := c.serverURL + "/api/v1/search/fodmap/" + url.PathEscape(ingredient)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return FodmapToolResponse{}, err

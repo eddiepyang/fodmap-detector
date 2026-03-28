@@ -6,6 +6,7 @@ index.checkpoint
 vendor
 *.parquet
 *.db
+*.pyc
 
 # Jupyter notebooks
 *.ipynb
@@ -15,3 +16,5 @@ vendor
 .vscode
 
 tmp/*
+vectorizer-proxy/venv/*
+vectorizer-proxy/venv
