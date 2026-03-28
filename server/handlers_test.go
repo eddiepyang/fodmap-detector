@@ -13,22 +13,26 @@ import (
 	"fodmap/search"
 )
 
-// handlersTestSearcher is a configurable mock Searcher for handler tests.
+// handlersTestSearcher is a configurable stub Searcher for handler tests.
 type handlersTestSearcher struct {
-	businessResult search.SearchResult
-	businessErr    error
-	reviewResult   search.SearchReviews
-	reviewErr      error
-	fodmapResult   search.FodmapResult
-	fodmapCert     float64
-	fodmapErr      error
+	businessResult     search.SearchResult
+	businessErr        error
+	reviewResult       search.SearchReviews
+	reviewErr          error
+	fodmapResult       search.FodmapResult
+	fodmapCert         float64
+	fodmapErr          error
+	lastBusinessFilter search.SearchFilter
+	lastReviewFilter   search.SearchFilter
 }
 
-func (m *handlersTestSearcher) GetBusinesses(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchResult, error) {
+func (m *handlersTestSearcher) GetBusinesses(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchResult, error) {
+	m.lastBusinessFilter = filter
 	return m.businessResult, m.businessErr
 }
 
-func (m *handlersTestSearcher) GetReviews(_ context.Context, _ string, _ int, _ search.SearchFilter) (search.SearchReviews, error) {
+func (m *handlersTestSearcher) GetReviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
+	m.lastReviewFilter = filter
 	return m.reviewResult, m.reviewErr
 }
 
@@ -445,5 +449,107 @@ func TestGetFodmapHandler_NotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// ---- reviewsHandler additional ----
+
+func TestReviewsHandler_ArchiveMissing(t *testing.T) {
+	// No archive present in test environment; handler must return 500 without panicking.
+	s := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/reviews?business_id=biz1", nil)
+	rec := httptest.NewRecorder()
+
+	s.reviewsHandler(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// ---- filter pass-through ----
+
+func TestGetBusinessesHandler_PassesCityStateFilters(t *testing.T) {
+	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos?city=Austin&state=TX", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if mock.lastBusinessFilter.City != "Austin" {
+		t.Errorf("city = %q, want %q", mock.lastBusinessFilter.City, "Austin")
+	}
+	if mock.lastBusinessFilter.State != "TX" {
+		t.Errorf("state = %q, want %q", mock.lastBusinessFilter.State, "TX")
+	}
+}
+
+func TestGetBusinessesHandler_PassesAllFilters(t *testing.T) {
+	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza?category=Italian&city=Chicago&state=IL", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if mock.lastBusinessFilter.Category != "Italian" {
+		t.Errorf("category = %q, want %q", mock.lastBusinessFilter.Category, "Italian")
+	}
+	if mock.lastBusinessFilter.City != "Chicago" {
+		t.Errorf("city = %q, want %q", mock.lastBusinessFilter.City, "Chicago")
+	}
+	if mock.lastBusinessFilter.State != "IL" {
+		t.Errorf("state = %q, want %q", mock.lastBusinessFilter.State, "IL")
+	}
+}
+
+func TestGetReviewsHandler_ParsesBusinessID(t *testing.T) {
+	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/searchReview/pad%20thai?business_id=my-biz-123", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if mock.lastReviewFilter.BusinessID != "my-biz-123" {
+		t.Errorf("business_id = %q, want %q", mock.lastReviewFilter.BusinessID, "my-biz-123")
+	}
+}
+
+func TestGetReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
+	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/searchReview/noodles", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp map[string]json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(resp["reviews"]) == "null" {
+		t.Error("reviews should be [] not null")
 	}
 }
