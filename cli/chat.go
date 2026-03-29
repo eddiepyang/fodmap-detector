@@ -94,9 +94,9 @@ func runChat(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	apiKey := os.Getenv("GEMINI_API_KEY")
+	apiKey := os.Getenv("GOOGLE_API_KEY")
 	if apiKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+		return fmt.Errorf("GOOGLE_API_KEY environment variable is not set")
 	}
 	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,

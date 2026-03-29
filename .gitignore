@@ -18,3 +18,4 @@ vendor
 tmp/*
 vectorizer-proxy/venv/*
 vectorizer-proxy/venv
+saved_cities.txt

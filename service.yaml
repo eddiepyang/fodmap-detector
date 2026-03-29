@@ -51,7 +51,7 @@ batch-size: 512
 workers: 4
 
 # Path to the Yelp dataset TAR archive
-archive: "data/yelp_dataset.tar"
+archive: "../data/yelp_dataset.tar"
 
 # Path to checkpoint file (empty string disables checkpointing)
 checkpoint: "index.checkpoint"
