@@ -113,7 +113,7 @@ func IsFoodRelated(ctx context.Context, client *genai.Client, model, input strin
 	if model == "" {
 		model = ScreenGeminiModel
 	}
-	
+
 	prompt := fmt.Sprintf(
 		"Is the following message asking about food, restaurants, ingredients, dietary restrictions, allergens, or FODMAP content? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
 		input,
@@ -169,7 +169,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 	for {
 		// Prepare a single Content for this model turn.
 		modelTurn := &genai.Content{Role: "model"}
-		
+
 		// 1. Initial/Streaming Turn
 		for resp, err := range client.Models.GenerateContentStream(ctx, s.Model, s.History, s.Config) {
 			if err != nil {
@@ -189,7 +189,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 
 				// Record for history
 				modelTurn.Parts = append(modelTurn.Parts, part)
-				
+
 				// Handle display/result
 				if part.Text != "" {
 					fullText.WriteString(part.Text)
@@ -236,7 +236,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
 		}
 		s.History = append(s.History, responseTurn)
-		
+
 		// Loop back to get the model's reaction to the tool responses.
 	}
 
@@ -330,10 +330,13 @@ func RenderChatSystemPrompt(tmplStr string, biz *Business) (string, error) {
 // grounding in specific customer reviews.
 func FormatReviewsContext(bizName string, reviews []Review) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "[CONTEXT: Customer Reviews for %s]\n", bizName)
-	fmt.Fprintf(&sb, "I have reviewed these %d customer data points to ground our conversation.\n\n", len(reviews))
+	fmt.Fprintf(&sb, "Here's what %d customers are saying about %s:\n\n", len(reviews), bizName)
 	for i, r := range reviews {
-		fmt.Fprintf(&sb, "--- Review %d (stars: %.1f) ---\n%s\n\n", i+1, r.Stars, r.Text)
+		stars := strings.Repeat("\u2605", int(r.Stars))
+		if half := r.Stars - float32(int(r.Stars)); half >= 0.5 {
+			stars += "\u00BD"
+		}
+		fmt.Fprintf(&sb, "%d. %s\n%s\n\n", i+1, stars, r.Text)
 	}
 	return sb.String()
 }
@@ -347,9 +350,18 @@ For each dish or menu item mentioned across the reviews:
 - Show the average star rating from reviews that mention it (e.g. ★4.5 avg)
 - Note any recurring descriptions about taste, ingredients, or preparation
 
-Format your response as a plain-text list. Do not include headers, markdown, or commentary beyond the dish entries. If no specific dishes are mentioned, write "No specific dishes mentioned in reviews."
+Format your output into a the following format:
 
-%s`
+	*Summary of customer feedback on dishes at %s*
+
+	1. Dish Name A - ★4.5 avg
+	   - Description 1
+	   - Description 2
+
+	2. Dish Name B - ★3.0 avg
+	   - Description 1
+	   - Description 2
+If the reviews do not mention specific dishes, extract any general feedback about the menu as a whole. Be concise and focus on actionable insights about the food. Do not include any information about service, ambiance, or other non-food topics.`
 
 // SummarizeReviews calls Gemini to produce a dish-focused summary of the provided
 // customer reviews, suitable for injection as a model context message at the start

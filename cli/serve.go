@@ -18,16 +18,16 @@ var serveCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Use viper for initial values, then override if flags were explicitly set.
 		port := viper.GetInt("port")
-		
+
 		weaviateHost := viper.GetString("weaviate")
 		if cmd.Flags().Changed("weaviate") {
 			weaviateHost, _ = cmd.Flags().GetString("weaviate")
 		}
-		
+
 		chatAPIKey := viper.GetString("chat-api-key")
 		chatModel := viper.GetString("chat-model")
 		filterModel := viper.GetString("filter-model")
-		
+
 		corsOrigins := viper.GetStringSlice("cors-origins")
 		if cmd.Flags().Changed("cors-origins") {
 			corsOrigins, _ = cmd.Flags().GetStringSlice("cors-origins")
@@ -35,7 +35,7 @@ var serveCmd = &cobra.Command{
 		if len(corsOrigins) == 0 {
 			corsOrigins = []string{"http://localhost:5173", "http://localhost:3000"}
 		}
-		
+
 		dbPath := viper.GetString("db")
 		storeType := viper.GetString("store-type")
 		postgresDSN := viper.GetString("postgres-dsn")
@@ -50,7 +50,7 @@ var serveCmd = &cobra.Command{
 			jwtSecret = "change-me-in-production"
 		}
 		if jwtSecret == "" {
-			jwtSecret = "change-me-in-production" // Fallback but warn or error? 
+			jwtSecret = "change-me-in-production" // Fallback but warn or error?
 		}
 
 		var userStore auth.Store
@@ -64,7 +64,7 @@ var serveCmd = &cobra.Command{
 		} else {
 			userStore, err = auth.NewSQLiteStore(dbPath)
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("initializing user store: %w", err)
 		}
@@ -78,12 +78,12 @@ var serveCmd = &cobra.Command{
 		}
 
 		srv, err := server.New(context.Background(), server.Config{
-			Port:              port,
-			WeaviateHost:      weaviateHost,
-			GeminiAPIKey:      os.Getenv("GEMINI_API_KEY"),
-			ChatModel:         chatModel,
-			FilterModel:       filterModel,
-			ChatAPIKey:        chatAPIKey,
+			Port:               port,
+			WeaviateHost:       weaviateHost,
+			GeminiAPIKey:       os.Getenv("GOOGLE_API_KEY"),
+			ChatModel:          chatModel,
+			FilterModel:        filterModel,
+			ChatAPIKey:         chatAPIKey,
 			CORSAllowedOrigins: corsOrigins,
 			UserStore:          userStore,
 			JWTSecret:          jwtSecret,
@@ -116,6 +116,6 @@ func init() {
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
 	serveCmd.Flags().String("vectorizer-url", "http://localhost:8000", "Base URL for the vectorizer-proxy")
-	
+
 	_ = viper.BindPFlags(serveCmd.Flags())
 }

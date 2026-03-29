@@ -253,20 +253,16 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		fodmapClient := NewDirectFodmapClient(s)
 		allergenClient := chat.NewOpenFoodFactsClient("")
 
-		// If this is a new conversation and we have business context, inject the reviews context message.
+		// Legacy fallback: generate review context for conversations created
+		// before summary generation was moved to createConversationHandler.
 		var contextMsg *auth.Message
 		if len(history) == 0 && len(reviews) > 0 {
-			contextContent, err := chat.SummarizeReviews(ctx, client, s.chatModel, biz.Name, reviews)
-		if err != nil {
-			slog.Warn("chat: review summarization failed, using raw context", "error", err)
-			contextContent = chat.FormatReviewsContext(biz.Name, reviews)
-		}
+			contextContent := chat.FormatReviewsContext(biz.Name, reviews)
 			history = append(history, &genai.Content{
 				Role:  "model",
 				Parts: []*genai.Part{{Text: contextContent}},
 			})
-			
-			// Save context message to database.
+
 			contextMsg = &auth.Message{
 				ID:             fmt.Sprintf("msg-%s-ctx", conv.ID),
 				ConversationID: conv.ID,
