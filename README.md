@@ -135,9 +135,9 @@ EventWriter.Write()
   ```sh
   sudo apt-get install docker-compose-v2
   ```
-- **`GEMINI_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
+- **`GOOGLE_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
   ```sh
-  export GEMINI_API_KEY=your_key_here
+  export GOOGLE_API_KEY=your_key_here
   ```
 
 ### Configuration
@@ -349,7 +349,7 @@ go run . index --weaviate localhost:8090
 
 ```sh
 # Find the top Thai restaurant in Las Vegas and start a chat about its dishes
-GEMINI_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
+GOOGLE_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
 ```
 
 See [docs/chat.md](docs/chat.md) for design decisions and tradeoffs.

@@ -240,7 +240,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 						"city":          "NYC",
 						"state":         "NY",
 						"text":          "Amazing pizza",
-						"score":         float64(5),
+						"stars":         float64(5),
 					},
 				},
 				{
@@ -251,7 +251,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 						"city":          "NYC",
 						"state":         "NY",
 						"text":          "Good crust",
-						"score":         float64(4),
+						"stars":         float64(4),
 					},
 				},
 			},

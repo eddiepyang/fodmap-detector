@@ -145,7 +145,7 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 				Review: schemas.Review{
 					ReviewID: m.Metadata["review_id"].(string),
 					Text:     m.Metadata["text"].(string),
-					Stars:    float32(m.Metadata["score"].(float64)),
+					Stars:    metadataFloat32(m.Metadata, "stars"),
 				},
 			},
 		})
@@ -282,4 +282,13 @@ func (c *PineconeClient) doUpsert(ctx context.Context, vectors []map[string]any,
 		return fmt.Errorf("pinecone upsert error (status %d): %s", resp.StatusCode, string(out))
 	}
 	return nil
+}
+
+// metadataFloat32 safely extracts a float32 from a metadata map, returning 0 if missing.
+func metadataFloat32(m map[string]any, key string) float32 {
+	v, ok := m[key].(float64)
+	if !ok {
+		return 0
+	}
+	return float32(v)
 }

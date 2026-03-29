@@ -308,11 +308,17 @@ func TestFormatReviewsContext(t *testing.T) {
 		{Stars: 3.0, Text: "second"},
 	}
 	result := FormatReviewsContext("TestBiz", reviews)
-	if !strings.Contains(result, "Review 1") || !strings.Contains(result, "Review 2") {
+	if !strings.Contains(result, "1.") || !strings.Contains(result, "2.") {
 		t.Error("expected review numbering in context")
 	}
 	if !strings.Contains(result, "first") || !strings.Contains(result, "second") {
 		t.Error("missing review text")
+	}
+	if !strings.Contains(result, "2 customers are saying about TestBiz") {
+		t.Errorf("unexpected header, got: %s", result)
+	}
+	if !strings.Contains(result, "\u2605") {
+		t.Error("expected star characters in output")
 	}
 }
 

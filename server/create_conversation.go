@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"fodmap/auth"
+	"fodmap/chat"
+
 	"fodmap/search"
 
 	"github.com/google/uuid"
@@ -96,9 +101,69 @@ func (s *Server) createConversationHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Generate the review summary in the background so the response returns
+	// immediately. The frontend polls GET /conversations/{id} until the
+	// initial message appears.
+	if len(conv.ReviewContext) > 0 {
+		ids := make([]string, len(conv.ReviewContext))
+		for i, rc := range conv.ReviewContext {
+			ids[i] = rc.ID
+		}
+		go s.generateReviewSummary(conv.ID, businessName, ids)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(map[string]any{"conversation": conv}); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"conversation":    conv,
+		"summary_pending": len(conv.ReviewContext) > 0,
+	}); err != nil {
 		slog.Error("Failed to encode conversation response", "error", err)
+	}
+}
+
+// generateReviewSummary fetches review text and stores a summarized context
+// message in the background. Uses its own context independent of the HTTP request.
+func (s *Server) generateReviewSummary(convID, businessName string, reviewIDs []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	reviewResult, err := s.searcher.GetReviews(ctx, "", len(reviewIDs), search.SearchFilter{ReviewIDs: reviewIDs})
+	if err != nil || len(reviewResult.BusinessReviews) == 0 {
+		slog.Warn("background summary: failed to fetch reviews", "error", err, "conv", convID)
+		return
+	}
+
+	reviews := make([]chat.Review, 0, len(reviewResult.BusinessReviews))
+	for _, rr := range reviewResult.BusinessReviews {
+		reviews = append(reviews, chat.Review{
+			Stars: rr.Review.Review.Stars,
+			Text:  rr.Review.Review.Text,
+		})
+	}
+
+	var contextContent string
+	if s.genaiClient != nil {
+		contextContent, err = chat.SummarizeReviews(ctx, s.genaiClient, s.chatModel, businessName, reviews)
+		if err != nil {
+			slog.Warn("background summary: summarization failed, using raw context", "error", err, "conv", convID)
+			contextContent = chat.FormatReviewsContext(businessName, reviews)
+		}
+	} else {
+		contextContent = chat.FormatReviewsContext(businessName, reviews)
+	}
+
+	msg := &auth.Message{
+		ID:             fmt.Sprintf("msg-%s-ctx", convID),
+		ConversationID: convID,
+		Role:           "model",
+		Content:        contextContent,
+		Sequence:       0,
+		CreatedAt:      time.Now(),
+	}
+	if err := s.userStore.AddMessage(ctx, msg); err != nil {
+		slog.Warn("background summary: failed to save context message", "error", err, "conv", convID)
+	} else {
+		slog.Info("background summary: saved", "conv", convID)
 	}
 }
