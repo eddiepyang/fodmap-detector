@@ -4,14 +4,21 @@ services:
     ports:
       - "8090:8080"
       - "50051:50051"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       QUERY_DEFAULTS_LIMIT: "25"
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
       DEFAULT_VECTORIZER_MODULE: "text2vec-transformers"
       ENABLE_MODULES: "text2vec-transformers"
-      TRANSFORMERS_INFERENCE_API: "http://host.docker.internal:8080"
+      # --- Point this to your host machine instead of a container ---
+      TRANSFORMERS_INFERENCE_API: "http://host.docker.internal:8080" 
       CLUSTER_HOSTNAME: "node1"
+      MODEL_NAME: "sentence-transformers/multi-qa-MiniLM-L6-cos-v1"
+      ENABLE_CUDA: "1"
+      BATCH_MAX_SIZE: "64"
+      BATCH_TIMEOUT: "0.01"
     volumes:
       - weaviate_data:/var/lib/weaviate
 

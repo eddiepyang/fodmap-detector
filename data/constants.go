@@ -14,7 +14,4 @@ const (
 		{"Tag":"name=text, inname=text, type=BYTE_ARRAY, repetitiontype=REQUIRED"}
     ]
 }`
-	archive      = "../../data/yelp_dataset.tar" //todo: move this to config
-	reviewFile   = "yelp_academic_dataset_review.json"
-	WriteStopRow = 3
 )

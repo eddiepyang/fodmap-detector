@@ -97,6 +97,22 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		}
 	}
 
+	// Rate limiter and concurrency — used by conversation and chat routes.
+	rl := cfg.ChatRateLimit
+	if rl <= 0 {
+		rl = 2
+	}
+	burst := cfg.ChatRateBurst
+	if burst <= 0 {
+		burst = 5
+	}
+	s.chatRateLimiter = newIPRateLimiter(rate.Limit(rl), burst)
+
+	s.chatMaxConcurrent = cfg.ChatMaxConcurrent
+	if s.chatMaxConcurrent <= 0 {
+		s.chatMaxConcurrent = 10
+	}
+
 	// Chat endpoint setup.
 	if cfg.GeminiAPIKey != "" && (cfg.ChatAPIKey != "" || cfg.JWTSecret != "") {
 		chatModel := cfg.ChatModel
@@ -112,21 +128,6 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		s.chatModel = chatModel
 		s.filterModel = filterModel
 		s.chatAPIKey = cfg.ChatAPIKey
-
-		rl := cfg.ChatRateLimit
-		if rl <= 0 {
-			rl = 2
-		}
-		burst := cfg.ChatRateBurst
-		if burst <= 0 {
-			burst = 5
-		}
-		s.chatRateLimiter = newIPRateLimiter(rate.Limit(rl), burst)
-
-		s.chatMaxConcurrent = cfg.ChatMaxConcurrent
-		if s.chatMaxConcurrent <= 0 {
-			s.chatMaxConcurrent = 10
-		}
 
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
 			APIKey:  cfg.GeminiAPIKey,
@@ -147,10 +148,12 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 // to disable the search endpoint.
 func NewServer(searcher Searcher, port int) *Server {
 	return &Server{
-		searcher:  searcher,
-		port:      port,
-		jwtSecret: "test-secret", // default for tests
-		userStore: newMockStore(),
+		searcher:          searcher,
+		port:              port,
+		jwtSecret:         "test-secret", // default for tests
+		userStore:         newMockStore(),
+		chatRateLimiter:   newIPRateLimiter(100, 100),
+		chatMaxConcurrent: 10,
 	}
 }
 
