@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"fodmap/search"
 	"fodmap/data"
+	"fodmap/search"
 )
 
 // MockSearcher is a mock implementation of the Searcher interface for testing.
@@ -31,6 +31,14 @@ func (m *MockSearcher) SearchFodmap(ctx context.Context, ingredient string) (sea
 		return *m.FodmapResult, 0, nil
 	}
 	return search.FodmapResult{}, 0, nil
+}
+
+func (m *MockSearcher) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockSearcher) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
 }
 
 func (m *MockSearcher) BatchUpsertFodmap(ctx context.Context, _ map[string]data.FodmapEntry) error {

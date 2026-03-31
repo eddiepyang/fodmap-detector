@@ -240,7 +240,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 						"city":          "NYC",
 						"state":         "NY",
 						"text":          "Amazing pizza",
-						"score":         float64(5),
+						"stars":         float64(5),
 					},
 				},
 				{
@@ -251,7 +251,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 						"city":          "NYC",
 						"state":         "NY",
 						"text":          "Good crust",
-						"score":         float64(4),
+						"stars":         float64(4),
 					},
 				},
 			},
@@ -298,4 +298,3 @@ func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
 		t.Errorf("got %d reviews, want 0", len(result.BusinessReviews))
 	}
 }
-

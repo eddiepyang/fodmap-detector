@@ -7,6 +7,7 @@ cleanup() {
     echo "Shutting down..."
     kill $VECTORIZER_PID 2>/dev/null || true
     kill $SERVER_PID 2>/dev/null || true
+    pkill -f "fodmap-detector serve" 2>/dev/null || true
     wait 2>/dev/null
     echo "Done."
 }
@@ -16,21 +17,23 @@ echo "======================================"
 echo " Starting FODMAP Detector Services"
 echo "======================================"
 
-# 1. Start Weaviate
+# 1. Start Weaviate in Docker
 echo "[1/3] Starting Weaviate in Docker..."
 docker compose up -d
 
-# 2. Start the Python Vectorizer in the background
+# 2. Start the Python Vectorizer locally (auto-detects CUDA / MPS / CPU)
 echo "[2/3] Starting Python Vectorizer on port 8080..."
 (
     cd vectorizer-proxy
     if command -v conda &> /dev/null; then
         eval "$(conda shell.bash hook)"
-        conda activate torch-env 2>/dev/null || true
+        if [[ -z "$CONDA_DEFAULT_ENV" || "$CONDA_DEFAULT_ENV" == "base" ]]; then
+            conda activate torch-env 2>/dev/null || true
+        fi
     fi
-    if [ -f "venv/bin/activate" ]; then
-        source venv/bin/activate
-    fi
+    # if [ -f "venv/bin/activate" ]; then
+    #     source venv/bin/activate
+    # fi
     uvicorn app:app --host 0.0.0.0 --port 8080
 ) &
 VECTORIZER_PID=$!
@@ -51,7 +54,7 @@ done
 
 # 3. Start the Go server in the background
 echo "[3/3] Starting Go server on port 8081..."
-go run . serve --weaviate localhost:8090 &
+go run . serve &
 SERVER_PID=$!
 
 echo ""
@@ -62,7 +65,7 @@ echo "  Vectorizer: localhost:8080"
 echo "  Go Server:  localhost:8081"
 echo ""
 echo " Run the chat app in another terminal:"
-echo "   GEMINI_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
+echo "   GOOGLE_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
 echo ""
 echo " Press Ctrl+C to stop all services."
 echo "======================================"

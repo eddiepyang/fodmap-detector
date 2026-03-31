@@ -17,6 +17,11 @@ port: 8081
 # Bearer token clients must present for /chat endpoint. Omit to disable chat.
 chat-api-key: ""
 
+# Allowed CORS origins for browser-based clients 
+cors-origins:
+  - "http://localhost:5173"
+  - "http://localhost:3000"
+
 
 # ---- chat command settings ----
 # Base URL of the fodmap server

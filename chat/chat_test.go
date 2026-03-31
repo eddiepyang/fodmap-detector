@@ -31,11 +31,11 @@ func TestIsFoodRelated_Yes(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	got, err := IsFoodRelated(context.Background(), client, "", "is pizza low fodmap?")
+	got, err := IsFoodRelated(context.Background(), client, "", "is pizza low fodmap?", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,11 +62,11 @@ func TestIsFoodRelated_No(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	got, err := IsFoodRelated(context.Background(), client, "", "write me a poem")
+	got, err := IsFoodRelated(context.Background(), client, "", "write me a poem", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,13 +82,45 @@ func TestIsFoodRelated_Error(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
-	_, err := IsFoodRelated(context.Background(), client, "", "test")
+	_, err := IsFoodRelated(context.Background(), client, "", "test", false)
 	if err == nil {
 		t.Error("expected error for 500 response")
+	}
+}
+
+func TestIsFoodRelated_FollowUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{
+							map[string]any{"text": "yes"},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:      "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	// "Anything else?" should pass when isFollowUp is true.
+	got, err := IsFoodRelated(context.Background(), client, "", "Anything else?", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected true for follow-up 'Anything else?'")
 	}
 }
 
@@ -112,7 +144,7 @@ func TestSession_SendWithToolCalls(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
@@ -180,8 +212,7 @@ func TestValidateChatInput_InjectionCaseInsensitive(t *testing.T) {
 
 func TestRenderChatSystemPrompt_OK(t *testing.T) {
 	biz := &Business{Name: "TestBiz", City: "C", State: "S"}
-	reviews := []Review{{Stars: 5.0, Text: "great"}}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, reviews)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +222,7 @@ func TestRenderChatSystemPrompt_OK(t *testing.T) {
 }
 
 func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
-	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{}, nil)
+	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{})
 	if err == nil {
 		t.Error("expected error for invalid template")
 	}
@@ -199,7 +230,7 @@ func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
 
 func TestRenderChatSystemPrompt_NoReviews(t *testing.T) {
 	biz := &Business{Name: "B", City: "C", State: "S"}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, nil)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,19 +239,86 @@ func TestRenderChatSystemPrompt_NoReviews(t *testing.T) {
 	}
 }
 
-func TestRenderChatSystemPrompt_ReviewNumbering(t *testing.T) {
-	biz := &Business{Name: "B", City: "C", State: "S"}
+// ---- SummarizeReviews ----
+
+func TestSummarizeReviews_OK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{map[string]any{"text": "Pad Thai: highly rated."}},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:      "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	reviews := []Review{
+		{Stars: 5.0, Text: "The pad thai was amazing!"},
+		{Stars: 4.0, Text: "Loved the spring rolls."},
+	}
+	got, err := SummarizeReviews(context.Background(), client, "", "TestBiz", reviews)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "Pad Thai") {
+		t.Errorf("summary missing expected dish, got: %q", got)
+	}
+}
+
+func TestSummarizeReviews_EmptyReviews(t *testing.T) {
+	// nil client proves Gemini is never called for empty input.
+	_, err := SummarizeReviews(context.Background(), nil, "", "TestBiz", nil)
+	if err == nil {
+		t.Error("expected error for empty reviews")
+	}
+}
+
+func TestSummarizeReviews_GeminiError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:      "test",
+		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
+	})
+
+	reviews := []Review{{Stars: 4.0, Text: "Good food."}}
+	_, err := SummarizeReviews(context.Background(), client, "", "TestBiz", reviews)
+	if err == nil {
+		t.Error("expected error from Gemini 500")
+	}
+}
+
+// ---- FormatReviewsContext ----
+
+func TestFormatReviewsContext(t *testing.T) {
 	reviews := []Review{
 		{Stars: 5.0, Text: "first"},
 		{Stars: 3.0, Text: "second"},
 	}
-	tmpl := `{{.Reviews}}`
-	result, err := RenderChatSystemPrompt(tmpl, biz, reviews)
-	if err != nil {
-		t.Fatal(err)
+	result := FormatReviewsContext("TestBiz", reviews)
+	if !strings.Contains(result, "1.") || !strings.Contains(result, "2.") {
+		t.Error("expected review numbering in context")
 	}
-	if !strings.Contains(result, "Review 1") || !strings.Contains(result, "Review 2") {
-		t.Error("expected review numbering")
+	if !strings.Contains(result, "first") || !strings.Contains(result, "second") {
+		t.Error("missing review text")
+	}
+	if !strings.Contains(result, "2 customers are saying about TestBiz") {
+		t.Errorf("unexpected header, got: %s", result)
+	}
+	if !strings.Contains(result, "\u2605") {
+		t.Error("expected star characters in output")
 	}
 }
 
@@ -450,7 +548,7 @@ func TestFetchChatReviews_ForwardsParams(t *testing.T) {
 
 	client := NewHTTPFodmapServerClient(srv.URL)
 	_, _ = client.FetchChatReviews(t.Context(), "my-biz", "pad thai", 5)
-	if !strings.HasPrefix(gotPath, "/searchReview/") {
+	if !strings.HasPrefix(gotPath, "/api/v1/search/reviews/") {
 		t.Errorf("path = %q", gotPath)
 	}
 	if !strings.Contains(gotQuery, "business_id=my-biz") || !strings.Contains(gotQuery, "limit=5") {

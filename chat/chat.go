@@ -109,14 +109,22 @@ func ValidateChatInput(input string) error {
 
 // IsFoodRelated runs a lightweight single-turn Gemini call to check whether the
 // user's message is on-topic. Fails open on error to avoid blocking valid queries.
-func IsFoodRelated(ctx context.Context, client *genai.Client, model, input string) (bool, error) {
+func IsFoodRelated(ctx context.Context, client *genai.Client, model, input string, isFollowUp bool) (bool, error) {
 	if model == "" {
 		model = ScreenGeminiModel
 	}
+
 	prompt := fmt.Sprintf(
 		"Is the following message asking about food, restaurants, ingredients, dietary restrictions, allergens, or FODMAP content? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
 		input,
 	)
+	if isFollowUp {
+		prompt = fmt.Sprintf(
+			"The user is already in a conversation about a restaurant. Is the following follow-up message still potentially relevant to the food/restaurant topic? Answer with exactly \"yes\" or \"no\".\nMessage: %q",
+			input,
+		)
+	}
+
 	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
 	if err != nil {
 		return true, fmt.Errorf("topic screen: %w", err)
@@ -161,7 +169,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 	for {
 		// Prepare a single Content for this model turn.
 		modelTurn := &genai.Content{Role: "model"}
-		
+
 		// 1. Initial/Streaming Turn
 		for resp, err := range client.Models.GenerateContentStream(ctx, s.Model, s.History, s.Config) {
 			if err != nil {
@@ -181,7 +189,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 
 				// Record for history
 				modelTurn.Parts = append(modelTurn.Parts, part)
-				
+
 				// Handle display/result
 				if part.Text != "" {
 					fullText.WriteString(part.Text)
@@ -228,7 +236,7 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
 		}
 		s.History = append(s.History, responseTurn)
-		
+
 		// Loop back to get the model's reaction to the tool responses.
 	}
 
@@ -300,28 +308,77 @@ type PromptData struct {
 	BusinessName string
 	City         string
 	State        string
-	Reviews      string
 }
 
-func RenderChatSystemPrompt(tmplStr string, biz *Business, reviews []Review) (string, error) {
+func RenderChatSystemPrompt(tmplStr string, biz *Business) (string, error) {
 	tmpl, err := template.New("chat").Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing instruction template: %w", err)
-	}
-	var sb strings.Builder
-	for i, r := range reviews {
-		fmt.Fprintf(&sb, "--- Review %d (stars: %.1f) ---\n%s\n\n", i+1, r.Stars, r.Text)
 	}
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, PromptData{
 		BusinessName: biz.Name,
 		City:         biz.City,
 		State:        biz.State,
-		Reviews:      sb.String(),
 	}); err != nil {
 		return "", fmt.Errorf("executing prompt: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// FormatReviewsContext builds a context message that establishes the model's
+// grounding in specific customer reviews.
+func FormatReviewsContext(bizName string, reviews []Review) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Here's what %d customers are saying about %s:\n\n", len(reviews), bizName)
+	for i, r := range reviews {
+		stars := strings.Repeat("\u2605", int(r.Stars))
+		if half := r.Stars - float32(int(r.Stars)); half >= 0.5 {
+			stars += "\u00BD"
+		}
+		fmt.Fprintf(&sb, "%d. %s\n%s\n\n", i+1, stars, r.Text)
+	}
+	return sb.String()
+}
+
+// summarizeReviewsPrompt is the single-turn Gemini prompt used by SummarizeReviews.
+// First %s is the business name; second %s is the raw review context from FormatReviewsContext.
+const summarizeReviewsPrompt = `You are a concise food analyst. Given the following customer reviews for %s, produce a structured summary focused exclusively on dishes and menu items.
+
+For each dish or menu item mentioned across the reviews:
+- Name the dish
+- Show the average star rating from reviews that mention it (e.g. ★4.5 avg)
+- Note any recurring descriptions about taste, ingredients, or preparation
+
+Format your output into a the following format:
+
+	*Summary of customer feedback on dishes at %s*
+
+	1. Dish Name A - ★4.5 avg
+	   - Description 1
+	   - Description 2
+
+	2. Dish Name B - ★3.0 avg
+	   - Description 1
+	   - Description 2
+If the reviews do not mention specific dishes, extract any general feedback about the menu as a whole. Be concise and focus on actionable insights about the food. Do not include any information about service, ambiance, or other non-food topics.`
+
+// SummarizeReviews calls Gemini to produce a dish-focused summary of the provided
+// customer reviews, suitable for injection as a model context message at the start
+// of a chat history. On error, callers should fall back to FormatReviewsContext.
+func SummarizeReviews(ctx context.Context, client *genai.Client, model, bizName string, reviews []Review) (string, error) {
+	if len(reviews) == 0 {
+		return "", fmt.Errorf("summarize reviews: no reviews provided")
+	}
+	if model == "" {
+		model = ScreenGeminiModel
+	}
+	prompt := fmt.Sprintf(summarizeReviewsPrompt, bizName, FormatReviewsContext(bizName, reviews))
+	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), nil)
+	if err != nil {
+		return "", fmt.Errorf("summarize reviews: %w", err)
+	}
+	return strings.TrimSpace(resp.Text()), nil
 }
 
 // ---- HTTP Clients ----
@@ -339,7 +396,7 @@ func NewHTTPFodmapServerClient(serverURL string) *HTTPFodmapServerClient {
 }
 
 func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
-	u := c.serverURL + "/searchBusiness/" + url.PathEscape(query) + "?limit=1"
+	u := c.serverURL + "/api/v1/search/businesses/" + url.PathEscape(query) + "?limit=1"
 	if category != "" {
 		u += "&category=" + url.QueryEscape(category)
 	}
@@ -358,6 +415,11 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
 
 	var body struct {
 		Businesses []struct {
@@ -378,7 +440,7 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 }
 
 func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
-	u := c.serverURL + "/searchReview/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
+	u := c.serverURL + "/api/v1/search/reviews/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
@@ -388,6 +450,11 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
 
 	var data struct {
 		Reviews []Review `json:"reviews"`
@@ -399,7 +466,7 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 }
 
 func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
-	u := c.serverURL + "/searchFodmap/" + url.PathEscape(ingredient)
+	u := c.serverURL + "/api/v1/search/fodmap/" + url.PathEscape(ingredient)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return FodmapToolResponse{}, err

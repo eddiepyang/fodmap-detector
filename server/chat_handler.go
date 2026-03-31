@@ -24,8 +24,8 @@ const (
 
 // chatRequest is the JSON body for POST /chat/{query...}.
 type chatRequest struct {
-	Message  string `json:"message"`
-	Limit    int    `json:"limit"`
+	Message        string `json:"message"`
+	Limit          int    `json:"limit"`
 	Category       string `json:"category"`
 	City           string `json:"city"`
 	State          string `json:"state"`
@@ -33,10 +33,11 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Business  chatBusinessResponse `json:"business"`
+	Business       chatBusinessResponse `json:"business"`
 	Answer         string               `json:"answer"`
 	ToolCalls      []string             `json:"tool_calls"`
 	ConversationID string               `json:"conversation_id"`
+	ContextMessage *auth.Message        `json:"context_message,omitempty"`
 }
 
 type chatBusinessResponse struct {
@@ -51,11 +52,8 @@ type GeminiChatFactory func(ctx context.Context, systemPrompt string) (*genai.Cl
 
 func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		convID := r.PathValue("id")
 		query := r.PathValue("query")
-		if query == "" {
-			respondError(w, "search query is required", http.StatusBadRequest)
-			return
-		}
 
 		// Limit body size.
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
@@ -66,6 +64,17 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		}
 		if req.Message == "" {
 			respondError(w, "message is required", http.StatusBadRequest)
+			return
+		}
+
+		// Use path param if provided.
+		if convID != "" {
+			req.ConversationID = convID
+		}
+
+		// We need either a query (for new chats) or a conversation ID (for existing).
+		if query == "" && req.ConversationID == "" {
+			respondError(w, "search query or conversation ID is required", http.StatusBadRequest)
 			return
 		}
 
@@ -118,99 +127,112 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		var systemPrompt string
 
 		if conv == nil {
-			// 1. Find the top business (only if starting a new conversation).
-			filter := search.SearchFilter{
-				Category: req.Category,
-				City:     req.City,
-				State:    req.State,
-			}
-			bizResult, err := s.searcher.GetBusinesses(ctx, query, 1, filter)
-			if err != nil {
-				slog.Error("chat: search businesses", "error", err)
-				respondError(w, "business search failed", http.StatusInternalServerError)
-				return
-			}
-			if len(bizResult.Businesses) == 0 {
-				respondError(w, "no businesses found for query", http.StatusNotFound)
-				return
-			}
-			b := bizResult.Businesses[0]
-			biz = chatBusinessResponse{Name: b.Name, City: b.City, State: b.State}
-
-			// 2. Fetch reviews for that business.
-			reviewFilter := search.SearchFilter{BusinessID: b.ID}
-			reviewResult, err := s.searcher.GetReviews(ctx, query, limit, reviewFilter)
-			if err != nil {
-				slog.Error("chat: search reviews", "error", err)
-				respondError(w, "review search failed", http.StatusInternalServerError)
-				return
-			}
-			reviews := make([]chat.Review, len(reviewResult.BusinessReviews))
-			for i, rr := range reviewResult.BusinessReviews {
-				reviews[i] = chat.Review{
-					Stars: float32(rr.Score),
-					Text:  rr.Review.Review.Text,
+			// Legacy fallback: if no conversation was found, but we have a query (from legacy path),
+			// try to create a new one on the fly.
+			if query != "" {
+				bizResult, err := s.searcher.GetBusinesses(ctx, query, 1, search.SearchFilter{})
+				if err != nil || len(bizResult.Businesses) == 0 {
+					respondError(w, "business search failed or no businesses found", http.StatusNotFound)
+					return
 				}
-			}
+				b := bizResult.Businesses[0]
 
-			// 3. Render the system prompt.
-			chatBiz := &chat.Business{ID: b.ID, Name: b.Name, City: b.City, State: b.State}
-			systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, reviews)
-			if err != nil {
-				slog.Error("chat: render prompt", "error", err)
-				respondError(w, "failed to build chat context", http.StatusInternalServerError)
-				return
-			}
+				if userID == "" {
+					userID = "anonymous"
+				}
 
-			// 4. Create new conversation in DB.
-			convID := uuid.New().String()
-			if userID == "" {
-				userID = "anonymous"
-			}
-			conv = &auth.Conversation{
-				ID:         convID,
-				UserID:     userID,
-				BusinessID: b.ID,
-				Title:      "Chat about " + b.Name,
-			}
-			if err := s.userStore.CreateConversation(ctx, conv); err != nil {
-				slog.Error("chat: create conversation", "error", err)
-				respondError(w, "failed to create conversation", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// Existing conversation: rebuild system prompt from business ID.
-			// (Future optimization: cache the system prompt or store it).
-			// For now, we search the business again to get details.
-			b, err := s.searcher.GetBusinesses(ctx, conv.BusinessID, 1, search.SearchFilter{BusinessID: conv.BusinessID})
-			if err != nil || len(b.Businesses) == 0 {
-				respondError(w, "failed to reload business context", http.StatusInternalServerError)
-				return
-			}
-			biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
-			
-			reviewResult, err := s.searcher.GetReviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
-			if err != nil {
-				slog.Error("chat: reload reviews", "error", err)
-				respondError(w, "failed to reload review context", http.StatusInternalServerError)
-				return
-			}
-			reviews := make([]chat.Review, len(reviewResult.BusinessReviews))
-			for i, rr := range reviewResult.BusinessReviews {
-				reviews[i] = chat.Review{Stars: float32(rr.Score), Text: rr.Review.Review.Text}
-			}
-			chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
-			systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, reviews)
-			if err != nil {
-				slog.Error("chat: render prompt on resume", "error", err)
-				respondError(w, "failed to build chat context", http.StatusInternalServerError)
+				conv = &auth.Conversation{
+					ID:         "legacy-" + uuid.New().String(),
+					UserID:     userID,
+					BusinessID: b.ID,
+					Title:      "Legacy chat about " + b.Name,
+				}
+
+				if err := s.userStore.CreateConversation(ctx, conv); err != nil {
+					slog.Error("failed to create auto conversation", "error", err)
+					respondError(w, "failed to create conversation", http.StatusInternalServerError)
+					return
+				}
+				slog.Info("auto-created legacy conversation", "id", conv.ID, "business", b.Name)
+			} else {
+				// This block should theoretically never be reached under the new architecture
+				// since frontend creates conv first via createConversationHandler.
+				respondError(w, "conversation not found", http.StatusBadRequest)
 				return
 			}
 		}
 
+		var reviews []chat.Review
+		if conv.BusinessID != "" && conv.BusinessID != "general" {
+			// Existing conversation: rebuild system prompt from business ID.
+			slog.Info("chat: reloading business context", "business_id", conv.BusinessID, "id", conv.ID)
+			b, err := s.searcher.GetBusinesses(ctx, "", 1, search.SearchFilter{BusinessID: conv.BusinessID})
+			if err != nil || len(b.Businesses) == 0 {
+				slog.Warn("chat: failed to reload business context, using formatted fallback", "error", err)
+				biz = chatBusinessResponse{Name: "this restaurant", City: "local area"}
+				chatBiz := &chat.Business{Name: biz.Name, City: biz.City}
+				systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+			} else {
+				biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
+				chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
+				slog.Info("chat: business context loaded", "name", biz.Name)
+
+				var reviewResult search.SearchReviews
+				var err error
+
+				if len(conv.ReviewContext) > 0 {
+					slog.Info("chat: reloading specific review context", "count", len(conv.ReviewContext))
+					ids := make([]string, len(conv.ReviewContext))
+					for i, rc := range conv.ReviewContext {
+						ids[i] = rc.ID
+					}
+					reviewResult, err = s.searcher.GetReviews(ctx, "", len(ids), search.SearchFilter{ReviewIDs: ids})
+
+					// Re-apply original scores if found
+					if err == nil {
+						scoreMap := make(map[string]float64)
+						for _, rc := range conv.ReviewContext {
+							scoreMap[rc.ID] = rc.Score
+						}
+						for i := range reviewResult.BusinessReviews {
+							if s, ok := scoreMap[reviewResult.BusinessReviews[i].Review.Review.ReviewID]; ok {
+								reviewResult.BusinessReviews[i].Score = s
+							}
+						}
+					}
+				} else {
+					slog.Info("chat: reloading general business reviews (legacy)", "business_id", conv.BusinessID)
+					reviewResult, err = s.searcher.GetReviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
+				}
+
+				if err == nil {
+					slog.Info("chat: reviews loaded", "count", len(reviewResult.BusinessReviews))
+					for _, rr := range reviewResult.BusinessReviews {
+						reviews = append(reviews, chat.Review{
+							Stars: rr.Review.Review.Stars,
+							Text:  rr.Review.Review.Text,
+						})
+					}
+				} else {
+					slog.Warn("chat: failed to load reviews", "error", err)
+				}
+
+				systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+				if err != nil {
+					slog.Warn("chat: render prompt failed, using name-only fallback", "error", err)
+					systemPrompt = fmt.Sprintf("You are a FODMAP and food allergen expert helping people understand dishes at %s (%s, %s).", biz.Name, biz.City, biz.State)
+				}
+			}
+		} else {
+			// General inquiry without a specific business context.
+			slog.Info("chat: using general assistant mode", "id", conv.ID, "business_id", conv.BusinessID)
+			chatBiz := &chat.Business{Name: "General Assistant", City: "Anywhere"}
+			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+		}
+
 		chatModel := s.chatModel
 		if chatModel == "" {
-			chatModel = "gemini-3-flash-preview"
+			chatModel = "gemini-3-flash-lite-preview"
 		}
 
 		if client == nil {
@@ -219,7 +241,8 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		}
 
 		// Topic pre-screen.
-		if foodRelated, err := chat.IsFoodRelated(ctx, client, s.filterModel, req.Message); err != nil {
+		isFollowUp := len(history) > 0
+		if foodRelated, err := chat.IsFoodRelated(ctx, client, s.filterModel, req.Message, isFollowUp); err != nil {
 			slog.Warn("chat: topic screen error", "error", err)
 		} else if !foodRelated {
 			respondError(w, "I can only help with food, ingredients, FODMAP, and allergen questions", http.StatusBadRequest)
@@ -229,6 +252,29 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		// Build a session using the server's own searcher for FODMAP lookups.
 		fodmapClient := NewDirectFodmapClient(s)
 		allergenClient := chat.NewOpenFoodFactsClient("")
+
+		// Legacy fallback: generate review context for conversations created
+		// before summary generation was moved to createConversationHandler.
+		var contextMsg *auth.Message
+		if len(history) == 0 && len(reviews) > 0 {
+			contextContent := chat.FormatReviewsContext(biz.Name, reviews)
+			history = append(history, &genai.Content{
+				Role:  "model",
+				Parts: []*genai.Part{{Text: contextContent}},
+			})
+
+			contextMsg = &auth.Message{
+				ID:             fmt.Sprintf("msg-%s-ctx", conv.ID),
+				ConversationID: conv.ID,
+				Role:           "model",
+				Content:        contextContent,
+				Sequence:       0,
+				CreatedAt:      time.Now(),
+			}
+			if err := s.userStore.AddMessage(ctx, contextMsg); err != nil {
+				slog.Warn("chat: failed to save context message", "error", err)
+			}
+		}
 
 		session := &chat.Session{
 			FodmapClient:   fodmapClient,
@@ -244,13 +290,14 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		}
 
 		// Save user message to history.
-		startSeq := len(history) * 2 // rough sequence
+		startSeq := len(history)
 		userMsg := &auth.Message{
 			ID:             fmt.Sprintf("msg-%s-u-%d", conv.ID, startSeq),
 			ConversationID: conv.ID,
 			Role:           "user",
 			Content:        req.Message,
 			Sequence:       startSeq,
+			CreatedAt:      time.Now(),
 		}
 		if err := s.userStore.AddMessage(ctx, userMsg); err != nil {
 			slog.Warn("chat: failed to save user message", "error", err)
@@ -265,6 +312,14 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			if !ok {
 				respondError(w, "streaming not supported", http.StatusInternalServerError)
 				return
+			}
+
+			// If we injected a context message, send it first.
+			if contextMsg != nil {
+				contextEvent := map[string]any{"type": "message", "message": contextMsg}
+				contextData, _ := json.Marshal(contextEvent)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", contextData)
+				flusher.Flush()
 			}
 
 			onText := func(text string) {
@@ -283,11 +338,16 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 				return
 			}
-			
-			// Save model response to history.
-			saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
 
-			doneEvent := map[string]any{"type": "done", "tool_calls": result.ToolCalls, "conversation_id": conv.ID}
+			// Save model response to history.
+			modelMsg := saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
+
+			doneEvent := map[string]any{
+				"type":            "done",
+				"tool_calls":      result.ToolCalls,
+				"conversation_id": conv.ID,
+				"message":         modelMsg,
+			}
 			doneData, _ := json.Marshal(doneEvent)
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", doneData)
 			flusher.Flush()
@@ -301,13 +361,14 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			}
 
 			// Save model response to history.
-			saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
+			_ = saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
 
 			resp := chatResponse{
 				Business:       biz,
 				Answer:         result.Text,
 				ToolCalls:      result.ToolCalls,
 				ConversationID: conv.ID,
+				ContextMessage: contextMsg,
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -333,7 +394,7 @@ func messagesToContent(msgs []*auth.Message) []*genai.Content {
 	return history
 }
 
-func saveModelResponse(ctx context.Context, store auth.Store, convID string, res chat.SendResult, seq int) {
+func saveModelResponse(ctx context.Context, store auth.Store, convID string, res chat.SendResult, seq int) *auth.Message {
 	msg := &auth.Message{
 		ID:             fmt.Sprintf("msg-%s-m-%d", convID, seq),
 		ConversationID: convID,
@@ -344,6 +405,7 @@ func saveModelResponse(ctx context.Context, store auth.Store, convID string, res
 	if err := store.AddMessage(ctx, msg); err != nil {
 		slog.Warn("chat: failed to save model response", "error", err)
 	}
+	return msg
 }
 
 // newGeminiChatFactory returns the production GeminiChatFactory that creates

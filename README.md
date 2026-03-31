@@ -70,7 +70,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── chat.md                      # Chat agent design decisions, tradeoffs, and future work
 │   └── indexing-improvements.md     # Indexing performance tuning plan
 │
-└── docker-compose.yaml      # Weaviate + t2v-transformers services
+├── docker-compose.yaml      # Base: Weaviate only (vectorizer runs natively)
+└── docker-compose.gpu.yaml  # Override: adds CUDA vectorizer in Docker
 ```
 
 ---
@@ -134,9 +135,9 @@ EventWriter.Write()
   ```sh
   sudo apt-get install docker-compose-v2
   ```
-- **`GEMINI_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
+- **`GOOGLE_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
   ```sh
-  export GEMINI_API_KEY=your_key_here
+  export GOOGLE_API_KEY=your_key_here
   ```
 
 ### Configuration
@@ -151,6 +152,8 @@ Example `service.yaml`:
 ```yaml
 port: 8081
 weaviate: "localhost:8090"
+cors-origins:
+  - "http://localhost:5173"
 chat-model: "gemini-3-flash-preview"
 filter-model: "gemini-3.1-flash-lite-preview"
 batch-size: 512
@@ -170,34 +173,64 @@ You must run Weaviate and the embedding vectorizer to enable semantic search. Th
 
 *(Note: The chat app will gracefully fall back to BM25 keyword search if the vectorizer isn't running, meaning you only strictly need the python vectorizer for indexing or specialized semantic queries).*
 
-#### Option A: Mac M2 / CPU Setup (Best for Apple Silicon)
+#### Option A: Mac (Apple Silicon / MPS) or CPU
 
-Docker on macOS cannot directly access the GPU (Metal) hardware. To get massive acceleration using Apple's `mps` backend, run Weaviate in Docker but run the python vectorizer natively:
+Docker on macOS cannot access Metal/MPS hardware, so the vectorizer must run natively to use GPU acceleration. Weaviate runs in Docker and connects back to the host.
 
 1. **Start Weaviate in Docker:**
    ```sh
    docker compose up -d
    ```
-   *(This boots up Weaviate on port `8090` and configures it to look for the vectorizer on your local machine).*
+   This starts Weaviate on port `8090`. It reaches the vectorizer via `host.docker.internal:8080` (resolved automatically on macOS Docker Desktop; on Linux, `extra_hosts` in the compose file handles this).
 
 2. **Start the Vectorizer Natively:**
-   In a separate terminal:
    ```sh
    cd vectorizer-proxy
-   python3 -m venv venv
-   source venv/bin/activate
+   conda activate torch-env   # or use a venv
    pip install -r requirements.txt
    uvicorn app:app --host 0.0.0.0 --port 8080
    ```
+   The vectorizer auto-detects the best device: MPS on Apple Silicon, CUDA if available, otherwise CPU.
 
-#### Option B: Linux / NVIDIA CUDA Setup
+3. **Or use `start.sh`** to launch everything (Weaviate + vectorizer + Go server) in one command:
+   ```sh
+   ./start.sh
+   ```
 
-If you are on Linux and have the `nvidia-container-toolkit` installed, you can run everything inside Docker with direct GPU passthrough. You don't need to run the Python script natively.
+#### Option B: Linux with NVIDIA GPU (Docker)
+
+With `nvidia-container-toolkit` installed, run everything inside Docker — the vectorizer gets direct GPU passthrough via the override compose file:
 
 ```sh
 docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d
 ```
-*(This starts both Weaviate and the CUDA-accelerated vectorizer entirely inside Docker).*
+
+This starts both Weaviate and the CUDA-accelerated vectorizer (with FP16 inference) entirely in Docker. No need to run the Python script natively.
+
+**Vectorizer tuning** (set in `docker-compose.gpu.yaml` or as env vars):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BATCH_MAX_SIZE` | `64` | Max requests batched into a single GPU forward pass |
+| `BATCH_TIMEOUT` | `0.01` | Seconds to wait for more requests before encoding (10ms) |
+| `ENABLE_CUDA` | `1` | Set to `1` to use CUDA; the vectorizer also enables FP16 on CUDA devices |
+
+The vectorizer automatically batches concurrent `/vectors` requests within the timeout window, so the GPU processes multiple texts per kernel launch instead of one at a time.
+
+#### Option C: Pinecone (Cloud + Local Vectorizer)
+
+Pinecone is a managed vector database. Use this if you want to offload storage to the cloud while keeping embeddings local.
+
+1. **Start the Vectorizer (Native or Docker):**
+   Follow the steps in Option A or B to start the `vectorizer-proxy`.
+
+2. **Run with Pinecone Flags:**
+   ```sh
+   go run . serve \
+     --pinecone-api-key YOUR_KEY \
+     --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
+     --vectorizer-url http://localhost:8000
+   ```
 
 #### Option C: Pinecone (Cloud + Local Vectorizer)
 
@@ -331,7 +364,7 @@ go run . index --weaviate localhost:8090
 
 ```sh
 # Find the top Thai restaurant in Las Vegas and start a chat about its dishes
-GEMINI_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
+GOOGLE_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
 ```
 
 See [docs/chat.md](docs/chat.md) for design decisions and tradeoffs.

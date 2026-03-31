@@ -45,6 +45,16 @@ type PineconeQueryResponse struct {
 	} `json:"matches"`
 }
 
+// EnsureSchema is a no-op for Pinecone as it uses implicit namespaces.
+func (c *PineconeClient) EnsureSchema(ctx context.Context) error {
+	return nil
+}
+
+// EnsureFodmapSchema is a no-op for Pinecone as it uses implicit namespaces.
+func (c *PineconeClient) EnsureFodmapSchema(ctx context.Context) error {
+	return nil
+}
+
 // GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
 func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	vec, err := c.Vectorizer.VectorizeSingle(ctx, query)
@@ -63,9 +73,15 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 	// apply filters if present
 	if filter.City != "" || filter.State != "" || filter.Category != "" {
 		f := map[string]any{}
-		if filter.City != "" { f["city"] = map[string]string{"$eq": filter.City} }
-		if filter.State != "" { f["state"] = map[string]string{"$eq": filter.State} }
-		if filter.Category != "" { f["categories"] = map[string]string{"$contains": filter.Category} }
+		if filter.City != "" {
+			f["city"] = map[string]string{"$eq": filter.City}
+		}
+		if filter.State != "" {
+			f["state"] = map[string]string{"$eq": filter.State}
+		}
+		if filter.Category != "" {
+			f["categories"] = map[string]string{"$contains": filter.Category}
+		}
 		payload["filter"] = f
 	}
 
@@ -115,6 +131,8 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 	// filter by business ID if provided
 	if filter.BusinessID != "" {
 		payload["filter"] = map[string]any{"business_id": map[string]string{"$eq": filter.BusinessID}}
+	} else if len(filter.ReviewIDs) > 0 {
+		payload["filter"] = map[string]any{"review_id": map[string]any{"$in": filter.ReviewIDs}}
 	}
 
 	res, err := c.doQuery(ctx, payload)
@@ -133,7 +151,7 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 				Review: schemas.Review{
 					ReviewID: m.Metadata["review_id"].(string),
 					Text:     m.Metadata["text"].(string),
-					Stars:    float32(m.Metadata["score"].(float64)),
+					Stars:    metadataFloat32(m.Metadata, "stars"),
 				},
 			},
 		})
@@ -169,7 +187,9 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 	var groups []string
 	if gSlice, ok := m.Metadata["groups"].([]any); ok {
 		for _, g := range gSlice {
-			if s, ok := g.(string); ok { groups = append(groups, s) }
+			if s, ok := g.(string); ok {
+				groups = append(groups, s)
+			}
 		}
 	}
 
@@ -270,4 +290,13 @@ func (c *PineconeClient) doUpsert(ctx context.Context, vectors []map[string]any,
 		return fmt.Errorf("pinecone upsert error (status %d): %s", resp.StatusCode, string(out))
 	}
 	return nil
+}
+
+// metadataFloat32 safely extracts a float32 from a metadata map, returning 0 if missing.
+func metadataFloat32(m map[string]any, key string) float32 {
+	v, ok := m[key].(float64)
+	if !ok {
+		return 0
+	}
+	return float32(v)
 }
