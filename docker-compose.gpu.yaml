@@ -1,7 +1,17 @@
 services:
   weaviate:
+    image: semitechnologies/weaviate:1.25.4
+    ports:
+      - "8090:8080"
     environment:
       TRANSFORMERS_INFERENCE_API: "http://vectorizer:8080"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "text2vec-transformers"
+      ENABLE_MODULES: "text2vec-transformers"
+      QUERY_DEFAULTS_LIMIT: "25"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+    # volumes:
+    #   - weaviate_data:/var/lib/weaviate
     depends_on:
       - vectorizer
 

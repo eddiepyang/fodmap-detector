@@ -43,10 +43,10 @@ state: ""
 batch-size: 512
 
 # Number of concurrent batch upload goroutines
-workers: 4
+workers: 8
 
 # Path to the Yelp dataset TAR archive
-archive: "data/yelp_dataset.tar"
+archive: "../data/yelp_dataset.tar"
 
 # Path to checkpoint file (empty string disables checkpointing)
 checkpoint: "index.checkpoint"
