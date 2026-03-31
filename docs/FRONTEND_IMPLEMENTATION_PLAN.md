@@ -361,18 +361,18 @@ The existing `chat` and `serve` CLI commands must continue working throughout al
     - [ ] Add token budgeting / history truncation
     - [ ] Implement conversation CRUD endpoints
     - [ ] Wire SSE streaming into `POST /api/v1/conversations/{id}/messages`
-- [ ] **Phase 4 — Frontend (separate repo: `fodmap-detector-web`):**
-    - [ ] Create new repo, scaffold React + Vite + TypeScript project with Shadcn/ui
-    - [ ] Configure Vite proxy for local backend development
-    - [ ] Define API types in `src/types/api.ts`
-    - [ ] Build auth pages (login/register)
-    - [ ] Build chat UI (conversation list, message window, SSE streaming)
-    - [ ] Implement `useSSEStream` hook for real-time message display
-- [ ] **Phase 5 — Data Layer & Deployment:**
-    - [ ] Implement `PineconeSearcher` satisfying existing `Searcher` interface
-    - [ ] Add `EmbeddingService` for Pinecone vectorization
-    - [ ] Add env-based provider selection (`VECTOR_DB_PROVIDER`)
-    - [ ] Write multi-stage Dockerfile for Go backend
-    - [ ] Write Dockerfile (or Firebase Hosting config) for frontend static build
-    - [ ] Set up GitHub Actions CI/CD for both repos
-    - [ ] Configure Cloud Run with database persistence strategy
+- [x] **Phase 4 — Frontend (separate repo: `fodmap-detector-web`):**
+    - [x] Create new repo, scaffold React + Vite + TypeScript project with Shadcn/ui
+    - [x] Configure Vite proxy for local backend development
+    - [x] Define API types in `src/types/api.ts`
+    - [x] Build auth pages (login/register)
+    - [x] Build chat UI (conversation list, message window, SSE streaming)
+    - [x] Implement `useSSEStream` hook for real-time message display
+- [x] **Phase 5 — Data Layer & Deployment:**
+    - [x] Implement `PineconeSearcher` satisfying existing `Searcher` interface
+    - [x] Add `EmbeddingService` for Pinecone vectorization
+    - [x] Add env-based provider selection (`VECTOR_DB_PROVIDER`)
+    - [x] Write multi-stage Dockerfile for Go backend
+    - [x] Write Dockerfile (or Firebase Hosting config) for frontend static build
+    - [x] Set up GitHub Actions CI/CD for both repos
+    - [x] Configure Cloud Run with database persistence strategy
