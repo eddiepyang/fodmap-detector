@@ -119,6 +119,7 @@ func TestAuthHandler_RegisterMissingFields(t *testing.T) {
 		{"empty email", map[string]string{"email": "", "password": "pass123"}},
 		{"empty password", map[string]string{"email": "a@b.com", "password": ""}},
 		{"both empty", map[string]string{"email": "", "password": ""}},
+		{"short password", map[string]string{"email": "a@b.com", "password": "short"}},
 	}
 
 	for _, tc := range cases {
@@ -233,6 +234,24 @@ func TestAuthHandler_RefreshInvalidJSON(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAuthHandler_Logout(t *testing.T) {
+	s := &Server{jwtSecret: "test-secret"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rec := httptest.NewRecorder()
+
+	s.logoutHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["message"] == "" {
+		t.Error("expected message in response body")
 	}
 }
 
