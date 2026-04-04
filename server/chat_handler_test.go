@@ -30,7 +30,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 			_, _ = io.WriteString(w, `{"candidates": [{"content": {"parts": [{"text": "yes"}]}}]}`)
 		} else {
 			// Actual chat (GenerateContentStream) expects SSE format
-			_, _ = io.WriteString(w, "data: " + `{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}` + "\n\n")
+			_, _ = io.WriteString(w, "data: "+`{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}`+"\n\n")
 		}
 	}))
 	defer geminiServer.Close()
@@ -50,7 +50,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 	s.geminiApiKey = "test-key"
 	s.chatRateLimiter = newIPRateLimiter(100, 100)
 	s.chatMaxConcurrent = 10
-	
+
 	// Create the mock client
 	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
 		APIKey: "test-key",
@@ -62,12 +62,11 @@ func TestChatHandler_Streaming(t *testing.T) {
 		t.Fatalf("failed to create mock genai client: %v", err)
 	}
 	s.genaiClient = client
-	
+
 	// geminiFactory is used to check if chat is enabled
 	s.geminiFactory = func(ctx context.Context, prompt string) (*genai.Client, *genai.Chat, error) {
 		return client, nil, nil
 	}
-
 
 	appServer := httptest.NewServer(s.Handler())
 	defer appServer.Close()
@@ -297,7 +296,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	}
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: geminiServer.URL + "/"},
 	})
 	s.genaiClient = client
@@ -315,7 +314,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 
 	// Verify messages in store.
 	msgs, _ := store.GetMessages(context.Background(), convID)
-	// We expect 2 messages: 
+	// We expect 2 messages:
 	// 1. Context message (role: model, seq: 0)
 	// 2. User message (role: user, seq: 1)
 	// 3. Model response (role: model, seq: 2) -> wait, chatHandler saves model response too.

@@ -504,8 +504,8 @@ func TestClient_SearchFodmap(t *testing.T) {
 				"Get": map[string]any{
 					fodmapCollectionName: []any{
 						map[string]any{
-							"ingredient": "garlic",
-							"level":      "high",
+							"ingredient":  "garlic",
+							"level":       "high",
 							"_additional": map[string]any{"certainty": 0.99},
 						},
 					},
@@ -674,4 +674,3 @@ func TestClient_BatchUpsertFodmap(t *testing.T) {
 		t.Errorf("expected 2 items, got %d", count)
 	}
 }
-

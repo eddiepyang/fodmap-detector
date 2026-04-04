@@ -24,8 +24,8 @@ const (
 
 // chatRequest is the JSON body for POST /chat/{query...}.
 type chatRequest struct {
-	Message  string `json:"message"`
-	Limit    int    `json:"limit"`
+	Message        string `json:"message"`
+	Limit          int    `json:"limit"`
 	Category       string `json:"category"`
 	City           string `json:"city"`
 	State          string `json:"state"`
@@ -136,7 +136,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 					return
 				}
 				b := bizResult.Businesses[0]
-				
+
 				if userID == "" {
 					userID = "anonymous"
 				}
@@ -155,7 +155,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				}
 				slog.Info("auto-created legacy conversation", "id", conv.ID, "business", b.Name)
 			} else {
-				// This block should theoretically never be reached under the new architecture 
+				// This block should theoretically never be reached under the new architecture
 				// since frontend creates conv first via createConversationHandler.
 				respondError(w, "conversation not found", http.StatusBadRequest)
 				return
@@ -176,7 +176,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
 				chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
 				slog.Info("chat: business context loaded", "name", biz.Name)
-				
+
 				var reviewResult search.SearchReviews
 				var err error
 
@@ -187,7 +187,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 						ids[i] = rc.ID
 					}
 					reviewResult, err = s.searcher.GetReviews(ctx, "", len(ids), search.SearchFilter{ReviewIDs: ids})
-					
+
 					// Re-apply original scores if found
 					if err == nil {
 						scoreMap := make(map[string]float64)
@@ -216,7 +216,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				} else {
 					slog.Warn("chat: failed to load reviews", "error", err)
 				}
-				
+
 				systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
 				if err != nil {
 					slog.Warn("chat: render prompt failed, using name-only fallback", "error", err)
@@ -338,16 +338,16 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 				return
 			}
-			
+
 			// Save tool turns then model response to history.
 			modelSeq := saveToolTurns(ctx, s.userStore, conv.ID, result, startSeq+1)
 			modelMsg := saveModelResponse(ctx, s.userStore, conv.ID, result, modelSeq)
 
 			doneEvent := map[string]any{
-				"type": "done",
-				"tool_calls": result.ToolCalls,
+				"type":            "done",
+				"tool_calls":      result.ToolCalls,
 				"conversation_id": conv.ID,
-				"message": modelMsg,
+				"message":         modelMsg,
 			}
 			doneData, _ := json.Marshal(doneEvent)
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", doneData)

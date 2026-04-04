@@ -26,47 +26,47 @@ type Searcher interface {
 }
 
 type Server struct {
-	searcher          Searcher           // nil when Weaviate is not configured
-	port              int
-	geminiFactory     GeminiChatFactory  // nil when chat is not configured
-	geminiApiKey      string             // for manual session creation
-	chatModel         string             // for manual session creation
-	filterModel       string             // for topic screening
-	chatAPIKey        string             // bearer token for /chat route
-	chatRateLimiter   *ipRateLimiter
-	chatMaxConcurrent int
+	searcher           Searcher // nil when Weaviate is not configured
+	port               int
+	geminiFactory      GeminiChatFactory // nil when chat is not configured
+	geminiApiKey       string            // for manual session creation
+	chatModel          string            // for manual session creation
+	filterModel        string            // for topic screening
+	chatAPIKey         string            // bearer token for /chat route
+	chatRateLimiter    *ipRateLimiter
+	chatMaxConcurrent  int
 	corsAllowedOrigins []string
-	genaiClient       *genai.Client
-	userStore         auth.Store
-	jwtSecret         string
+	genaiClient        *genai.Client
+	userStore          auth.Store
+	jwtSecret          string
 }
 
 type Config struct {
 	Port int
 
 	// Search configuration.
-	WeaviateHost string // optional; if empty, Weaviate is not used
-	PineconeAPIKey     string // optional
-	PineconeIndexHost  string // optional (must start with https://)
-	VectorizerURL      string // required for Pinecone; optional otherwise
+	WeaviateHost      string // optional; if empty, Weaviate is not used
+	PineconeAPIKey    string // optional
+	PineconeIndexHost string // optional (must start with https://)
+	VectorizerURL     string // required for Pinecone; optional otherwise
 
 	// Chat endpoint configuration.
-	GeminiAPIKey      string  // Gemini API key; omit to disable /chat
-	ChatModel         string  // Gemini model ID for chat (default: gemini-3-flash-preview)
-	FilterModel       string  // Gemini model ID for filtering (default: gemini-3.1-flash-lite-preview)
-	ChatAPIKey        string  // Bearer token clients must present for /chat
-	ChatRateLimit     float64 // requests per second per IP (default: 2)
-	ChatRateBurst     int     // burst allowance (default: 5)
-	ChatMaxConcurrent int     // max simultaneous chat requests (default: 10)
+	GeminiAPIKey       string  // Gemini API key; omit to disable /chat
+	ChatModel          string  // Gemini model ID for chat (default: gemini-3-flash-preview)
+	FilterModel        string  // Gemini model ID for filtering (default: gemini-3.1-flash-lite-preview)
+	ChatAPIKey         string  // Bearer token clients must present for /chat
+	ChatRateLimit      float64 // requests per second per IP (default: 2)
+	ChatRateBurst      int     // burst allowance (default: 5)
+	ChatMaxConcurrent  int     // max simultaneous chat requests (default: 10)
 	CORSAllowedOrigins []string
 	UserStore          auth.Store
-	JWTSecret         string
+	JWTSecret          string
 }
 
 // New initialises the server and Searcher client.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
-		port: cfg.Port,
+		port:               cfg.Port,
 		corsAllowedOrigins: cfg.CORSAllowedOrigins,
 		userStore:          cfg.UserStore,
 		jwtSecret:          cfg.JWTSecret,
@@ -159,11 +159,11 @@ func NewServer(searcher Searcher, port int) *Server {
 
 // ChatConfig holds optional chat-related overrides for NewServerWithChat.
 type ChatConfig struct {
-	GeminiFactory  GeminiChatFactory
-	ChatAPIKey     string
-	RateLimit      rate.Limit
-	RateBurst      int
-	MaxConcurrent  int
+	GeminiFactory GeminiChatFactory
+	ChatAPIKey    string
+	RateLimit     rate.Limit
+	RateBurst     int
+	MaxConcurrent int
 }
 
 // NewServerWithChat creates a Server with chat endpoint support. Intended for tests.
@@ -228,7 +228,7 @@ func (s *Server) Handler() http.Handler {
 		concurrencyLimiter(s.chatMaxConcurrent),
 	)
 	mux.Handle("POST /api/v1/conversations/{id}/messages", postChatMid)
-	
+
 	// Legacy Chat endpoint
 	mux.Handle("POST /chat/{query...}", postChatMid)
 

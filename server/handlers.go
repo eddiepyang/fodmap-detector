@@ -11,8 +11,6 @@ import (
 	"fodmap/search"
 )
 
-
-
 func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 	businessID := r.URL.Query().Get("business_id")
 	if businessID == "" {

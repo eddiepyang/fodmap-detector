@@ -367,4 +367,3 @@ func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
 		t.Errorf("expected dense-score review A to rank first with alpha=1, got %q", result2.BusinessReviews[0].Review.Review.ReviewID)
 	}
 }
-

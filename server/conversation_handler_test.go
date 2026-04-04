@@ -236,7 +236,7 @@ func (m *mockErrorStore) GetConversation(ctx context.Context, id string) (*auth.
 	return nil, errMock
 }
 func (m *mockErrorStore) DeleteConversation(ctx context.Context, id string) error { return errMock }
-func (m *mockErrorStore) AddMessage(ctx context.Context, msg *auth.Message) error        { return errMock }
+func (m *mockErrorStore) AddMessage(ctx context.Context, msg *auth.Message) error { return errMock }
 func (m *mockErrorStore) GetMessages(ctx context.Context, convID string) ([]*auth.Message, error) {
 	return nil, errMock
 }

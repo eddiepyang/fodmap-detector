@@ -74,9 +74,15 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 	// apply filters if present
 	if filter.City != "" || filter.State != "" || filter.Category != "" {
 		f := map[string]any{}
-		if filter.City != "" { f["city"] = map[string]string{"$eq": filter.City} }
-		if filter.State != "" { f["state"] = map[string]string{"$eq": filter.State} }
-		if filter.Category != "" { f["categories"] = map[string]string{"$contains": filter.Category} }
+		if filter.City != "" {
+			f["city"] = map[string]string{"$eq": filter.City}
+		}
+		if filter.State != "" {
+			f["state"] = map[string]string{"$eq": filter.State}
+		}
+		if filter.Category != "" {
+			f["categories"] = map[string]string{"$contains": filter.Category}
+		}
 		payload["filter"] = f
 	}
 
@@ -189,7 +195,9 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 	var groups []string
 	if gSlice, ok := m.Metadata["groups"].([]any); ok {
 		for _, g := range gSlice {
-			if s, ok := g.(string); ok { groups = append(groups, s) }
+			if s, ok := g.(string); ok {
+				groups = append(groups, s)
+			}
 		}
 	}
 

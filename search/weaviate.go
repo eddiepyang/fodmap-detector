@@ -36,12 +36,12 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID     string
-	Name   string
-	City   string
-	State  string
-	Stars  float64
-	Score  float64
+	ID    string
+	Name  string
+	City  string
+	State string
+	Stars float64
+	Score float64
 }
 
 // SearchResult holds the ranked list of businesses returned by a search query.
@@ -414,12 +414,12 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 
 	// Compute top-K average per business.
 	type ranked struct {
-		id     string
-		name   string
-		city   string
-		state  string
-		stars  float64
-		score  float64
+		id    string
+		name  string
+		city  string
+		state string
+		stars float64
+		score float64
 	}
 	results := make([]ranked, 0, len(entries))
 	for id, e := range entries {

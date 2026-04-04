@@ -31,7 +31,7 @@ func TestIsFoodRelated_Yes(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
@@ -62,7 +62,7 @@ func TestIsFoodRelated_No(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
@@ -82,7 +82,7 @@ func TestIsFoodRelated_Error(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
@@ -144,7 +144,7 @@ func TestSession_SendWithToolCalls(t *testing.T) {
 	defer srv.Close()
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
 	})
 
