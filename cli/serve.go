@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"fodmap/auth"
@@ -47,10 +48,8 @@ var serveCmd = &cobra.Command{
 			jwtSecret = os.Getenv("JWT_SECRET")
 		}
 		if jwtSecret == "" {
+			slog.Warn("JWT_SECRET not set; using insecure default — do not use in production")
 			jwtSecret = "change-me-in-production"
-		}
-		if jwtSecret == "" {
-			jwtSecret = "change-me-in-production" // Fallback but warn or error?
 		}
 
 		var userStore auth.Store

@@ -52,6 +52,10 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, "email and password are required", http.StatusBadRequest)
 		return
 	}
+	if len(req.Password) < 8 {
+		respondError(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
 
 	user := &auth.User{
 		ID:    uuid.New().String(),
@@ -167,6 +171,11 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 		AccessToken:  access,
 		RefreshToken: refresh,
 	})
+}
+
+func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "logged out"})
 }
 
 func respondError(w http.ResponseWriter, message string, code int) {
