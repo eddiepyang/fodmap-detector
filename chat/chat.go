@@ -63,10 +63,18 @@ type Review struct {
 
 // ---- network interfaces ----
 
+// FodmapSessionClient is the minimal interface required by Session to dispatch
+// FODMAP tool calls during a chat turn.
+type FodmapSessionClient interface {
+	LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error)
+}
+
+// FodmapServerClient is the full client interface used by CLI pre-chat setup
+// (business search and review fetch) in addition to in-session lookups.
 type FodmapServerClient interface {
+	FodmapSessionClient
 	FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error)
 	FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error)
-	LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error)
 }
 
 type AllergenClient interface {
@@ -139,17 +147,37 @@ func IsFoodRelated(ctx context.Context, client *genai.Client, model, input strin
 // stream chunks are recorded as separate model turns, corrupting the
 // tool-call sequence.
 type Session struct {
-	FodmapClient   FodmapServerClient
+	FodmapClient   FodmapSessionClient
 	AllergenClient AllergenClient
 	Model          string
 	Config         *genai.GenerateContentConfig
 	History        []*genai.Content
 }
 
+// ToolCallEntry records a single function call made during a chat turn.
+type ToolCallEntry struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+// ToolResponseEntry records the result of a single function call.
+type ToolResponseEntry struct {
+	Name   string         `json:"name"`
+	Result map[string]any `json:"result"`
+}
+
+// ToolTurn groups the function calls and their responses from one iteration
+// of the tool-call loop.
+type ToolTurn struct {
+	Calls     []ToolCallEntry     `json:"calls"`
+	Responses []ToolResponseEntry `json:"responses"`
+}
+
 // SendResult contains the outcome of a chat turn.
 type SendResult struct {
 	Text      string
 	ToolCalls []string
+	ToolTurns []ToolTurn
 }
 
 // SendWithToolCalls sends a user message and iterates until the model returns a
@@ -228,13 +256,18 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 
 		// 3. Dispatch tool calls and add response turn
 		responseTurn := &genai.Content{Role: "user"}
+		turn := ToolTurn{}
 		for _, call := range pendingCalls {
 			toolResult := s.DispatchTool(ctx, call.Name, call.Args)
+			resultMap := ToMap(toolResult)
 			responseTurn.Parts = append(responseTurn.Parts,
-				genai.NewPartFromFunctionResponse(call.Name, ToMap(toolResult)),
+				genai.NewPartFromFunctionResponse(call.Name, resultMap),
 			)
 			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
+			turn.Calls = append(turn.Calls, ToolCallEntry{Name: call.Name, Args: call.Args})
+			turn.Responses = append(turn.Responses, ToolResponseEntry{Name: call.Name, Result: resultMap})
 		}
+		result.ToolTurns = append(result.ToolTurns, turn)
 		s.History = append(s.History, responseTurn)
 
 		// Loop back to get the model's reaction to the tool responses.

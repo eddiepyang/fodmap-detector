@@ -24,7 +24,7 @@ func TestCreateConversationHandler_Metadata(t *testing.T) {
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"query":              "pad thai",
-		"business_id":       "biz-1",
+		"business_id":        "biz-1",
 		"search_category":    "Thai",
 		"search_city":        "San Francisco",
 		"search_state":       "CA",
@@ -67,7 +67,7 @@ func TestCreateConversationHandler_ReviewLimit(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]string{
-		"query": "test",
+		"query":       "test",
 		"business_id": "biz-1",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/conversations", bytes.NewReader(reqBody))

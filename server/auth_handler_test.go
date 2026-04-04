@@ -87,7 +87,7 @@ func TestAuthHandlers(t *testing.T) {
 	t.Run("Refresh success", func(t *testing.T) {
 		// First get a refresh token
 		_, refreshToken, _ := auth.GenerateTokens("user-123", "test-secret")
-		
+
 		// Setup store for refresh (normally it would check DB for user existence)
 		store.users["refresh@example.com"] = &auth.User{ID: "user-123", Email: "refresh@example.com"}
 

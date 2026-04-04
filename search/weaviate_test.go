@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,31 @@ func makeData(items []struct {
 		"Get": map[string]any{
 			collectionName: rawItems,
 		},
+	}
+}
+
+// --- extractScore tests ---
+
+func TestExtractScore_HybridScorePreferred(t *testing.T) {
+	additional := map[string]any{"score": 0.8, "certainty": 0.9}
+	got := extractScore(additional)
+	if got != 0.8 {
+		t.Errorf("got %f, want 0.8 (hybrid score should take priority over certainty)", got)
+	}
+}
+
+func TestExtractScore_FallsBackToCertainty(t *testing.T) {
+	additional := map[string]any{"certainty": 0.7}
+	got := extractScore(additional)
+	if got != 0.7 {
+		t.Errorf("got %f, want 0.7", got)
+	}
+}
+
+func TestExtractScore_DefaultsToOne(t *testing.T) {
+	got := extractScore(map[string]any{})
+	if got != 1.0 {
+		t.Errorf("got %f, want 1.0", got)
 	}
 }
 
@@ -478,8 +504,8 @@ func TestClient_SearchFodmap(t *testing.T) {
 				"Get": map[string]any{
 					fodmapCollectionName: []any{
 						map[string]any{
-							"ingredient": "garlic",
-							"level":      "high",
+							"ingredient":  "garlic",
+							"level":       "high",
 							"_additional": map[string]any{"certainty": 0.99},
 						},
 					},
@@ -499,6 +525,123 @@ func TestClient_SearchFodmap(t *testing.T) {
 	}
 	if res.Ingredient != "garlic" || cert != 0.99 {
 		t.Errorf("got %+v, cert %f", res, cert)
+	}
+}
+
+// --- Hybrid query tests ---
+
+func TestClient_GetBusinesses_HybridQuery(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			b, _ := io.ReadAll(r.Body)
+			body = string(b)
+			data := makeData([]struct {
+				businessID   string
+				businessName string
+				certainty    float64
+			}{{"biz1", "Pizza", 0.9}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	_, err := client.GetBusinesses(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
+	if err != nil {
+		t.Fatalf("GetBusinesses failed: %v", err)
+	}
+	if !strings.Contains(body, "hybrid:") {
+		t.Errorf("expected hybrid query in GraphQL body, got: %s", body)
+	}
+	if strings.Contains(body, "nearText:") {
+		t.Errorf("expected no nearText query when Alpha>0, got: %s", body)
+	}
+}
+
+func TestClient_GetBusinesses_HybridAlphaValue(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			b, _ := io.ReadAll(r.Body)
+			body = string(b)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": makeData(nil)})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	_, _ = client.GetBusinesses(context.Background(), "ramen", 5, SearchFilter{Alpha: 0.6})
+	if !strings.Contains(body, "0.6") {
+		t.Errorf("expected alpha value 0.6 in GraphQL body, got: %s", body)
+	}
+}
+
+func TestClient_GetBusinesses_NearTextFallback(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			b, _ := io.ReadAll(r.Body)
+			body = string(b)
+			data := makeData([]struct {
+				businessID   string
+				businessName string
+				certainty    float64
+			}{{"biz1", "Pizza", 0.9}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	// Alpha=0 (default zero value) → should use nearText
+	_, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
+	if err != nil {
+		t.Fatalf("GetBusinesses failed: %v", err)
+	}
+	if strings.Contains(body, "hybrid:") {
+		t.Errorf("expected nearText query when Alpha=0, got hybrid in body: %s", body)
+	}
+	if !strings.Contains(body, "nearText:") {
+		t.Errorf("expected nearText query when Alpha=0, body: %s", body)
+	}
+}
+
+func TestClient_GetReviews_HybridQuery(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			b, _ := io.ReadAll(r.Body)
+			body = string(b)
+			data := makeReviewData([]struct {
+				businessID   string
+				reviewID     string
+				businessName string
+				city         string
+				state        string
+				text         string
+				certainty    float64
+			}{{"biz1", "r1", "Pizza", "NYC", "NY", "great pizza", 0.9}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host)
+
+	_, err := client.GetReviews(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
+	if err != nil {
+		t.Fatalf("GetReviews failed: %v", err)
+	}
+	if !strings.Contains(body, "hybrid:") {
+		t.Errorf("expected hybrid query in GraphQL body, got: %s", body)
 	}
 }
 
@@ -531,4 +674,3 @@ func TestClient_BatchUpsertFodmap(t *testing.T) {
 		t.Errorf("expected 2 items, got %d", count)
 	}
 }
-

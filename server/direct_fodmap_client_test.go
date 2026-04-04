@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"fodmap/search"
 	"fodmap/data"
+	"fodmap/search"
 )
 
 // MockSearcher is a mock implementation of the Searcher interface for testing.

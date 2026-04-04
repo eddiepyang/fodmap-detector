@@ -10,7 +10,6 @@ import (
 	"fodmap/data/schemas"
 )
 
-
 const outfile = "outfile.avro"
 
 // setUp ensures the outfile artifact is populated for TestReadFile.
