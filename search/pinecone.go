@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	"fodmap/data"
@@ -73,9 +74,15 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 	// apply filters if present
 	if filter.City != "" || filter.State != "" || filter.Category != "" {
 		f := map[string]any{}
-		if filter.City != "" { f["city"] = map[string]string{"$eq": filter.City} }
-		if filter.State != "" { f["state"] = map[string]string{"$eq": filter.State} }
-		if filter.Category != "" { f["categories"] = map[string]string{"$contains": filter.Category} }
+		if filter.City != "" {
+			f["city"] = map[string]string{"$eq": filter.City}
+		}
+		if filter.State != "" {
+			f["state"] = map[string]string{"$eq": filter.State}
+		}
+		if filter.Category != "" {
+			f["categories"] = map[string]string{"$contains": filter.Category}
+		}
 		payload["filter"] = f
 	}
 
@@ -136,19 +143,26 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 
 	var reviews []RankedReview
 	for _, m := range res.Matches {
+		text, _ := m.Metadata["text"].(string)
+		score := blendScore(query, text, m.Score, filter.Alpha)
 		reviews = append(reviews, RankedReview{
-			Score: m.Score,
+			Score: score,
 			Review: IndexItem{
 				BusinessName: m.Metadata["business_name"].(string),
 				City:         m.Metadata["city"].(string),
 				State:        m.Metadata["state"].(string),
 				Review: schemas.Review{
 					ReviewID: m.Metadata["review_id"].(string),
-					Text:     m.Metadata["text"].(string),
+					Text:     text,
 					Stars:    metadataFloat32(m.Metadata, "stars"),
 				},
 			},
 		})
+	}
+
+	// Re-sort by blended score when hybrid is active.
+	if filter.Alpha > 0 && filter.Alpha < 1 {
+		sort.Slice(reviews, func(i, j int) bool { return reviews[i].Score > reviews[j].Score })
 	}
 
 	return SearchReviews{BusinessReviews: reviews}, nil
@@ -181,7 +195,9 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 	var groups []string
 	if gSlice, ok := m.Metadata["groups"].([]any); ok {
 		for _, g := range gSlice {
-			if s, ok := g.(string); ok { groups = append(groups, s) }
+			if s, ok := g.(string); ok {
+				groups = append(groups, s)
+			}
 		}
 	}
 

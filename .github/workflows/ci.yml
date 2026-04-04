@@ -16,7 +16,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
+      - name: Format
+        run: go fmt ./...
+        
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:

@@ -204,11 +204,11 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	vectorizedCh := make(chan []search.IndexItem, numWorkers*4)
 
 	var (
-		parseWg   sync.WaitGroup
-		vecWg     sync.WaitGroup
-		uploadWg  sync.WaitGroup
-		total     atomic.Int64
-		firstErr  atomic.Pointer[error]
+		parseWg  sync.WaitGroup
+		vecWg    sync.WaitGroup
+		uploadWg sync.WaitGroup
+		total    atomic.Int64
+		firstErr atomic.Pointer[error]
 	)
 
 	total.Store(int64(offset))

@@ -36,12 +36,12 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID     string
-	Name   string
-	City   string
-	State  string
-	Stars  float64
-	Score  float64
+	ID    string
+	Name  string
+	City  string
+	State string
+	Stars float64
+	Score float64
 }
 
 // SearchResult holds the ranked list of businesses returned by a search query.
@@ -69,6 +69,7 @@ type SearchFilter struct {
 	State      string   // exact match; empty = no filter
 	BusinessID string   // exact match; empty = no filter
 	ReviewIDs  []string // exact match for any of the provided IDs; empty = no filter
+	Alpha      float32  // hybrid search balance: 0 = pure vector (nearText), >0 enables hybrid (0=pure BM25, 1=pure vector)
 }
 
 // IndexItem pairs a review with its associated business metadata for indexing.
@@ -193,14 +194,21 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		{Name: "city"},
 		{Name: "state"},
 		{Name: "stars"},
-		{Name: "_additional { certainty }"},
+		{Name: "_additional { certainty score }"},
 	}
 
 	getter := c.wv.GraphQL().Get().
 		WithClassName(collectionName).
 		WithFields(fields...)
 
-	if query != "" {
+	if query != "" && filter.Alpha > 0 {
+		hybrid := c.wv.GraphQL().HybridArgumentBuilder().
+			WithQuery(query).
+			WithAlpha(filter.Alpha).
+			WithFusionType(graphql.RelativeScore)
+		getter = getter.WithHybrid(hybrid)
+		getter = getter.WithLimit(limit * 20)
+	} else if query != "" {
 		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
 		getter = getter.WithNearText(nearText)
 		getter = getter.WithLimit(limit * 20)
@@ -238,14 +246,21 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		{Name: "city"},
 		{Name: "state"},
 		{Name: "text"},
-		{Name: "_additional { certainty }"},
+		{Name: "_additional { certainty score }"},
 	}
 
 	getter := c.wv.GraphQL().Get().
 		WithClassName(collectionName).
 		WithFields(fields...)
 
-	if query != "" {
+	if query != "" && filter.Alpha > 0 {
+		hybrid := c.wv.GraphQL().HybridArgumentBuilder().
+			WithQuery(query).
+			WithAlpha(filter.Alpha).
+			WithFusionType(graphql.RelativeScore)
+		getter = getter.WithHybrid(hybrid)
+		getter = getter.WithLimit(limit * 20)
+	} else if query != "" {
 		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
 		getter = getter.WithNearText(nearText)
 		getter = getter.WithLimit(limit * 20)
@@ -328,6 +343,18 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 	}
 }
 
+// extractScore returns the hybrid score if present, then certainty, then 1.0.
+// Weaviate populates _additional.score for hybrid queries and _additional.certainty for nearText queries.
+func extractScore(additional map[string]any) float64 {
+	if s, ok := additional["score"].(float64); ok && s > 0 {
+		return s
+	}
+	if c, ok := additional["certainty"].(float64); ok && c > 0 {
+		return c
+	}
+	return 1.0
+}
+
 // aggregateTopK groups review certainty scores by businessId, averages the top K per restaurant,
 // then returns the top `limit` businesses sorted by that average (descending).
 func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
@@ -366,13 +393,8 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		if businessID == "" {
 			continue
 		}
-		certainty := 0.0
-		if additional, _ := obj["_additional"].(map[string]any); additional != nil {
-			certainty, _ = additional["certainty"].(float64)
-		}
-		if certainty == 0 {
-			certainty = 1.0 // Default to high certainty for exact filter matches (e.g. by ID)
-		}
+		additional, _ := obj["_additional"].(map[string]any)
+		certainty := extractScore(additional)
 
 		stars, _ := obj["stars"].(float64)
 
@@ -392,12 +414,12 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 
 	// Compute top-K average per business.
 	type ranked struct {
-		id     string
-		name   string
-		city   string
-		state  string
-		stars  float64
-		score  float64
+		id    string
+		name  string
+		city  string
+		state string
+		stars float64
+		score float64
 	}
 	results := make([]ranked, 0, len(entries))
 	for id, e := range entries {
@@ -473,13 +495,8 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 		if businessID == "" || reviewID == "" {
 			continue
 		}
-		certainty := 0.0
-		if additional, _ := obj["_additional"].(map[string]any); additional != nil {
-			certainty, _ = additional["certainty"].(float64)
-		}
-		if certainty == 0 {
-			certainty = 1.0 // Default to high certainty for exact ID matches
-		}
+		additional, _ := obj["_additional"].(map[string]any)
+		certainty := extractScore(additional)
 
 		name, _ := obj["businessName"].(string)
 		city, _ := obj["city"].(string)

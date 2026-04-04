@@ -24,8 +24,8 @@ const (
 
 // chatRequest is the JSON body for POST /chat/{query...}.
 type chatRequest struct {
-	Message  string `json:"message"`
-	Limit    int    `json:"limit"`
+	Message        string `json:"message"`
+	Limit          int    `json:"limit"`
 	Category       string `json:"category"`
 	City           string `json:"city"`
 	State          string `json:"state"`
@@ -136,7 +136,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 					return
 				}
 				b := bizResult.Businesses[0]
-				
+
 				if userID == "" {
 					userID = "anonymous"
 				}
@@ -155,7 +155,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				}
 				slog.Info("auto-created legacy conversation", "id", conv.ID, "business", b.Name)
 			} else {
-				// This block should theoretically never be reached under the new architecture 
+				// This block should theoretically never be reached under the new architecture
 				// since frontend creates conv first via createConversationHandler.
 				respondError(w, "conversation not found", http.StatusBadRequest)
 				return
@@ -176,7 +176,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
 				chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
 				slog.Info("chat: business context loaded", "name", biz.Name)
-				
+
 				var reviewResult search.SearchReviews
 				var err error
 
@@ -187,7 +187,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 						ids[i] = rc.ID
 					}
 					reviewResult, err = s.searcher.GetReviews(ctx, "", len(ids), search.SearchFilter{ReviewIDs: ids})
-					
+
 					// Re-apply original scores if found
 					if err == nil {
 						scoreMap := make(map[string]float64)
@@ -216,7 +216,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				} else {
 					slog.Warn("chat: failed to load reviews", "error", err)
 				}
-				
+
 				systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
 				if err != nil {
 					slog.Warn("chat: render prompt failed, using name-only fallback", "error", err)
@@ -338,15 +338,16 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 				return
 			}
-			
-			// Save model response to history.
-			modelMsg := saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
+
+			// Save tool turns then model response to history.
+			modelSeq := saveToolTurns(ctx, s.userStore, conv.ID, result, startSeq+1)
+			modelMsg := saveModelResponse(ctx, s.userStore, conv.ID, result, modelSeq)
 
 			doneEvent := map[string]any{
-				"type": "done",
-				"tool_calls": result.ToolCalls,
+				"type":            "done",
+				"tool_calls":      result.ToolCalls,
 				"conversation_id": conv.ID,
-				"message": modelMsg,
+				"message":         modelMsg,
 			}
 			doneData, _ := json.Marshal(doneEvent)
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", doneData)
@@ -360,8 +361,9 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				return
 			}
 
-			// Save model response to history.
-			_ = saveModelResponse(ctx, s.userStore, conv.ID, result, startSeq+1)
+			// Save tool turns then model response to history.
+			modelSeq := saveToolTurns(ctx, s.userStore, conv.ID, result, startSeq+1)
+			_ = saveModelResponse(ctx, s.userStore, conv.ID, result, modelSeq)
 
 			resp := chatResponse{
 				Business:       biz,
@@ -380,18 +382,79 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 func messagesToContent(msgs []*auth.Message) []*genai.Content {
 	var history []*genai.Content
 	for _, m := range msgs {
-		role := m.Role
-		if role == "tool_call" || role == "tool_response" {
-			// TODO: Properly reconstruct tool turns if needed.
-			// Manual history management in chat.go currently focuses on text turns.
-			continue
+		switch m.Role {
+		case "tool_call":
+			var calls []chat.ToolCallEntry
+			if err := json.Unmarshal([]byte(m.Content), &calls); err != nil {
+				slog.Warn("chat: failed to parse tool_call message", "id", m.ID, "error", err)
+				continue
+			}
+			c := &genai.Content{Role: "model"}
+			for _, call := range calls {
+				c.Parts = append(c.Parts, genai.NewPartFromFunctionCall(call.Name, call.Args))
+			}
+			history = append(history, c)
+		case "tool_response":
+			var responses []chat.ToolResponseEntry
+			if err := json.Unmarshal([]byte(m.Content), &responses); err != nil {
+				slog.Warn("chat: failed to parse tool_response message", "id", m.ID, "error", err)
+				continue
+			}
+			c := &genai.Content{Role: "user"}
+			for _, resp := range responses {
+				c.Parts = append(c.Parts, genai.NewPartFromFunctionResponse(resp.Name, resp.Result))
+			}
+			history = append(history, c)
+		default:
+			history = append(history, &genai.Content{
+				Role:  m.Role,
+				Parts: []*genai.Part{{Text: m.Content}},
+			})
 		}
-		history = append(history, &genai.Content{
-			Role:  role,
-			Parts: []*genai.Part{{Text: m.Content}},
-		})
 	}
 	return history
+}
+
+// saveToolTurns persists each tool call/response pair from result to the store,
+// starting at seq. It returns the next available sequence number.
+func saveToolTurns(ctx context.Context, store auth.Store, convID string, result chat.SendResult, seq int) int {
+	for _, turn := range result.ToolTurns {
+		callsJSON, err := json.Marshal(turn.Calls)
+		if err != nil {
+			slog.Warn("chat: failed to marshal tool calls", "error", err)
+			seq += 2
+			continue
+		}
+		respJSON, err := json.Marshal(turn.Responses)
+		if err != nil {
+			slog.Warn("chat: failed to marshal tool responses", "error", err)
+			seq += 2
+			continue
+		}
+		callMsg := &auth.Message{
+			ID:             fmt.Sprintf("msg-%s-tc-%d", convID, seq),
+			ConversationID: convID,
+			Role:           "tool_call",
+			Content:        string(callsJSON),
+			Sequence:       seq,
+		}
+		if err := store.AddMessage(ctx, callMsg); err != nil {
+			slog.Warn("chat: failed to save tool call", "error", err)
+		}
+		seq++
+		respMsg := &auth.Message{
+			ID:             fmt.Sprintf("msg-%s-tr-%d", convID, seq),
+			ConversationID: convID,
+			Role:           "tool_response",
+			Content:        string(respJSON),
+			Sequence:       seq,
+		}
+		if err := store.AddMessage(ctx, respMsg); err != nil {
+			slog.Warn("chat: failed to save tool response", "error", err)
+		}
+		seq++
+	}
+	return seq
 }
 
 func saveModelResponse(ctx context.Context, store auth.Store, convID string, res chat.SendResult, seq int) *auth.Message {

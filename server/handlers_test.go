@@ -80,9 +80,9 @@ func TestGetBusinessesHandler_Success(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -113,9 +113,9 @@ func TestGetBusinessesHandler_Success(t *testing.T) {
 func TestGetBusinessesHandler_NoSearcher(t *testing.T) {
 	s := &Server{searcher: nil}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -128,9 +128,9 @@ func TestGetBusinessesHandler_EmptyQuery(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -143,9 +143,9 @@ func TestGetBusinessesHandler_InvalidLimit(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza?limit=abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?limit=abc", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -158,9 +158,9 @@ func TestGetBusinessesHandler_NegativeLimit(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza?limit=-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?limit=-1", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -175,9 +175,9 @@ func TestGetBusinessesHandler_EmptyResults(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -201,9 +201,9 @@ func TestGetBusinessesHandler_SearchError(t *testing.T) {
 	mock := &handlersTestSearcher{businessErr: errors.New("search down")}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -220,9 +220,9 @@ func TestGetBusinessesHandler_WithFilters(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos?category=Mexican&city=Austin&state=TX&limit=5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/tacos?category=Mexican&city=Austin&state=TX&limit=5", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -251,9 +251,9 @@ func TestGetReviewsHandler_Success(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -283,9 +283,9 @@ func TestGetReviewsHandler_Success(t *testing.T) {
 func TestGetReviewsHandler_NoSearcher(t *testing.T) {
 	s := &Server{searcher: nil}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -297,9 +297,9 @@ func TestGetReviewsHandler_NoSearcher(t *testing.T) {
 func TestGetReviewsHandler_EmptyQuery(t *testing.T) {
 	s := &Server{searcher: &handlersTestSearcher{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -311,9 +311,9 @@ func TestGetReviewsHandler_EmptyQuery(t *testing.T) {
 func TestGetReviewsHandler_InvalidLimit(t *testing.T) {
 	s := &Server{searcher: &handlersTestSearcher{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/pizza?limit=xyz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pizza?limit=xyz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -328,9 +328,9 @@ func TestGetReviewsHandler_EmptyResults(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -353,9 +353,9 @@ func TestGetReviewsHandler_SearchError(t *testing.T) {
 	mock := &handlersTestSearcher{reviewErr: errors.New("search down")}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/pizza", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pizza", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -378,9 +378,9 @@ func TestGetFodmapHandler_Success(t *testing.T) {
 	}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
+	mux.HandleFunc("GET /api/v1/search/fodmap/{ingredient...}", s.getFodmapHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchFodmap/garlic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fodmap/garlic", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -412,9 +412,9 @@ func TestGetFodmapHandler_Success(t *testing.T) {
 func TestGetFodmapHandler_NoSearcher(t *testing.T) {
 	s := &Server{searcher: nil}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
+	mux.HandleFunc("GET /api/v1/search/fodmap/{ingredient...}", s.getFodmapHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchFodmap/garlic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fodmap/garlic", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -426,9 +426,9 @@ func TestGetFodmapHandler_NoSearcher(t *testing.T) {
 func TestGetFodmapHandler_EmptyIngredient(t *testing.T) {
 	s := &Server{searcher: &handlersTestSearcher{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
+	mux.HandleFunc("GET /api/v1/search/fodmap/{ingredient...}", s.getFodmapHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchFodmap/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fodmap/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -441,9 +441,9 @@ func TestGetFodmapHandler_NotFound(t *testing.T) {
 	mock := &handlersTestSearcher{fodmapErr: errors.New("not found")}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchFodmap/{ingredient...}", s.getFodmapHandler)
+	mux.HandleFunc("GET /api/v1/search/fodmap/{ingredient...}", s.getFodmapHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchFodmap/unobtainium", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fodmap/unobtainium", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -473,9 +473,9 @@ func TestGetBusinessesHandler_PassesCityStateFilters(t *testing.T) {
 	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/tacos?city=Austin&state=TX", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/tacos?city=Austin&state=TX", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -494,9 +494,9 @@ func TestGetBusinessesHandler_PassesAllFilters(t *testing.T) {
 	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchBusiness/{query...}", s.getBusinessesHandler)
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchBusiness/pizza?category=Italian&city=Chicago&state=IL", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?category=Italian&city=Chicago&state=IL", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -518,9 +518,9 @@ func TestGetReviewsHandler_ParsesBusinessID(t *testing.T) {
 	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/pad%20thai?business_id=my-biz-123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pad%20thai?business_id=my-biz-123", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -536,9 +536,9 @@ func TestGetReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
 	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /searchReview/{query...}", s.getReviewsHandler)
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/searchReview/noodles", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/noodles", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -551,5 +551,88 @@ func TestGetReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
 	}
 	if string(resp["reviews"]) == "null" {
 		t.Error("reviews should be [] not null")
+	}
+}
+
+// ---- alpha query parameter ----
+
+func TestGetBusinessesHandler_AlphaQueryParam(t *testing.T) {
+	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?alpha=0.6", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if mock.lastBusinessFilter.Alpha != 0.6 {
+		t.Errorf("alpha = %f, want 0.6", mock.lastBusinessFilter.Alpha)
+	}
+}
+
+func TestGetBusinessesHandler_InvalidAlpha(t *testing.T) {
+	mock := &handlersTestSearcher{}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?alpha=1.5", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetBusinessesHandler_NegativeAlpha(t *testing.T) {
+	mock := &handlersTestSearcher{}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/businesses/pizza?alpha=-0.1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetReviewsHandler_AlphaPassthrough(t *testing.T) {
+	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/tacos?alpha=0.75", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if mock.lastReviewFilter.Alpha != 0.75 {
+		t.Errorf("alpha = %f, want 0.75", mock.lastReviewFilter.Alpha)
+	}
+}
+
+func TestGetReviewsHandler_InvalidAlpha(t *testing.T) {
+	mock := &handlersTestSearcher{}
+	s := &Server{searcher: mock}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/tacos?alpha=bad", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }

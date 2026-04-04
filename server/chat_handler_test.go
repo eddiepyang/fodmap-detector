@@ -30,7 +30,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 			_, _ = io.WriteString(w, `{"candidates": [{"content": {"parts": [{"text": "yes"}]}}]}`)
 		} else {
 			// Actual chat (GenerateContentStream) expects SSE format
-			_, _ = io.WriteString(w, "data: " + `{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}` + "\n\n")
+			_, _ = io.WriteString(w, "data: "+`{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}`+"\n\n")
 		}
 	}))
 	defer geminiServer.Close()
@@ -50,7 +50,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 	s.geminiApiKey = "test-key"
 	s.chatRateLimiter = newIPRateLimiter(100, 100)
 	s.chatMaxConcurrent = 10
-	
+
 	// Create the mock client
 	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
 		APIKey: "test-key",
@@ -62,12 +62,11 @@ func TestChatHandler_Streaming(t *testing.T) {
 		t.Fatalf("failed to create mock genai client: %v", err)
 	}
 	s.genaiClient = client
-	
+
 	// geminiFactory is used to check if chat is enabled
 	s.geminiFactory = func(ctx context.Context, prompt string) (*genai.Client, *genai.Chat, error) {
 		return client, nil, nil
 	}
-
 
 	appServer := httptest.NewServer(s.Handler())
 	defer appServer.Close()
@@ -189,22 +188,47 @@ func TestMessagesToContent_TextMessages(t *testing.T) {
 	}
 }
 
-func TestMessagesToContent_SkipsToolMessages(t *testing.T) {
+func TestMessagesToContent_ReconstructsToolTurns(t *testing.T) {
+	calls := []chat.ToolCallEntry{{Name: "lookup_fodmap", Args: map[string]any{"ingredient": "garlic"}}}
+	responses := []chat.ToolResponseEntry{{Name: "lookup_fodmap", Result: map[string]any{"found": true}}}
+	callsJSON, _ := json.Marshal(calls)
+	responsesJSON, _ := json.Marshal(responses)
+
 	msgs := []*auth.Message{
 		{ID: "1", Role: "user", Content: "What about garlic?"},
-		{ID: "2", Role: "tool_call", Content: "lookup_fodmap(garlic)"},
-		{ID: "3", Role: "tool_response", Content: `{"found": true}`},
+		{ID: "2", Role: "tool_call", Content: string(callsJSON)},
+		{ID: "3", Role: "tool_response", Content: string(responsesJSON)},
 		{ID: "4", Role: "model", Content: "Garlic is high FODMAP"},
 	}
 	result := messagesToContent(msgs)
-	if len(result) != 2 {
-		t.Fatalf("got %d contents, want 2 (tool messages should be skipped)", len(result))
+	if len(result) != 4 {
+		t.Fatalf("got %d contents, want 4", len(result))
 	}
 	if result[0].Role != "user" {
-		t.Errorf("first role = %q, want %q", result[0].Role, "user")
+		t.Errorf("result[0].Role = %q, want %q", result[0].Role, "user")
 	}
+	// tool_call → model turn with FunctionCall part
 	if result[1].Role != "model" {
-		t.Errorf("second role = %q, want %q", result[1].Role, "model")
+		t.Errorf("result[1].Role = %q, want %q", result[1].Role, "model")
+	}
+	if len(result[1].Parts) != 1 || result[1].Parts[0].FunctionCall == nil {
+		t.Errorf("result[1] should have a FunctionCall part, got %+v", result[1].Parts)
+	}
+	if result[1].Parts[0].FunctionCall.Name != "lookup_fodmap" {
+		t.Errorf("FunctionCall.Name = %q, want %q", result[1].Parts[0].FunctionCall.Name, "lookup_fodmap")
+	}
+	// tool_response → user turn with FunctionResponse part
+	if result[2].Role != "user" {
+		t.Errorf("result[2].Role = %q, want %q", result[2].Role, "user")
+	}
+	if len(result[2].Parts) != 1 || result[2].Parts[0].FunctionResponse == nil {
+		t.Errorf("result[2] should have a FunctionResponse part, got %+v", result[2].Parts)
+	}
+	if result[2].Parts[0].FunctionResponse.Name != "lookup_fodmap" {
+		t.Errorf("FunctionResponse.Name = %q, want %q", result[2].Parts[0].FunctionResponse.Name, "lookup_fodmap")
+	}
+	if result[3].Role != "model" {
+		t.Errorf("result[3].Role = %q, want %q", result[3].Role, "model")
 	}
 }
 
@@ -272,7 +296,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	}
 
 	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: geminiServer.URL + "/"},
 	})
 	s.genaiClient = client
@@ -290,7 +314,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 
 	// Verify messages in store.
 	msgs, _ := store.GetMessages(context.Background(), convID)
-	// We expect 2 messages: 
+	// We expect 2 messages:
 	// 1. Context message (role: model, seq: 0)
 	// 2. User message (role: user, seq: 1)
 	// 3. Model response (role: model, seq: 2) -> wait, chatHandler saves model response too.

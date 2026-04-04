@@ -11,8 +11,6 @@ import (
 	"fodmap/search"
 )
 
-
-
 func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 	businessID := r.URL.Query().Get("business_id")
 	if businessID == "" {
@@ -59,6 +57,14 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 		Category: strings.TrimSpace(r.URL.Query().Get("category")),
 		City:     strings.TrimSpace(r.URL.Query().Get("city")),
 		State:    strings.TrimSpace(r.URL.Query().Get("state")),
+	}
+	if a := r.URL.Query().Get("alpha"); a != "" {
+		f, err := strconv.ParseFloat(a, 32)
+		if err != nil || f < 0 || f > 1 {
+			http.Error(w, `{"error":"alpha must be between 0.0 and 1.0"}`, http.StatusBadRequest)
+			return
+		}
+		filter.Alpha = float32(f)
 	}
 
 	result, err := s.searcher.GetBusinesses(r.Context(), q, limit, filter)
@@ -118,6 +124,14 @@ func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
 		City:       r.URL.Query().Get("city"),
 		State:      r.URL.Query().Get("state"),
 		BusinessID: r.URL.Query().Get("business_id"),
+	}
+	if a := r.URL.Query().Get("alpha"); a != "" {
+		f, err := strconv.ParseFloat(a, 32)
+		if err != nil || f < 0 || f > 1 {
+			http.Error(w, `{"error":"alpha must be between 0.0 and 1.0"}`, http.StatusBadRequest)
+			return
+		}
+		filter.Alpha = float32(f)
 	}
 
 	result, err := s.searcher.GetReviews(r.Context(), q, limit, filter)

@@ -54,8 +54,9 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │       └── schemas.go       # Review + Business structs + Avro EventSchema
 │
 ├── search/
-│   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText search
-│   ├── pinecone.go          # Pinecone client: REST-based query and upsert
+│   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText/hybrid search
+│   ├── pinecone.go          # Pinecone client: REST-based query, upsert, BM25 re-ranking
+│   ├── bm25.go              # BM25 keyword scoring and score blending for hybrid search
 │   └── vectorizer.go        # Go client for the local embedding server (JSON/Binary)
 │
 ├── auth/
@@ -304,8 +305,18 @@ Default port is `8081`.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/reviews` | List reviews for a business |
-| `GET` | `/searchBusiness/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
-| `GET` | `/searchReview/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
+| `GET` | `/api/v1/search/businesses/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
+| `GET` | `/api/v1/search/reviews/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
+
+**Common query parameters** for search endpoints:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `limit` | `10` | Max results to return |
+| `category` | — | Filter by cuisine/category substring |
+| `city` | — | Filter by city (exact match) |
+| `state` | — | Filter by state (exact match) |
+| `alpha` | `0` | Hybrid search weight: `0`=pure vector, `0.75`=balanced, `1`=pure vector |
 
 #### Search endpoints
 
@@ -313,11 +324,31 @@ Find restaurants or review texts matching a natural-language description:
 
 ```sh
 # Business search — returns top 10 businesses ranked by review relevance
-curl "localhost:8081/searchBusiness/cozy%20Italian%20with%20great%20pasta"
+curl "localhost:8081/api/v1/search/businesses/cozy%20Italian%20with%20great%20pasta"
 
 # Filter by category, city, state
-curl "localhost:8081/searchBusiness/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
+curl "localhost:8081/api/v1/search/businesses/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
 ```
+
+##### Hybrid search (`?alpha=`)
+
+All search endpoints support an optional `alpha` parameter that controls the balance between semantic vector search and BM25 keyword search:
+
+| `alpha` value | Behaviour |
+|--------------|-----------|
+| Omitted / `0` | Pure semantic vector search (default, backward-compatible) |
+| `0.0`–`1.0` | Hybrid: blend of BM25 and vector (higher = more vector weight) |
+| `1.0` | Pure semantic vector search |
+
+```sh
+# Hybrid search: 75% vector + 25% BM25 keyword
+curl "localhost:8081/api/v1/search/businesses/gluten%20free%20pizza?alpha=0.75"
+
+# Heavily keyword-weighted (good for exact dish/ingredient names)
+curl "localhost:8081/api/v1/search/reviews/pad%20thai?alpha=0.2"
+```
+
+On Weaviate, hybrid search uses the native `hybrid` operator with `relativeScoreFusion`. On Pinecone, BM25 re-ranking is applied in-process against the review `text` metadata field and blended with the dense vector score.
 
 See [docs/search.md](docs/search.md) for full API reference and design decisions.
 
