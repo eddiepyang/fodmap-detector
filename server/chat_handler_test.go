@@ -189,22 +189,47 @@ func TestMessagesToContent_TextMessages(t *testing.T) {
 	}
 }
 
-func TestMessagesToContent_SkipsToolMessages(t *testing.T) {
+func TestMessagesToContent_ReconstructsToolTurns(t *testing.T) {
+	calls := []chat.ToolCallEntry{{Name: "lookup_fodmap", Args: map[string]any{"ingredient": "garlic"}}}
+	responses := []chat.ToolResponseEntry{{Name: "lookup_fodmap", Result: map[string]any{"found": true}}}
+	callsJSON, _ := json.Marshal(calls)
+	responsesJSON, _ := json.Marshal(responses)
+
 	msgs := []*auth.Message{
 		{ID: "1", Role: "user", Content: "What about garlic?"},
-		{ID: "2", Role: "tool_call", Content: "lookup_fodmap(garlic)"},
-		{ID: "3", Role: "tool_response", Content: `{"found": true}`},
+		{ID: "2", Role: "tool_call", Content: string(callsJSON)},
+		{ID: "3", Role: "tool_response", Content: string(responsesJSON)},
 		{ID: "4", Role: "model", Content: "Garlic is high FODMAP"},
 	}
 	result := messagesToContent(msgs)
-	if len(result) != 2 {
-		t.Fatalf("got %d contents, want 2 (tool messages should be skipped)", len(result))
+	if len(result) != 4 {
+		t.Fatalf("got %d contents, want 4", len(result))
 	}
 	if result[0].Role != "user" {
-		t.Errorf("first role = %q, want %q", result[0].Role, "user")
+		t.Errorf("result[0].Role = %q, want %q", result[0].Role, "user")
 	}
+	// tool_call → model turn with FunctionCall part
 	if result[1].Role != "model" {
-		t.Errorf("second role = %q, want %q", result[1].Role, "model")
+		t.Errorf("result[1].Role = %q, want %q", result[1].Role, "model")
+	}
+	if len(result[1].Parts) != 1 || result[1].Parts[0].FunctionCall == nil {
+		t.Errorf("result[1] should have a FunctionCall part, got %+v", result[1].Parts)
+	}
+	if result[1].Parts[0].FunctionCall.Name != "lookup_fodmap" {
+		t.Errorf("FunctionCall.Name = %q, want %q", result[1].Parts[0].FunctionCall.Name, "lookup_fodmap")
+	}
+	// tool_response → user turn with FunctionResponse part
+	if result[2].Role != "user" {
+		t.Errorf("result[2].Role = %q, want %q", result[2].Role, "user")
+	}
+	if len(result[2].Parts) != 1 || result[2].Parts[0].FunctionResponse == nil {
+		t.Errorf("result[2] should have a FunctionResponse part, got %+v", result[2].Parts)
+	}
+	if result[2].Parts[0].FunctionResponse.Name != "lookup_fodmap" {
+		t.Errorf("FunctionResponse.Name = %q, want %q", result[2].Parts[0].FunctionResponse.Name, "lookup_fodmap")
+	}
+	if result[3].Role != "model" {
+		t.Errorf("result[3].Role = %q, want %q", result[3].Role, "model")
 	}
 }
 

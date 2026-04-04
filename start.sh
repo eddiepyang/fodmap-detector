@@ -21,6 +21,20 @@ echo "======================================"
 echo "[1/3] Starting Weaviate in Docker..."
 docker compose up -d
 
+# Wait for Weaviate to become healthy
+echo "    Waiting for Weaviate to be ready..."
+for i in $(seq 1 60); do
+    if curl -s -o /dev/null http://localhost:8090/v1/.well-known/ready 2>/dev/null; then
+        echo "    Weaviate is ready!"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "    ERROR: Weaviate did not become ready in time."
+        exit 1
+    fi
+    sleep 2
+done
+
 # 2. Start the Python Vectorizer locally (auto-detects CUDA / MPS / CPU)
 echo "[2/3] Starting Python Vectorizer on port 8080..."
 (

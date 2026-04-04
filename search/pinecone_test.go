@@ -299,3 +299,72 @@ func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
 	}
 }
 
+// TestPineconeClient_GetReviews_HybridBlend verifies that when Alpha<1, returned scores
+// are blended between the dense score and BM25 keyword score.
+// Match A: high dense score (0.95) but text doesn't match query.
+// Match B: low dense score (0.50) but text perfectly matches query.
+// With Alpha=0.0 (pure BM25), B should rank above A.
+func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
+	vecServer := mockVecServer()
+	defer vecServer.Close()
+	v := NewVectorizerClient(vecServer.URL)
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := PineconeQueryResponse{
+			Matches: []struct {
+				ID       string         `json:"id"`
+				Score    float64        `json:"score"`
+				Metadata map[string]any `json:"metadata"`
+			}{
+				{
+					ID: "rev-A", Score: 0.95,
+					Metadata: map[string]any{
+						"review_id":     "rA",
+						"business_name": "Sushi Bar",
+						"city":          "NYC",
+						"state":         "NY",
+						"text":          "excellent sushi and sake selection",
+						"stars":         float64(5),
+					},
+				},
+				{
+					ID: "rev-B", Score: 0.50,
+					Metadata: map[string]any{
+						"review_id":     "rB",
+						"business_name": "Pizza Place",
+						"city":          "NYC",
+						"state":         "NY",
+						"text":          "gluten free pizza gluten free crust gluten free options",
+						"stars":         float64(4),
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(res)
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, v)
+
+	// Pure BM25 (alpha=0): B should rank above A because B's text matches "gluten free".
+	result, err := client.GetReviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 0.01})
+	if err != nil {
+		t.Fatalf("GetReviews failed: %v", err)
+	}
+	if len(result.BusinessReviews) != 2 {
+		t.Fatalf("got %d reviews, want 2", len(result.BusinessReviews))
+	}
+	if result.BusinessReviews[0].Review.Review.ReviewID != "rB" {
+		t.Errorf("expected BM25-boosted review B to rank first, got %q", result.BusinessReviews[0].Review.Review.ReviewID)
+	}
+
+	// Pure vector (alpha=1): A should rank first due to higher dense score.
+	result2, err := client.GetReviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 1.0})
+	if err != nil {
+		t.Fatalf("GetReviews (alpha=1) failed: %v", err)
+	}
+	if result2.BusinessReviews[0].Review.Review.ReviewID != "rA" {
+		t.Errorf("expected dense-score review A to rank first with alpha=1, got %q", result2.BusinessReviews[0].Review.Review.ReviewID)
+	}
+}
+
