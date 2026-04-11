@@ -17,26 +17,9 @@ echo "======================================"
 echo " Starting FODMAP Detector Services"
 echo "======================================"
 
-# 1. Start Weaviate in Docker
-echo "[1/3] Starting Weaviate in Docker..."
-docker compose up -d
-
-# Wait for Weaviate to become healthy
-echo "    Waiting for Weaviate to be ready..."
-for i in $(seq 1 60); do
-    if curl -s -o /dev/null http://localhost:8090/v1/.well-known/ready 2>/dev/null; then
-        echo "    Weaviate is ready!"
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        echo "    ERROR: Weaviate did not become ready in time."
-        exit 1
-    fi
-    sleep 2
-done
-
-# 2. Start the Python Vectorizer locally (auto-detects CUDA / MPS / CPU)
-echo "[2/3] Starting Python Vectorizer on port 8080..."
+# 1. Start the Python Vectorizer locally (auto-detects CUDA / MPS / CPU)
+# Must start before Weaviate — Weaviate blocks on the transformer API being ready.
+echo "[1/3] Starting Python Vectorizer on port 8080..."
 (
     cd vectorizer-proxy
     if command -v conda &> /dev/null; then
@@ -45,9 +28,6 @@ echo "[2/3] Starting Python Vectorizer on port 8080..."
             conda activate torch-env 2>/dev/null || true
         fi
     fi
-    # if [ -f "venv/bin/activate" ]; then
-    #     source venv/bin/activate
-    # fi
     uvicorn app:app --host 0.0.0.0 --port 8080
 ) &
 VECTORIZER_PID=$!
@@ -63,7 +43,29 @@ for i in $(seq 1 30); do
         echo "    ERROR: Vectorizer process died."
         exit 1
     fi
+    if [ "$i" -eq 30 ]; then
+        echo "    ERROR: Vectorizer did not become ready in time."
+        exit 1
+    fi
     sleep 1
+done
+
+# 2. Start Weaviate in Docker (after vectorizer is up so it can connect immediately)
+echo "[2/3] Starting Weaviate in Docker..."
+docker compose up -d
+
+# Wait for Weaviate to become healthy
+echo "    Waiting for Weaviate to be ready..."
+for i in $(seq 1 60); do
+    if curl -s -o /dev/null http://localhost:8090/v1/.well-known/ready 2>/dev/null; then
+        echo "    Weaviate is ready!"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "    ERROR: Weaviate did not become ready in time."
+        exit 1
+    fi
+    sleep 2
 done
 
 # 3. Start the Go server in the background
