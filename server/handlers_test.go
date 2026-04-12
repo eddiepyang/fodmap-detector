@@ -52,6 +52,10 @@ func (m *handlersTestSearcher) BatchUpsertFodmap(_ context.Context, _ map[string
 	return nil
 }
 
+func (m *handlersTestSearcher) BatchUpsert(_ context.Context, _ []search.IndexItem) error {
+	return nil
+}
+
 // ---- reviewsHandler (backed by data package, harder to mock fully) ----
 // reviewsHandler calls data.GetReviewsByBusiness directly, so we only test
 // the "missing business_id" path which doesn't touch the filesystem.

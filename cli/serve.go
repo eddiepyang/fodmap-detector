@@ -58,6 +58,7 @@ var serveCmd = &cobra.Command{
 			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
 		}
 		vectorizerURL := viper.GetString("vectorizer-url")
+		postgresSearch := viper.GetBool("postgres-search")
 		if jwtSecret == "" {
 			jwtSecret = os.Getenv("JWT_SECRET")
 		}
@@ -95,6 +96,8 @@ var serveCmd = &cobra.Command{
 			WeaviateHost:       weaviateHost,
 			WeaviateScheme:     weaviateScheme,
 			WeaviateAPIKey:     weaviateAPIKey,
+			PostgresSearch:     postgresSearch,
+			PostgresDSN:        postgresDSN,
 			GeminiAPIKey:       os.Getenv("GOOGLE_API_KEY"),
 			ChatModel:          chatModel,
 			FilterModel:        filterModel,
@@ -129,6 +132,7 @@ func init() {
 	serveCmd.Flags().String("db", "fodmap.db", "Path to the SQLite database for user storage")
 	serveCmd.Flags().String("store-type", "sqlite", "Store backend to use: sqlite or postgres")
 	serveCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if store-type is postgres)")
+	serveCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")

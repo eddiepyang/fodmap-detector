@@ -23,6 +23,7 @@ type Searcher interface {
 	EnsureSchema(ctx context.Context) error
 	EnsureFodmapSchema(ctx context.Context) error
 	BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error
+	BatchUpsert(ctx context.Context, items []search.IndexItem) error
 }
 
 type Server struct {
@@ -51,6 +52,8 @@ type Config struct {
 	PineconeAPIKey    string // optional
 	PineconeIndexHost string // optional (must start with https://)
 	VectorizerURL     string // required for Pinecone; optional otherwise
+	PostgresSearch    bool   // optional; if true, uses PostgreSQL for search
+	PostgresDSN       string // required if PostgresSearch is true
 
 	// Chat endpoint configuration.
 	GeminiAPIKey       string  // Gemini API key; omit to disable /chat
@@ -74,7 +77,15 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		jwtSecret:          cfg.JWTSecret,
 	}
 
-	if cfg.PineconeAPIKey != "" && cfg.PineconeIndexHost != "" {
+	if cfg.PostgresSearch && cfg.PostgresDSN != "" {
+		v := search.NewVectorizerClient(cfg.VectorizerURL)
+		sc, err := search.NewPostgresClient(cfg.PostgresDSN, v)
+		if err != nil {
+			return nil, fmt.Errorf("initializing postgres search client: %w", err)
+		}
+		s.searcher = sc
+		slog.Info("postgres (pgvector) search enabled")
+	} else if cfg.PineconeAPIKey != "" && cfg.PineconeIndexHost != "" {
 		v := search.NewVectorizerClient(cfg.VectorizerURL)
 		s.searcher = search.NewPineconeClient(cfg.PineconeAPIKey, cfg.PineconeIndexHost, v)
 		slog.Info("pinecone search enabled", "host", cfg.PineconeIndexHost)
