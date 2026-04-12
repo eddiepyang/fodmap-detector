@@ -75,7 +75,9 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO reviews (review_id, business_id, business_name, city, state, categories, stars, text, embedding) 
@@ -147,7 +149,9 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, embedding) 
