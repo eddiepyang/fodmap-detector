@@ -42,7 +42,13 @@ var serveCmd = &cobra.Command{
 		postgresDSN := viper.GetString("postgres-dsn")
 		jwtSecret := viper.GetString("jwt-secret")
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
+		if pineconeAPIKey == "" {
+			pineconeAPIKey = os.Getenv("PINECONE_API_KEY")
+		}
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
+		if pineconeIndexHost == "" {
+			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
+		}
 		vectorizerURL := viper.GetString("vectorizer-url")
 		if jwtSecret == "" {
 			jwtSecret = os.Getenv("JWT_SECRET")
