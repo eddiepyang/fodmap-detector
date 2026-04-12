@@ -2,8 +2,8 @@ services:
   weaviate:
     image: semitechnologies/weaviate:1.25.4
     ports:
-      - "8090:8080"
-      - "50051:50051"
+      - "127.0.0.1:8090:8080"
+      - "127.0.0.1:50051:50051"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
