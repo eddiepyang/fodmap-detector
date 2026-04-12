@@ -46,6 +46,8 @@ type Config struct {
 
 	// Search configuration.
 	WeaviateHost      string // optional; if empty, Weaviate is not used
+	WeaviateScheme    string // optional; e.g. "http" or "https"
+	WeaviateAPIKey    string // optional; for Weaviate Cloud (WCD)
 	PineconeAPIKey    string // optional
 	PineconeIndexHost string // optional (must start with https://)
 	VectorizerURL     string // required for Pinecone; optional otherwise
@@ -77,7 +79,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		s.searcher = search.NewPineconeClient(cfg.PineconeAPIKey, cfg.PineconeIndexHost, v)
 		slog.Info("pinecone search enabled", "host", cfg.PineconeIndexHost)
 	} else if cfg.WeaviateHost != "" {
-		sc, err := search.NewClient(cfg.WeaviateHost)
+		sc, err := search.NewClient(cfg.WeaviateHost, cfg.WeaviateScheme, cfg.WeaviateAPIKey)
 		if err != nil {
 			return nil, fmt.Errorf("initializing weaviate client: %w", err)
 		}

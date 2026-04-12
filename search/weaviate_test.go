@@ -11,6 +11,7 @@ import (
 
 	"fodmap/data"
 	"fodmap/data/schemas"
+
 	"github.com/weaviate/weaviate/entities/models"
 )
 
@@ -430,7 +431,7 @@ func TestClient_EnsureSchema(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	if err := client.EnsureSchema(context.Background()); err != nil {
 		t.Fatalf("EnsureSchema failed: %v", err)
@@ -456,7 +457,7 @@ func TestClient_BatchUpsert(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	items := []IndexItem{
 		{Review: schemas.Review{ReviewID: "r1"}},
@@ -486,7 +487,7 @@ func TestClient_GetBusinesses(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	res, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
 	if err != nil {
@@ -517,7 +518,7 @@ func TestClient_SearchFodmap(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	res, cert, err := client.SearchFodmap(context.Background(), "garlic")
 	if err != nil {
@@ -547,7 +548,7 @@ func TestClient_GetBusinesses_HybridQuery(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	_, err := client.GetBusinesses(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
 	if err != nil {
@@ -573,7 +574,7 @@ func TestClient_GetBusinesses_HybridAlphaValue(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	_, _ = client.GetBusinesses(context.Background(), "ramen", 5, SearchFilter{Alpha: 0.6})
 	if !strings.Contains(body, "0.6") {
@@ -598,7 +599,7 @@ func TestClient_GetBusinesses_NearTextFallback(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	// Alpha=0 (default zero value) → should use nearText
 	_, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
@@ -634,7 +635,7 @@ func TestClient_GetReviews_HybridQuery(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	_, err := client.GetReviews(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
 	if err != nil {
@@ -661,7 +662,7 @@ func TestClient_BatchUpsertFodmap(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	client, _ := NewClient(host)
+	client, _ := NewClient(host, "http", "")
 
 	items := map[string]data.FodmapEntry{
 		"garlic": {Level: "high"},

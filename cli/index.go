@@ -36,6 +36,8 @@ var indexCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(indexCmd)
 	indexCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
+	indexCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
+	indexCmd.Flags().String("weaviate-api-key", "", "Weaviate API Key (for Weaviate Cloud)")
 	indexCmd.Flags().Int("batch-size", 512, "Number of reviews per Weaviate batch")
 	indexCmd.Flags().Int("workers", 4, "Number of concurrent batch upload goroutines")
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
@@ -127,6 +129,14 @@ func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) 
 
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")
+	scheme := viper.GetString("weaviate-scheme")
+	if scheme == "" {
+		scheme = os.Getenv("WEAVIATE_SCHEME")
+	}
+	apiKey := viper.GetString("weaviate-api-key")
+	if apiKey == "" {
+		apiKey = os.Getenv("WEAVIATE_API_KEY")
+	}
 	batchSize := viper.GetInt("batch-size")
 	numWorkers := viper.GetInt("workers")
 	archivePath := viper.GetString("archive")
@@ -149,7 +159,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	client, err := search.NewClient(host)
+	client, err := search.NewClient(host, scheme, apiKey)
 	if err != nil {
 		return fmt.Errorf("weaviate client: %w", err)
 	}
