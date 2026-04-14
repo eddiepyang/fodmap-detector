@@ -210,6 +210,29 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 }
 
 // BatchUpsertFodmap vectorizes and uploads FODMAP data to Pinecone.
+func (c *PineconeClient) BatchUpsert(ctx context.Context, items []IndexItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	var pineconeVectors []map[string]any
+	for _, item := range items {
+		pineconeVectors = append(pineconeVectors, map[string]any{
+			"id":     item.Review.ReviewID,
+			"values": item.Vector,
+			"metadata": map[string]any{
+				"business_id":   item.Review.BusinessID,
+				"business_name": item.BusinessName,
+				"city":          item.City,
+				"state":         item.State,
+				"categories":    item.Categories,
+				"stars":         item.Review.Stars,
+				"text":          item.Review.Text,
+			},
+		})
+	}
+	return c.doUpsert(ctx, pineconeVectors, pineconeReviewNamespace)
+}
+
 func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	if len(items) == 0 {
 		return nil

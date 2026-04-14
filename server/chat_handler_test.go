@@ -169,6 +169,10 @@ func (m *chatMockSearcher) BatchUpsertFodmap(ctx context.Context, items map[stri
 	return nil
 }
 
+func (m *chatMockSearcher) BatchUpsert(ctx context.Context, items []search.IndexItem) error {
+	return nil
+}
+
 // ---- messagesToContent ----
 
 func TestMessagesToContent_TextMessages(t *testing.T) {

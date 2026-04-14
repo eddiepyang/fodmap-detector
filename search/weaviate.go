@@ -17,6 +17,7 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/google/uuid"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
+	"github.com/weaviate/weaviate-go-client/v4/weaviate/auth"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/fault"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/filters"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/graphql"
@@ -91,13 +92,19 @@ type RankedReview struct {
 }
 
 // NewClient creates a Weaviate client connected to the given host (e.g. "localhost:8090").
-func NewClient(host string) (*Client, error) {
+func NewClient(host, scheme, apiKey string) (*Client, error) {
+	if scheme == "" {
+		scheme = "http"
+	}
 	cfg := weaviate.Config{
 		Host:   host,
-		Scheme: "http",
+		Scheme: scheme,
 		ConnectionClient: &http.Client{
 			Timeout: 5 * time.Minute,
 		},
+	}
+	if apiKey != "" {
+		cfg.AuthConfig = auth.ApiKey{Value: apiKey}
 	}
 	wv, err := weaviate.NewClient(cfg)
 	if err != nil {
