@@ -9,6 +9,7 @@ import (
 	"fodmap/data"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -174,7 +175,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 			return fmt.Errorf("vectorize %q: %w", name, err)
 		}
 
-		if _, err := stmt.ExecContext(ctx, name, entry.Level, entry.Groups, entry.Notes, pgvector.NewVector(vec)); err != nil {
+		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pgvector.NewVector(vec)); err != nil {
 			return fmt.Errorf("insert fodmap %q: %w", name, err)
 		}
 	}
@@ -352,7 +353,7 @@ func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int
 		// Use ANY for array check
 		whereClauses = append(whereClauses, fmt.Sprintf("review_id = ANY($%d)", argID))
 		// pq/pgx allows passing []string to ANY
-		args = append(args, filter.ReviewIDs)
+		args = append(args, pq.Array(filter.ReviewIDs))
 		argID++
 	}
 
