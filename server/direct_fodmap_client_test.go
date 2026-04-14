@@ -16,32 +16,27 @@ type MockSearcher struct {
 }
 
 func (m *MockSearcher) GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
-	return search.SearchResult{}, nil
+	return search.SearchResult{}, m.Err
 }
-
 func (m *MockSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
-	return search.SearchReviews{}, nil
+	return search.SearchReviews{}, m.Err
 }
-
 func (m *MockSearcher) SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error) {
-	if m.Err != nil {
-		return search.FodmapResult{}, 0, m.Err
-	}
 	if m.FodmapResult != nil {
-		return *m.FodmapResult, 0, nil
+		return *m.FodmapResult, 1.0, m.Err
 	}
-	return search.FodmapResult{}, 0, nil
+	return search.FodmapResult{}, 0, m.Err
 }
-
 func (m *MockSearcher) EnsureSchema(ctx context.Context) error {
 	return nil
 }
-
 func (m *MockSearcher) EnsureFodmapSchema(ctx context.Context) error {
 	return nil
 }
-
-func (m *MockSearcher) BatchUpsertFodmap(ctx context.Context, _ map[string]data.FodmapEntry) error {
+func (m *MockSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
+	return m.Err
+}
+func (m *MockSearcher) BatchUpsert(ctx context.Context, items []search.IndexItem) error {
 	return m.Err
 }
 

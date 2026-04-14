@@ -41,9 +41,24 @@ var serveCmd = &cobra.Command{
 		storeType := viper.GetString("store-type")
 		postgresDSN := viper.GetString("postgres-dsn")
 		jwtSecret := viper.GetString("jwt-secret")
+		weaviateScheme := viper.GetString("weaviate-scheme")
+		if weaviateScheme == "" {
+			weaviateScheme = os.Getenv("WEAVIATE_SCHEME")
+		}
+		weaviateAPIKey := viper.GetString("weaviate-api-key")
+		if weaviateAPIKey == "" {
+			weaviateAPIKey = os.Getenv("WEAVIATE_API_KEY")
+		}
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
+		if pineconeAPIKey == "" {
+			pineconeAPIKey = os.Getenv("PINECONE_API_KEY")
+		}
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
+		if pineconeIndexHost == "" {
+			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
+		}
 		vectorizerURL := viper.GetString("vectorizer-url")
+		postgresSearch := viper.GetBool("postgres-search")
 		if jwtSecret == "" {
 			jwtSecret = os.Getenv("JWT_SECRET")
 		}
@@ -79,6 +94,10 @@ var serveCmd = &cobra.Command{
 		srv, err := server.New(context.Background(), server.Config{
 			Port:               port,
 			WeaviateHost:       weaviateHost,
+			WeaviateScheme:     weaviateScheme,
+			WeaviateAPIKey:     weaviateAPIKey,
+			PostgresSearch:     postgresSearch,
+			PostgresDSN:        postgresDSN,
 			GeminiAPIKey:       os.Getenv("GOOGLE_API_KEY"),
 			ChatModel:          chatModel,
 			FilterModel:        filterModel,
@@ -104,6 +123,8 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().IntP("port", "p", 8081, "Port to listen on")
 	serveCmd.Flags().String("weaviate", "", "Weaviate host:port (e.g. localhost:8090); omit to disable search")
+	serveCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
+	serveCmd.Flags().String("weaviate-api-key", "", "Weaviate API Key (for Weaviate Cloud)")
 	serveCmd.Flags().String("chat-api-key", "", "Bearer token for /chat endpoint; omit to disable chat")
 	serveCmd.Flags().String("chat-model", "gemini-3-flash-preview", "Gemini model ID for chat sessions")
 	serveCmd.Flags().String("filter-model", "gemini-3.1-flash-lite-preview", "Gemini model ID for topic filtering")
@@ -111,6 +132,7 @@ func init() {
 	serveCmd.Flags().String("db", "fodmap.db", "Path to the SQLite database for user storage")
 	serveCmd.Flags().String("store-type", "sqlite", "Store backend to use: sqlite or postgres")
 	serveCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if store-type is postgres)")
+	serveCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")

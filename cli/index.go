@@ -22,6 +22,7 @@ import (
 	"fodmap/data"
 	"fodmap/data/schemas"
 	"fodmap/search"
+	"fodmap/server"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -36,6 +37,8 @@ var indexCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(indexCmd)
 	indexCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
+	indexCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
+	indexCmd.Flags().String("weaviate-api-key", "", "Weaviate API Key (for Weaviate Cloud)")
 	indexCmd.Flags().Int("batch-size", 512, "Number of reviews per Weaviate batch")
 	indexCmd.Flags().Int("workers", 4, "Number of concurrent batch upload goroutines")
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
@@ -43,6 +46,10 @@ func init() {
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
 	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes")
 	indexCmd.Flags().String("filter-city", "", "Filter reviews by city")
+	indexCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
+	indexCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if postgres-search is true)")
+	indexCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
+	indexCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
 }
 
 var vectorizerHTTPClient = &http.Client{Timeout: 5 * time.Minute}
@@ -127,6 +134,14 @@ func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) 
 
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")
+	scheme := viper.GetString("weaviate-scheme")
+	if scheme == "" {
+		scheme = os.Getenv("WEAVIATE_SCHEME")
+	}
+	apiKey := viper.GetString("weaviate-api-key")
+	if apiKey == "" {
+		apiKey = os.Getenv("WEAVIATE_API_KEY")
+	}
 	batchSize := viper.GetInt("batch-size")
 	numWorkers := viper.GetInt("workers")
 	archivePath := viper.GetString("archive")
@@ -143,15 +158,34 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("workers must be greater than 0")
 	}
 
+	postgresSearch := viper.GetBool("postgres-search")
+	postgresDSN := viper.GetString("postgres-dsn")
+	pineconeAPIKey := viper.GetString("pinecone-api-key")
+	pineconeIndexHost := viper.GetString("pinecone-index-host")
+
 	if vectorizerHost != "" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
 			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
 		}
 	}
 
-	client, err := search.NewClient(host)
-	if err != nil {
-		return fmt.Errorf("weaviate client: %w", err)
+	var client server.Searcher
+	if postgresSearch && postgresDSN != "" {
+		v := search.NewVectorizerClient(vectorizerHost)
+		sc, err := search.NewPostgresClient(postgresDSN, v)
+		if err != nil {
+			return fmt.Errorf("postgres client: %w", err)
+		}
+		client = sc
+	} else if pineconeAPIKey != "" && pineconeIndexHost != "" {
+		v := search.NewVectorizerClient(vectorizerHost)
+		client = search.NewPineconeClient(pineconeAPIKey, pineconeIndexHost, v)
+	} else {
+		sc, err := search.NewClient(host, scheme, apiKey)
+		if err != nil {
+			return fmt.Errorf("weaviate client: %w", err)
+		}
+		client = sc
 	}
 
 	if err := client.EnsureSchema(ctx); err != nil {
