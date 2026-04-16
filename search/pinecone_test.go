@@ -12,16 +12,7 @@ import (
 
 func TestPineconeClient_SearchFodmap(t *testing.T) {
 	// 1. Mock Vectorizer
-	vecServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := json.NewEncoder(w).Encode(map[string]any{
-			"vector": []float32{0.1, 0.2, 0.3},
-		})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
 	// 2. Mock Pinecone
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +43,7 @@ func TestPineconeClient_SearchFodmap(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	res, score, err := client.SearchFodmap(context.Background(), "garlic")
 	if err != nil {
@@ -72,15 +63,7 @@ func TestPineconeClient_SearchFodmap(t *testing.T) {
 
 func TestPineconeClient_BatchUpsertFodmap(t *testing.T) {
 	// 1. Mock Vectorizer (Batch)
-	vecServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Mock binary response header (rows=1, dim=3)
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write([]byte{1, 0, 0, 0, 3, 0, 0, 0}) // LE rows=1, dim=3
-		// Mock float32 data
-		_, _ = w.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) // zeroes
-	}))
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.0, 0.0, 0.0}}
 
 	// 2. Mock Pinecone (Upsert)
 	var upsertedBody map[string]any
@@ -95,7 +78,7 @@ func TestPineconeClient_BatchUpsertFodmap(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	err := client.BatchUpsertFodmap(context.Background(), map[string]data.FodmapEntry{
 		"garlic": {Level: "high", Groups: []string{"fructans"}},
@@ -113,19 +96,13 @@ func TestPineconeClient_BatchUpsertFodmap(t *testing.T) {
 	}
 }
 
-// mockVecServer returns an httptest.Server that responds to /vectors with a static vector.
-func mockVecServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"vector": []float32{0.1, 0.2, 0.3},
-		})
-	}))
+// mockVecEmbedder returns a mockEmbedder that always returns a fixed vector.
+func mockVecEmbedder() *mockEmbedder {
+	return &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 }
 
 func TestPineconeClient_GetBusinesses(t *testing.T) {
-	vecServer := mockVecServer()
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		res := PineconeQueryResponse{
@@ -167,7 +144,7 @@ func TestPineconeClient_GetBusinesses(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	result, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
 	if err != nil {
@@ -189,9 +166,7 @@ func TestPineconeClient_GetBusinesses(t *testing.T) {
 }
 
 func TestPineconeClient_GetBusinesses_LimitRespected(t *testing.T) {
-	vecServer := mockVecServer()
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		res := PineconeQueryResponse{
@@ -209,7 +184,7 @@ func TestPineconeClient_GetBusinesses_LimitRespected(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	result, err := client.GetBusinesses(context.Background(), "food", 2, SearchFilter{})
 	if err != nil {
@@ -221,9 +196,7 @@ func TestPineconeClient_GetBusinesses_LimitRespected(t *testing.T) {
 }
 
 func TestPineconeClient_GetReviews(t *testing.T) {
-	vecServer := mockVecServer()
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		res := PineconeQueryResponse{
@@ -260,7 +233,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	result, err := client.GetReviews(context.Background(), "pizza", 10, SearchFilter{BusinessID: "biz-1"})
 	if err != nil {
@@ -279,16 +252,14 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 }
 
 func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
-	vecServer := mockVecServer()
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(PineconeQueryResponse{})
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	result, err := client.GetReviews(context.Background(), "xyz", 10, SearchFilter{})
 	if err != nil {
@@ -305,9 +276,7 @@ func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
 // Match B: low dense score (0.50) but text perfectly matches query.
 // With Alpha=0.0 (pure BM25), B should rank above A.
 func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
-	vecServer := mockVecServer()
-	defer vecServer.Close()
-	v := NewVectorizerClient(vecServer.URL)
+	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		res := PineconeQueryResponse{
@@ -344,7 +313,7 @@ func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
 	}))
 	defer pineServer.Close()
 
-	client := NewPineconeClient("test-key", pineServer.URL, v)
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	// Pure BM25 (alpha=0): B should rank above A because B's text matches "gluten free".
 	result, err := client.GetReviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 0.01})
