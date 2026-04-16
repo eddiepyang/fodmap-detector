@@ -20,9 +20,9 @@ jobs:
         run: go fmt ./...
         
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.11.3
+          version: v1.64.8
 
       - name: Test with coverage
         run: go test ./... -coverprofile=coverage.out

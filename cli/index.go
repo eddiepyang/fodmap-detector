@@ -1,17 +1,12 @@
 package cli
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"math"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -53,85 +48,6 @@ func init() {
 	indexCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
 }
 
-var vectorizerHTTPClient = &http.Client{Timeout: 5 * time.Minute}
-
-type batchRequest struct {
-	Texts []string `json:"texts"`
-}
-
-// decodeFloat32Vectors reads a binary stream of the form
-// [header (headerLen bytes of uint32 LE fields)][float32 LE data].
-// The first uint32 is the number of rows, the second is the dimension.
-// Returns the decoded vectors as a slice of []float32.
-func decodeFloat32Vectors(r io.Reader, header []byte) ([][]float32, error) {
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
-	}
-	rows := binary.LittleEndian.Uint32(header[:4])
-	dim := binary.LittleEndian.Uint32(header[4:8])
-
-	raw := make([]byte, rows*dim*4)
-	if _, err := io.ReadFull(r, raw); err != nil {
-		return nil, fmt.Errorf("read vectors: %w", err)
-	}
-
-	vectors := make([][]float32, rows)
-	for i := range vectors {
-		vec := make([]float32, dim)
-		off := i * int(dim) * 4
-		for j := range vec {
-			vec[j] = math.Float32frombits(binary.LittleEndian.Uint32(raw[off+j*4:]))
-		}
-		vectors[i] = vec
-	}
-	return vectors, nil
-}
-
-// vectorizeBatch sends all texts in a single HTTP request to the vectorizer's
-// batch endpoint, which runs one model.encode() GPU pass for the entire batch.
-func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) error {
-	texts := make([]string, len(items))
-	for i, item := range items {
-		texts[i] = item.Review.Text
-	}
-
-	body, err := json.Marshal(batchRequest{Texts: texts})
-	if err != nil {
-		return fmt.Errorf("marshal batch request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://"+host+"/vectors/batch", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := vectorizerHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("vectorize batch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode > 399 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("vectorizer status %d: %s", resp.StatusCode, errBody)
-	}
-
-	var header [8]byte
-	vectors, err := decodeFloat32Vectors(resp.Body, header[:])
-	if err != nil {
-		return fmt.Errorf("decode vectors: %w", err)
-	}
-	if len(vectors) != len(items) {
-		return fmt.Errorf("vectorizer returned %d vectors, expected %d", len(vectors), len(items))
-	}
-
-	for i, vec := range vectors {
-		items[i].Vector = vec
-	}
-	return nil
-}
 
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")

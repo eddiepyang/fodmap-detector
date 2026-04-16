@@ -34,7 +34,7 @@ Project-level rules for this codebase.
 ## Testing
 
 - Always use Test-Driven Development (TDD). Write tests before writing the implementation.
-- Running the golang linter is not optional. It is now bound to the `make test` pipeline.
+- Running the golang linter is not optional. It is now bound to the `make test` pipeline. (install: `GOTOOLCHAIN=go1.26.2 go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8`)
 - **Always run `make test`** instead of relying on raw `go test ./...` in isolation, this guarantees local `golangci-lint` passes before regressions are accepted. You should enforce this local rule.
 - Do not mock — use stub types that implement interfaces (see `integration/handlers_test.go` for the pattern)
 - Always write tests for new functionality — every new exported function, HTTP handler, or CLI helper must have accompanying tests in a `_test.go` file in the same package
