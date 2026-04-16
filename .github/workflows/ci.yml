@@ -21,8 +21,11 @@ jobs:
         
       - name: Lint
         uses: golangci/golangci-lint-action@v6
+        env:
+          GOTOOLCHAIN: go1.26.2
         with:
-          version: v1.64.8
+          version: latest
+          install-mode: goinstall
 
       - name: Test with coverage
         run: go test ./... -coverprofile=coverage.out
