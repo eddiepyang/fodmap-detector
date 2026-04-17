@@ -8,6 +8,9 @@ vendor
 *.db
 *.pyc
 fodmap
+coverage*
+coverage.*
+*.out
 
 # Jupyter notebooks
 *.ipynb
