@@ -8,35 +8,30 @@ import (
 	"fodmap/data"
 	"fodmap/data/schemas"
 
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
 )
 
-// mockVectorizer is a simple vectorizer client for testing purposes.
-
-// mockVectorizerServer creates an httptest.Server that returns a mock vector.
-func getMockVectorizerServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/vectors/batch":
-			// Mock batch response (not strictly needed right now, but good to have)
-			w.WriteHeader(http.StatusOK)
-		case "/vectors":
-			w.WriteHeader(http.StatusOK)
-			res := struct {
-				Vector []float32 `json:"vector"`
-			}{Vector: []float32{0.1, 0.2, 0.3}}
-			_ = json.NewEncoder(w).Encode(res)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+// mockEmbedder implements Embedder for testing.
+type mockEmbedder struct {
+	vec []float32
 }
+
+func (m *mockEmbedder) EmbedSingle(_ context.Context, _ string) ([]float32, error) {
+	return m.vec, nil
+}
+
+func (m *mockEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = m.vec
+	}
+	return result, nil
+}
+
+func (m *mockEmbedder) Close() error { return nil }
+
 
 func TestPostgresClient_EnsureSchema(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -46,8 +41,8 @@ func TestPostgresClient_EnsureSchema(t *testing.T) {
 	defer db.Close()
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: nil,
+		db:       db,
+		embedder: nil,
 	}
 
 	mock.ExpectExec("CREATE EXTENSION IF NOT EXISTS vector").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -72,8 +67,8 @@ func TestPostgresClient_EnsureFodmapSchema(t *testing.T) {
 	defer db.Close()
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: nil,
+		db:       db,
+		embedder: nil,
 	}
 
 	mock.ExpectExec("CREATE EXTENSION IF NOT EXISTS vector").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -98,8 +93,8 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 	defer db.Close()
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: nil,
+		db:       db,
+		embedder: nil,
 	}
 
 	items := []IndexItem{
@@ -151,13 +146,11 @@ func TestPostgresClient_BatchUpsertFodmap(t *testing.T) {
 	}
 	defer db.Close()
 
-	ts := getMockVectorizerServer()
-	defer ts.Close()
-	vecClient := NewVectorizerClient(ts.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: vecClient,
+		db:       db,
+		embedder: mockEmb,
 	}
 
 	items := map[string]data.FodmapEntry{
@@ -197,13 +190,11 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 	}
 	defer db.Close()
 
-	ts := getMockVectorizerServer()
-	defer ts.Close()
-	vecClient := NewVectorizerClient(ts.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: vecClient,
+		db:       db,
+		embedder: mockEmb,
 	}
 
 	mock.ExpectQuery("SELECT ingredient, level, groups, notes, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM fodmap_ingredients").
@@ -235,13 +226,11 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 	}
 	defer db.Close()
 
-	ts := getMockVectorizerServer()
-	defer ts.Close()
-	vecClient := NewVectorizerClient(ts.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: vecClient,
+		db:       db,
+		embedder: mockEmb,
 	}
 
 	mock.ExpectQuery("WITH top_reviews AS \\(").
@@ -274,13 +263,11 @@ func TestPostgresClient_GetReviews(t *testing.T) {
 	}
 	defer db.Close()
 
-	ts := getMockVectorizerServer()
-	defer ts.Close()
-	vecClient := NewVectorizerClient(ts.URL)
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
 	client := &PostgresClient{
-		db:         db,
-		vectorizer: vecClient,
+		db:       db,
+		embedder: mockEmb,
 	}
 
 	mock.ExpectQuery("SELECT review_id, business_id, business_name, city, state, text, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM reviews").

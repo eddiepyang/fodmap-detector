@@ -59,8 +59,11 @@ checkpoint: "index.checkpoint"
 # Skip this many reviews before indexing (overrides checkpoint)
 start-offset: 0
 
-# t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes
+# t2v-transformers host:port for HTTP vectorizer (fallback if no model-path)
 vectorizer: ""
+
+# Path to GGUF embedding model for in-process vectorization (e.g. models/nomic-embed-text-v1.5-Q8_0.gguf)
+model-path: ""
 
 # Filter reviews by city
 filter-city: ""

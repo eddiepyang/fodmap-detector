@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"fodmap/auth"
+	"fodmap/search"
 	"fodmap/server"
 
 	"github.com/spf13/cobra"
@@ -58,7 +59,23 @@ var serveCmd = &cobra.Command{
 			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
 		}
 		vectorizerURL := viper.GetString("vectorizer-url")
+		modelPath := viper.GetString("model-path")
 		postgresSearch := viper.GetBool("postgres-search")
+
+		// Create embedder: prefer in-process llama-go, fall back to HTTP vectorizer.
+		var embedder search.Embedder
+		if modelPath != "" {
+			var err error
+			embedder, err = search.NewLlamaEmbedder(modelPath)
+			if err != nil {
+				return fmt.Errorf("loading embedding model: %w", err)
+			}
+			defer embedder.Close()
+			slog.Info("in-process embedder loaded", "model", modelPath)
+		} else if vectorizerURL != "" {
+			embedder = search.NewVectorizerClient(vectorizerURL)
+			slog.Info("using HTTP vectorizer", "url", vectorizerURL)
+		}
 		if jwtSecret == "" {
 			jwtSecret = os.Getenv("JWT_SECRET")
 		}
@@ -108,6 +125,7 @@ var serveCmd = &cobra.Command{
 			PineconeAPIKey:     pineconeAPIKey,
 			PineconeIndexHost:  pineconeIndexHost,
 			VectorizerURL:      vectorizerURL,
+			Embedder:           embedder,
 		})
 		if err != nil {
 			return fmt.Errorf("initializing server: %w", err)
@@ -136,7 +154,8 @@ func init() {
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
-	serveCmd.Flags().String("vectorizer-url", "http://localhost:8000", "Base URL for the vectorizer-proxy")
+	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy (fallback if no model-path)")
+	serveCmd.Flags().String("model-path", "", "Path to GGUF embedding model for in-process vectorization (e.g. models/nomic-embed-text-v1.5-Q8_0.gguf)")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 }

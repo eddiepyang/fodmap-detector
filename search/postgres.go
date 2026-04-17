@@ -15,12 +15,12 @@ import (
 
 // PostgresClient implements Searcher for PostgreSQL with pgvector.
 type PostgresClient struct {
-	db         *sql.DB
-	vectorizer *VectorizerClient
+	db       *sql.DB
+	embedder Embedder
 }
 
 // NewPostgresClient creates a new PostgresClient.
-func NewPostgresClient(dsn string, v *VectorizerClient) (*PostgresClient, error) {
+func NewPostgresClient(dsn string, e Embedder) (*PostgresClient, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PostgreSQL database: %w", err)
@@ -33,8 +33,8 @@ func NewPostgresClient(dsn string, v *VectorizerClient) (*PostgresClient, error)
 	}
 
 	return &PostgresClient{
-		db:         db,
-		vectorizer: v,
+		db:       db,
+		embedder: e,
 	}, nil
 }
 
@@ -51,7 +51,7 @@ func (c *PostgresClient) EnsureSchema(ctx context.Context) error {
 			categories TEXT,
 			stars FLOAT,
 			text TEXT,
-			embedding vector(384)
+			embedding vector(768)
 		);`,
 		// We use half-precision (if supported) or regular hnsw.
 		// `vector_cosine_ops` creates an index optimized for <=> cosine distance.
@@ -126,7 +126,7 @@ func (c *PostgresClient) EnsureFodmapSchema(ctx context.Context) error {
 			level TEXT,
 			groups TEXT[],
 			notes TEXT,
-			embedding vector(384)
+			embedding vector(768)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_fodmap_embedding ON fodmap_ingredients USING hnsw (embedding vector_cosine_ops);`,
 	}
@@ -170,7 +170,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 
 	for name, entry := range items {
 		// Vectorize the ingredient name
-		vec, err := c.vectorizer.VectorizeSingle(ctx, name)
+		vec, err := c.embedder.EmbedSingle(ctx, name)
 		if err != nil {
 			return fmt.Errorf("vectorize %q: %w", name, err)
 		}
@@ -185,7 +185,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 
 // SearchFodmap looks up an ingredient in the fodmap_ingredients table using cosine distance.
 func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
-	vec, err := c.vectorizer.VectorizeSingle(ctx, ingredient)
+	vec, err := c.embedder.EmbedSingle(ctx, ingredient)
 	if err != nil {
 		return FodmapResult{}, 0, fmt.Errorf("vectorize ingredient: %w", err)
 	}
@@ -245,7 +245,7 @@ func (a *pgxStringArray) Scan(src any) error {
 
 // GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
 func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
-	vec, err := c.vectorizer.VectorizeSingle(ctx, query)
+	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("vectorize query: %w", err)
 	}
@@ -325,7 +325,7 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 
 // GetReviews retrieves top reviews for a query, filtered by business if specified.
 func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
-	vec, err := c.vectorizer.VectorizeSingle(ctx, query)
+	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchReviews{}, fmt.Errorf("vectorize query: %w", err)
 	}

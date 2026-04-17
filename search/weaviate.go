@@ -32,7 +32,8 @@ const (
 
 // Client wraps the Weaviate client with domain-specific operations.
 type Client struct {
-	wv *weaviate.Client
+	wv       *weaviate.Client
+	embedder Embedder
 }
 
 // BusinessResult pairs a business ID with its human-readable name.
@@ -92,7 +93,7 @@ type RankedReview struct {
 }
 
 // NewClient creates a Weaviate client connected to the given host (e.g. "localhost:8090").
-func NewClient(host, scheme, apiKey string) (*Client, error) {
+func NewClient(host, scheme, apiKey string, embedder Embedder) (*Client, error) {
 	if scheme == "" {
 		scheme = "http"
 	}
@@ -110,7 +111,7 @@ func NewClient(host, scheme, apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("weaviate NewClient: %w", err)
 	}
-	return &Client{wv: wv}, nil
+	return &Client{wv: wv, embedder: embedder}, nil
 }
 
 // EnsureSchema creates the YelpReview collection if it does not already exist.
@@ -122,26 +123,17 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 		return nil
 	}
 
-	skip := map[string]any{
-		"text2vec-transformers": map[string]any{"skip": true},
-	}
 	class := &models.Class{
 		Class:      collectionName,
-		Vectorizer: "text2vec-transformers",
-		ModuleConfig: map[string]any{
-			"text2vec-transformers": map[string]any{
-				"vectorizeClassName": false,
-			},
-		},
+		Vectorizer: "none",
 		Properties: []*models.Property{
-			{Name: "reviewId", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "businessId", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "stars", DataType: []string{"number"}, ModuleConfig: skip},
-			{Name: "city", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "state", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "categories", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "businessName", DataType: []string{"text"}, ModuleConfig: skip},
-			// text is NOT skipped — this is the field that gets vectorized
+			{Name: "reviewId", DataType: []string{"text"}},
+			{Name: "businessId", DataType: []string{"text"}},
+			{Name: "stars", DataType: []string{"number"}},
+			{Name: "city", DataType: []string{"text"}},
+			{Name: "state", DataType: []string{"text"}},
+			{Name: "categories", DataType: []string{"text"}},
+			{Name: "businessName", DataType: []string{"text"}},
 			{Name: "text", DataType: []string{"text"}},
 		},
 	}
@@ -209,15 +201,24 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
+		vec, err := c.embedder.EmbedSingle(ctx, query)
+		if err != nil {
+			return SearchResult{}, fmt.Errorf("embedding query: %w", err)
+		}
 		hybrid := c.wv.GraphQL().HybridArgumentBuilder().
 			WithQuery(query).
+			WithVector(vec).
 			WithAlpha(filter.Alpha).
 			WithFusionType(graphql.RelativeScore)
 		getter = getter.WithHybrid(hybrid)
 		getter = getter.WithLimit(limit * 20)
 	} else if query != "" {
-		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
-		getter = getter.WithNearText(nearText)
+		vec, err := c.embedder.EmbedSingle(ctx, query)
+		if err != nil {
+			return SearchResult{}, fmt.Errorf("embedding query: %w", err)
+		}
+		nearVector := c.wv.GraphQL().NearVectorArgBuilder().WithVector(vec)
+		getter = getter.WithNearVector(nearVector)
 		getter = getter.WithLimit(limit * 20)
 	} else {
 		// If no query, we are likely fetching by specific ID or just getting top recent ones.
@@ -261,15 +262,24 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
+		vec, err := c.embedder.EmbedSingle(ctx, query)
+		if err != nil {
+			return SearchReviews{}, fmt.Errorf("embedding query: %w", err)
+		}
 		hybrid := c.wv.GraphQL().HybridArgumentBuilder().
 			WithQuery(query).
+			WithVector(vec).
 			WithAlpha(filter.Alpha).
 			WithFusionType(graphql.RelativeScore)
 		getter = getter.WithHybrid(hybrid)
 		getter = getter.WithLimit(limit * 20)
 	} else if query != "" {
-		nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{query})
-		getter = getter.WithNearText(nearText)
+		vec, err := c.embedder.EmbedSingle(ctx, query)
+		if err != nil {
+			return SearchReviews{}, fmt.Errorf("embedding query: %w", err)
+		}
+		nearVector := c.wv.GraphQL().NearVectorArgBuilder().WithVector(vec)
+		getter = getter.WithNearVector(nearVector)
 		getter = getter.WithLimit(limit * 20)
 	} else {
 		getter = getter.WithLimit(limit * 10)
@@ -543,22 +553,14 @@ func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
 		return nil
 	}
 
-	skip := map[string]any{
-		"text2vec-transformers": map[string]any{"skip": true},
-	}
 	class := &models.Class{
 		Class:      fodmapCollectionName,
-		Vectorizer: "text2vec-transformers",
-		ModuleConfig: map[string]any{
-			"text2vec-transformers": map[string]any{
-				"vectorizeClassName": false,
-			},
-		},
+		Vectorizer: "none",
 		Properties: []*models.Property{
 			{Name: "ingredient", DataType: []string{"text"}},
-			{Name: "level", DataType: []string{"text"}, ModuleConfig: skip},
-			{Name: "groups", DataType: []string{"text[]"}, ModuleConfig: skip},
-			{Name: "notes", DataType: []string{"text"}, ModuleConfig: skip},
+			{Name: "level", DataType: []string{"text"}},
+			{Name: "groups", DataType: []string{"text[]"}},
+			{Name: "notes", DataType: []string{"text"}},
 		},
 	}
 	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
@@ -568,13 +570,19 @@ func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
 }
 
 // BatchUpsertFodmap inserts or updates a batch of FODMAP ingredients in Weaviate.
+// Vectors are pre-computed using the embedder since the vectorizer is set to "none".
 func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	batcher := c.wv.Batch().ObjectsBatcher()
 	for name, entry := range items {
+		vec, err := c.embedder.EmbedSingle(ctx, "search_document: "+name)
+		if err != nil {
+			return fmt.Errorf("embedding fodmap %q: %w", name, err)
+		}
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("fodmap_"+name)).String()
 		batcher = batcher.WithObjects(&models.Object{
-			Class: fodmapCollectionName,
-			ID:    strfmt.UUID(id),
+			Class:  fodmapCollectionName,
+			ID:     strfmt.UUID(id),
+			Vector: models.C11yVector(vec),
 			Properties: map[string]any{
 				"ingredient": name,
 				"level":      entry.Level,
@@ -599,8 +607,13 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 	return nil
 }
 
-// SearchFodmap performs a nearText vector query on the FodmapIngredient collection.
+// SearchFodmap performs a nearVector query on the FodmapIngredient collection.
 func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
+	vec, err := c.embedder.EmbedSingle(ctx, ingredient)
+	if err != nil {
+		return FodmapResult{}, 0, fmt.Errorf("embedding ingredient: %w", err)
+	}
+
 	fields := []graphql.Field{
 		{Name: "ingredient"},
 		{Name: "level"},
@@ -609,12 +622,12 @@ func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapRes
 		{Name: "_additional { certainty }"},
 	}
 
-	nearText := c.wv.GraphQL().NearTextArgBuilder().WithConcepts([]string{ingredient})
+	nearVector := c.wv.GraphQL().NearVectorArgBuilder().WithVector(vec)
 
 	resp, err := c.wv.GraphQL().Get().
 		WithClassName(fodmapCollectionName).
 		WithFields(fields...).
-		WithNearText(nearText).
+		WithNearVector(nearVector).
 		WithLimit(1).
 		Do(ctx)
 

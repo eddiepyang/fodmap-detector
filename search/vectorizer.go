@@ -11,7 +11,12 @@ import (
 	"time"
 )
 
-// VectorizerClient communicates with the Python vectorizer-proxy.
+// Verify VectorizerClient implements Embedder at compile time.
+var _ Embedder = (*VectorizerClient)(nil)
+
+// VectorizerClient communicates with the Python vectorizer-proxy via HTTP.
+// It implements the Embedder interface as a fallback when in-process
+// embedding (LlamaEmbedder) is not available.
 type VectorizerClient struct {
 	BaseURL string
 	client  *http.Client
@@ -24,6 +29,19 @@ func NewVectorizerClient(baseURL string) *VectorizerClient {
 		client:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
+
+// EmbedSingle implements Embedder by delegating to the HTTP vectorizer.
+func (c *VectorizerClient) EmbedSingle(ctx context.Context, text string) ([]float32, error) {
+	return c.VectorizeSingle(ctx, text)
+}
+
+// EmbedBatch implements Embedder by delegating to the HTTP vectorizer.
+func (c *VectorizerClient) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return c.VectorizeBatch(ctx, texts)
+}
+
+// Close is a no-op for the HTTP client.
+func (c *VectorizerClient) Close() error { return nil }
 
 // VectorizeSingle converts a single text string into a vector.
 func (c *VectorizerClient) VectorizeSingle(ctx context.Context, text string) ([]float32, error) {
