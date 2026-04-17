@@ -1,17 +1,12 @@
 package cli
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"math"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -44,7 +39,8 @@ func init() {
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
-	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = Weaviate vectorizes")
+	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = use model-path")
+	indexCmd.Flags().String("model-path", "", "Path to GGUF embedding model for in-process vectorization")
 	indexCmd.Flags().String("filter-city", "", "Filter reviews by city")
 	indexCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
 	indexCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if postgres-search is true)")
@@ -52,85 +48,6 @@ func init() {
 	indexCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
 }
 
-var vectorizerHTTPClient = &http.Client{Timeout: 5 * time.Minute}
-
-type batchRequest struct {
-	Texts []string `json:"texts"`
-}
-
-// decodeFloat32Vectors reads a binary stream of the form
-// [header (headerLen bytes of uint32 LE fields)][float32 LE data].
-// The first uint32 is the number of rows, the second is the dimension.
-// Returns the decoded vectors as a slice of []float32.
-func decodeFloat32Vectors(r io.Reader, header []byte) ([][]float32, error) {
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
-	}
-	rows := binary.LittleEndian.Uint32(header[:4])
-	dim := binary.LittleEndian.Uint32(header[4:8])
-
-	raw := make([]byte, rows*dim*4)
-	if _, err := io.ReadFull(r, raw); err != nil {
-		return nil, fmt.Errorf("read vectors: %w", err)
-	}
-
-	vectors := make([][]float32, rows)
-	for i := range vectors {
-		vec := make([]float32, dim)
-		off := i * int(dim) * 4
-		for j := range vec {
-			vec[j] = math.Float32frombits(binary.LittleEndian.Uint32(raw[off+j*4:]))
-		}
-		vectors[i] = vec
-	}
-	return vectors, nil
-}
-
-// vectorizeBatch sends all texts in a single HTTP request to the vectorizer's
-// batch endpoint, which runs one model.encode() GPU pass for the entire batch.
-func vectorizeBatch(ctx context.Context, host string, items []search.IndexItem) error {
-	texts := make([]string, len(items))
-	for i, item := range items {
-		texts[i] = item.Review.Text
-	}
-
-	body, err := json.Marshal(batchRequest{Texts: texts})
-	if err != nil {
-		return fmt.Errorf("marshal batch request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://"+host+"/vectors/batch", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := vectorizerHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("vectorize batch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode > 399 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("vectorizer status %d: %s", resp.StatusCode, errBody)
-	}
-
-	var header [8]byte
-	vectors, err := decodeFloat32Vectors(resp.Body, header[:])
-	if err != nil {
-		return fmt.Errorf("decode vectors: %w", err)
-	}
-	if len(vectors) != len(items) {
-		return fmt.Errorf("vectorizer returned %d vectors, expected %d", len(vectors), len(items))
-	}
-
-	for i, vec := range vectors {
-		items[i].Vector = vec
-	}
-	return nil
-}
 
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")
@@ -148,6 +65,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	checkpointPath := viper.GetString("checkpoint")
 	startOffset := viper.GetInt("start-offset")
 	vectorizerHost := viper.GetString("vectorizer")
+	modelPath := viper.GetString("model-path")
 	filterCity := viper.GetString("filter-city")
 	ctx := context.Background()
 
@@ -163,25 +81,35 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	pineconeAPIKey := viper.GetString("pinecone-api-key")
 	pineconeIndexHost := viper.GetString("pinecone-index-host")
 
-	if vectorizerHost != "" {
+	// Create embedder: prefer in-process llama-go, fall back to HTTP vectorizer.
+	var embedder search.Embedder
+	if modelPath != "" {
+		var err error
+		embedder, err = search.NewLlamaEmbedder(modelPath)
+		if err != nil {
+			return fmt.Errorf("loading embedding model: %w", err)
+		}
+		defer embedder.Close()
+		slog.Info("in-process embedder loaded", "model", modelPath)
+	} else if vectorizerHost != "" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
 			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
 		}
+		embedder = search.NewVectorizerClient("http://" + vectorizerHost)
+		slog.Info("using HTTP vectorizer", "host", vectorizerHost)
 	}
 
 	var client server.Searcher
 	if postgresSearch && postgresDSN != "" {
-		v := search.NewVectorizerClient(vectorizerHost)
-		sc, err := search.NewPostgresClient(postgresDSN, v)
+		sc, err := search.NewPostgresClient(postgresDSN, embedder)
 		if err != nil {
 			return fmt.Errorf("postgres client: %w", err)
 		}
 		client = sc
 	} else if pineconeAPIKey != "" && pineconeIndexHost != "" {
-		v := search.NewVectorizerClient(vectorizerHost)
-		client = search.NewPineconeClient(pineconeAPIKey, pineconeIndexHost, v)
+		client = search.NewPineconeClient(pineconeAPIKey, pineconeIndexHost, embedder)
 	} else {
-		sc, err := search.NewClient(host, scheme, apiKey)
+		sc, err := search.NewClient(host, scheme, apiKey, embedder)
 		if err != nil {
 			return fmt.Errorf("weaviate client: %w", err)
 		}
@@ -301,18 +229,26 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 				if firstErr.Load() != nil {
 					continue
 				}
-				if vectorizerHost != "" {
+				if vectorizerHost != "" || modelPath != "" {
 					var err error
 					for attempt := 0; attempt < 5; attempt++ {
-						err = vectorizeBatch(ctx, vectorizerHost, batch)
+						texts := make([]string, len(batch))
+						for i, item := range batch {
+							texts[i] = "search_document: " + item.Review.Text
+						}
+						var vecs [][]float32
+						vecs, err = embedder.EmbedBatch(ctx, texts)
 						if err == nil {
+							for i, vec := range vecs {
+								batch[i].Vector = vec
+							}
 							break
 						}
-						slog.Warn("vectorize batch failed, retrying", "attempt", attempt+1, "error", err)
+						slog.Warn("embed batch failed, retrying", "attempt", attempt+1, "error", err)
 						time.Sleep(time.Duration(1<<attempt) * time.Second)
 					}
 					if err != nil {
-						e := fmt.Errorf("vectorize batch failed after 5 attempts: %w", err)
+						e := fmt.Errorf("embed batch failed after 5 attempts: %w", err)
 						firstErr.CompareAndSwap(nil, &e)
 						continue
 					}

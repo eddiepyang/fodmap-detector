@@ -21,19 +21,19 @@ const (
 
 // PineconeClient implements Searcher for Pinecone.
 type PineconeClient struct {
-	APIKey     string
-	IndexHost  string
-	Vectorizer *VectorizerClient
-	client     *http.Client
+	APIKey    string
+	IndexHost string
+	embedder  Embedder
+	client    *http.Client
 }
 
 // NewPineconeClient creates a new PineconeClient.
-func NewPineconeClient(apiKey, indexHost string, v *VectorizerClient) *PineconeClient {
+func NewPineconeClient(apiKey, indexHost string, e Embedder) *PineconeClient {
 	return &PineconeClient{
-		APIKey:     apiKey,
-		IndexHost:  indexHost,
-		Vectorizer: v,
-		client:     &http.Client{Timeout: 30 * time.Second},
+		APIKey:    apiKey,
+		IndexHost: indexHost,
+		embedder:  e,
+		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -58,7 +58,7 @@ func (c *PineconeClient) EnsureFodmapSchema(ctx context.Context) error {
 
 // GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
 func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
-	vec, err := c.Vectorizer.VectorizeSingle(ctx, query)
+	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("vectorizing query: %w", err)
 	}
@@ -117,7 +117,7 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 
 // GetReviews retrieves top reviews for a query, filtered by business if specified.
 func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
-	vec, err := c.Vectorizer.VectorizeSingle(ctx, query)
+	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchReviews{}, fmt.Errorf("vectorizing query: %w", err)
 	}
@@ -170,7 +170,7 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 
 // SearchFodmap looks up an ingredient in the fodmap-ingredients namespace.
 func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
-	vec, err := c.Vectorizer.VectorizeSingle(ctx, ingredient)
+	vec, err := c.embedder.EmbedSingle(ctx, ingredient)
 	if err != nil {
 		return FodmapResult{}, 0, fmt.Errorf("vectorizing query: %w", err)
 	}
@@ -243,7 +243,7 @@ func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string
 		texts = append(texts, name)
 	}
 
-	vectors, err := c.Vectorizer.VectorizeBatch(ctx, texts)
+	vectors, err := c.embedder.EmbedBatch(ctx, texts)
 	if err != nil {
 		return fmt.Errorf("batch vectorize: %w", err)
 	}
