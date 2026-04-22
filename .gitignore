@@ -22,3 +22,9 @@ coverage.*
 tmp/*
 saved_cities.txt
 models/
+
+# C++ built files
+*.o
+*.a
+*.so
+*.dylib
