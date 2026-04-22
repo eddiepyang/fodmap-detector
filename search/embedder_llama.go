@@ -26,9 +26,9 @@ type LlamaEmbedder struct {
 // Apple Silicon, CUDA on NVIDIA).
 func NewLlamaEmbedder(modelPath string) (*LlamaEmbedder, error) {
 	model, err := llama.LoadModel(modelPath,
-		llama.WithGPULayers(-1),     // offload all layers to GPU
-		llama.WithMMap(true),        // memory-map model file for efficiency
-		llama.WithSilentLoading(),   // suppress loading progress bar
+		llama.WithGPULayers(-1),   // offload all layers to GPU
+		llama.WithMMap(true),      // memory-map model file for efficiency
+		llama.WithSilentLoading(), // suppress loading progress bar
 	)
 	if err != nil {
 		return nil, fmt.Errorf("loading embedding model %q: %w", modelPath, err)
@@ -37,8 +37,10 @@ func NewLlamaEmbedder(modelPath string) (*LlamaEmbedder, error) {
 	e := &LlamaEmbedder{model: model}
 	e.pool.New = func() any {
 		ctx, err := model.NewContext(
-			llama.WithEmbeddings(), // enable embedding mode
+			llama.WithEmbeddings(),  // enable embedding mode
 			llama.WithContext(2048), // context size sufficient for single-doc embedding
+			llama.WithBatch(2048),   // batch size MUST match context size for BERT models!
+			llama.WithParallel(1),   // use full context for single document
 		)
 		if err != nil {
 			// Pool's New can't return error; we'll handle nil ctx in EmbedSingle.

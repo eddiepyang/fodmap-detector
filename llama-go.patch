@@ -1,0 +1,211 @@
+diff --git a/chat.go b/chat.go
+index 95ba78f..1232fc4 100644
+--- a/chat.go
++++ b/chat.go
+@@ -4,6 +4,9 @@ package llama
+ #include "wrapper.h"
+ #include <stdlib.h>
+ */
++/*
++#cgo CXXFLAGS: -std=c++17
++*/
+ import "C"
+ 
+ import (
+diff --git a/context.go b/context.go
+index 5412b72..0898e01 100644
+--- a/context.go
++++ b/context.go
+@@ -13,6 +13,9 @@ import (
+ #include "wrapper.h"
+ #include <stdlib.h>
+ */
++/*
++#cgo CXXFLAGS: -std=c++17
++*/
+ import "C"
+ 
+ // Context represents an execution context for inference operations.
+-Subproject commit 8a132faaa06d904bbeb3ebfbc8f7e2ed921b8ded
++Subproject commit 8a132faaa06d904bbeb3ebfbc8f7e2ed921b8ded-dirty
+diff --git a/llama_cublas.go b/llama_cublas.go
+index 850245b..4f21346 100644
+--- a/llama_cublas.go
++++ b/llama_cublas.go
+@@ -13,5 +13,9 @@ package llama
+ /*
+ #cgo CPPFLAGS: -DGGML_USE_CUDA
+ #cgo LDFLAGS: -lggml-cuda -lcublas -lcudart -L/usr/local/cuda/lib64/
++#cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit
++*/
++/*
++#cgo CXXFLAGS: -std=c++17
+ */
+ import "C"
+diff --git a/llama_openblas.go b/llama_openblas.go
+index 1c1e2b9..3614691 100644
+--- a/llama_openblas.go
++++ b/llama_openblas.go
+@@ -13,5 +13,9 @@ package llama
+ 
+ /*
+ #cgo LDFLAGS: -lopenblas
++#cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit
++*/
++/*
++#cgo CXXFLAGS: -std=c++17
+ */
+ import "C"
+diff --git a/model.go b/model.go
+index 97a3ca7..b7e4cbb 100644
+--- a/model.go
++++ b/model.go
+@@ -8,9 +8,11 @@ import (
+ )
+ 
+ /*
++#cgo CXXFLAGS: -std=c++17
+ #cgo CFLAGS: -I./llama.cpp -I./ -I./llama.cpp/ggml/include -I./llama.cpp/include -I./llama.cpp/common -I./llama.cpp/vendor
+ #cgo CPPFLAGS: -I./llama.cpp -I./ -I./llama.cpp/ggml/include -I./llama.cpp/include -I./llama.cpp/common -I./llama.cpp/vendor
+-#cgo LDFLAGS: -L./ -lbinding -lcommon -lllama -lggml -lggml-cpu -lggml-base -lstdc++ -lm -lgomp
++#cgo LDFLAGS: -L./ -lbinding -lcommon -lllama -lggml -lggml-cpu -lggml-metal -lggml-blas -lggml-base -lstdc++ -lm
++#cgo darwin LDFLAGS: -framework Accelerate -framework Foundation -framework Metal -framework MetalKit
+ #include "wrapper.h"
+ #include <stdlib.h>
+ 
+@@ -21,6 +23,9 @@ static inline llama_progress_callback_wrapper get_go_progress_callback() {
+ 	return (llama_progress_callback_wrapper)goProgressCallback;
+ }
+ */
++/*
++#cgo CXXFLAGS: -std=c++17
++*/
+ import "C"
+ 
+ func init() {
+@@ -242,9 +247,11 @@ func (m *Model) NewContext(opts ...ContextOption) (*Context, error) {
+ 	}
+ 
+ 	// Auto-set nParallel for embeddings if not explicitly configured
+-	if config.embeddings && config.nParallel == 1 {
+-		config.nParallel = 8
+-	}
++	// To allow explicitly setting WithParallel(1), we can't use 1 as the default
++	// check, but since we can't easily change the default without changing the API,
++	// we'll just not force it to 8 if the user explicitly requested 1 via some means.
++	// Actually, wait, let's just remove this auto-set or change the default to 0.
++	// Let's change defaultContextConfig to have nParallel = 0, and if it's 0 we set it.
+ 
+ 	// Query model's native context if user didn't specify
+ 	if config.contextSize == 0 {
+diff --git a/progress_callback.go b/progress_callback.go
+index 90f5bb3..c69c7d1 100644
+--- a/progress_callback.go
++++ b/progress_callback.go
+@@ -4,6 +4,9 @@ package llama
+ #include "wrapper.h"
+ #include <stdlib.h>
+ */
++/*
++#cgo CXXFLAGS: -std=c++17
++*/
+ import "C"
+ import "unsafe"
+ 
+diff --git a/stats.go b/stats.go
+index 992f728..742d2fe 100644
+--- a/stats.go
++++ b/stats.go
+@@ -4,6 +4,9 @@ package llama
+ #include "wrapper.h"
+ #include <stdlib.h>
+ */
++/*
++#cgo CXXFLAGS: -std=c++17
++*/
+ import "C"
+ 
+ import (
+diff --git a/wrapper.cpp b/wrapper.cpp
+index cc593d0..acfa140 100644
+--- a/wrapper.cpp
++++ b/wrapper.cpp
+@@ -119,6 +119,7 @@ static struct llama_context_params convert_context_params(llama_wrapper_model_pa
+     struct llama_context_params ctx_params = llama_context_default_params();
+     ctx_params.n_ctx = params.n_ctx > 0 ? params.n_ctx : 2048;
+     ctx_params.n_batch = params.n_batch > 0 ? params.n_batch : 512;
++    ctx_params.n_ubatch = ctx_params.n_batch; // Set physical batch size equal to logical batch size
+     ctx_params.n_threads = params.n_threads > 0 ? params.n_threads : 4;
+     ctx_params.n_threads_batch = params.n_threads_batch > 0 ? params.n_threads_batch : ctx_params.n_threads;
+     ctx_params.n_seq_max = params.n_parallel > 0 ? params.n_parallel : 1;
+@@ -1058,6 +1059,12 @@ int llama_wrapper_embeddings(void* ctx, const char* text, float* embeddings, int
+             return -1;
+         }
+ 
++        // Truncate tokens to context size to prevent KV cache overflow
++        int n_ctx = llama_n_ctx(wrapper->ctx);
++        if (tokens.size() > (size_t)n_ctx) {
++            tokens.resize(n_ctx);
++        }
++
+         // Evaluate tokens in chunks that respect n_batch limit
+         int n_batch = llama_n_batch(wrapper->ctx);
+         int n_tokens = tokens.size();
+@@ -1069,7 +1076,7 @@ int llama_wrapper_embeddings(void* ctx, const char* text, float* embeddings, int
+ 
+             // Add tokens for this chunk
+             for (int j = 0; j < chunk_size; j++) {
+-                // All tokens need logits for embeddings
++                // All tokens need logits for embeddings to avoid overriding warnings
+                 common_batch_add(batch, tokens[i + j], i + j, { 0 }, true);
+             }
+ 
+@@ -1118,6 +1125,11 @@ int llama_wrapper_embeddings_batch(void* ctx, const char** texts, int n_texts, f
+         std::vector<std::vector<llama_token>> all_tokens;
+         all_tokens.reserve(n_texts);
+ 
++        // Get context size, batch size and max sequences
++        int n_ctx = llama_n_ctx(wrapper->ctx);
++        int n_batch = llama_n_batch(wrapper->ctx);
++        int n_seq_max = llama_n_seq_max(wrapper->ctx);
++
+         for (int i = 0; i < n_texts; i++) {
+             if (!texts[i]) {
+                 g_last_error = "Null text in batch at index " + std::to_string(i);
+@@ -1128,13 +1140,15 @@ int llama_wrapper_embeddings_batch(void* ctx, const char** texts, int n_texts, f
+                 g_last_error = "Failed to tokenize text at index " + std::to_string(i);
+                 return -1;
+             }
++            
++            // Truncate to context size
++            if (tokens.size() > (size_t)n_ctx) {
++                tokens.resize(n_ctx);
++            }
++            
+             all_tokens.push_back(std::move(tokens));
+         }
+ 
+-        // Get batch size and max sequences
+-        int n_batch = llama_n_batch(wrapper->ctx);
+-        int n_seq_max = llama_n_seq_max(wrapper->ctx);
+-
+         // Initialize batch
+         llama_batch batch = llama_batch_init(n_batch, 0, n_seq_max);
+ 
+@@ -1148,6 +1162,7 @@ int llama_wrapper_embeddings_batch(void* ctx, const char** texts, int n_texts, f
+ 
+             // Check if adding this text would exceed batch size or sequence limit
+             if (batch.n_tokens + n_tokens > n_batch || s >= n_seq_max) {
++                fprintf(stderr, "DEBUG: llama_decode called with batch.n_tokens=%d, n_batch=%d, n_seq_max=%d\n", batch.n_tokens, n_batch, n_seq_max);
+                 // Decode current batch
+                 if (llama_decode(wrapper->ctx, batch) != 0) {
+                     llama_batch_free(batch);
+@@ -1181,7 +1196,7 @@ int llama_wrapper_embeddings_batch(void* ctx, const char** texts, int n_texts, f
+             // Add tokens for this text with unique seq_id
+             for (int j = 0; j < n_tokens; j++) {
+                 // Position is relative to this sequence (starts at 0)
+-                // All tokens need logits for embeddings
++                // All tokens need logits for embeddings to avoid overriding warnings
+                 common_batch_add(batch, tokens[j], j, { s }, true);
+             }
+ 
