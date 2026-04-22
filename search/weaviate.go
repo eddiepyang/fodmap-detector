@@ -201,6 +201,9 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
+		if c.embedder == nil {
+			return SearchResult{}, errors.New("embedder is not configured (required for hybrid search)")
+		}
 		vec, err := c.embedder.EmbedSingle(ctx, query)
 		if err != nil {
 			return SearchResult{}, fmt.Errorf("embedding query: %w", err)
@@ -213,6 +216,9 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		getter = getter.WithHybrid(hybrid)
 		getter = getter.WithLimit(limit * 20)
 	} else if query != "" {
+		if c.embedder == nil {
+			return SearchResult{}, errors.New("embedder is not configured (required for semantic search)")
+		}
 		vec, err := c.embedder.EmbedSingle(ctx, query)
 		if err != nil {
 			return SearchResult{}, fmt.Errorf("embedding query: %w", err)
@@ -262,6 +268,9 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
+		if c.embedder == nil {
+			return SearchReviews{}, errors.New("embedder is not configured (required for hybrid search)")
+		}
 		vec, err := c.embedder.EmbedSingle(ctx, query)
 		if err != nil {
 			return SearchReviews{}, fmt.Errorf("embedding query: %w", err)
@@ -274,6 +283,9 @@ func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter
 		getter = getter.WithHybrid(hybrid)
 		getter = getter.WithLimit(limit * 20)
 	} else if query != "" {
+		if c.embedder == nil {
+			return SearchReviews{}, errors.New("embedder is not configured (required for semantic search)")
+		}
 		vec, err := c.embedder.EmbedSingle(ctx, query)
 		if err != nil {
 			return SearchReviews{}, fmt.Errorf("embedding query: %w", err)
@@ -572,6 +584,9 @@ func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
 // BatchUpsertFodmap inserts or updates a batch of FODMAP ingredients in Weaviate.
 // Vectors are pre-computed using the embedder since the vectorizer is set to "none".
 func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
+	if c.embedder == nil {
+		return errors.New("embedder is not configured (required for fodmap ingredients)")
+	}
 	batcher := c.wv.Batch().ObjectsBatcher()
 	for name, entry := range items {
 		vec, err := c.embedder.EmbedSingle(ctx, "search_document: "+name)
@@ -609,6 +624,9 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 
 // SearchFodmap performs a nearVector query on the FodmapIngredient collection.
 func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
+	if c.embedder == nil {
+		return FodmapResult{}, 0, errors.New("embedder is not configured")
+	}
 	vec, err := c.embedder.EmbedSingle(ctx, ingredient)
 	if err != nil {
 		return FodmapResult{}, 0, fmt.Errorf("embedding ingredient: %w", err)

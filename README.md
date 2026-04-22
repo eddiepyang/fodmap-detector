@@ -22,7 +22,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
 | Vector search | [Weaviate](https://weaviate.io) (Local) or [Pinecone](https://pinecone.io) (Cloud) |
-| Embeddings | Locally-run transformers via Python proxy or internal Weaviate |
+| Embeddings | Ollama |
 
 ---
 
@@ -57,7 +57,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText/hybrid search
 │   ├── pinecone.go          # Pinecone client: REST-based query, upsert, BM25 re-ranking
 │   ├── bm25.go              # BM25 keyword scoring and score blending for hybrid search
-│   └── vectorizer.go        # Go client for the local embedding server (JSON/Binary)
+│   └── embedder_ollama.go   # Go client for Ollama embeddings API
 │
 ├── auth/
 │   ├── store.go             # Unified Store interface
@@ -169,47 +169,42 @@ The CLI performs validation on startup. For example:
 
 ### 1. Start Vector Search Infrastructure
 
-You must run Weaviate and the embedding vectorizer to enable semantic search. The setup differs depending on whether you want to use Mac Apple Silicon (Metal/MPS) or a Linux machine with an NVIDIA GPU.
+You must run Weaviate and Ollama to enable semantic search.
 
-*(Note: The chat app will gracefully fall back to BM25 keyword search if the vectorizer isn't running, meaning you only strictly need the python vectorizer for indexing or specialized semantic queries).*
+*(Note: The chat app will gracefully fall back to BM25 keyword search if the vectorizer isn't running, meaning you only strictly need Ollama for indexing or specialized semantic queries).*
 
-#### Option A: Native Vectorizer (Mac / Linux / CPU)
+#### Option A: Local Weaviate + Ollama (Recommended)
 
-The vectorizer must run natively to use GPU acceleration on macOS (Metal/MPS), and will similarly utilize CUDA natively on Linux if available. Weaviate runs in Docker and connects back to the host.
+1. **Start Ollama and Pull the Embedding Model:**
+   ```sh
+   ollama serve
+   ollama pull nomic-embed-text
+   ```
 
-1. **Start Weaviate in Docker:**
+2. **Start Weaviate in Docker:**
    ```sh
    docker compose up -d
    ```
-   This starts Weaviate on port `8090`. It reaches the vectorizer via `host.docker.internal:8080` (resolved automatically on macOS Docker Desktop; on Linux, `extra_hosts` in the compose file handles this).
 
-2. **Start the Vectorizer Natively:**
-   ```sh
-   cd vectorizer-proxy
-   conda activate torch-env   # or use a venv
-   pip install -r requirements.txt
-   uvicorn app:app --host 0.0.0.0 --port 8080
-   ```
-   The vectorizer auto-detects the best device: MPS on Apple Silicon, CUDA if available, otherwise CPU.
-
-3. **Or use `start.sh`** to launch everything (Weaviate + vectorizer + Go server) in one command:
+3. **Or use `start.sh`** to launch Weaviate and the Go server in one command (Ensure Ollama is running first):
    ```sh
    ./start.sh
    ```
 
-#### Option B: Pinecone (Cloud + Local Vectorizer)
+#### Option B: Pinecone (Cloud) + Ollama
 
-Pinecone is a managed vector database. Use this if you want to offload storage to the cloud while keeping embeddings local.
+Pinecone is a managed vector database. Use this if you want to offload storage to the cloud while keeping embeddings local via Ollama.
 
-1. **Start the Vectorizer (Native):**
-   Follow the steps in Option A to start the `vectorizer-proxy`.
+1. **Start Ollama:**
+   Follow the steps in Option A to start Ollama and pull the model.
 
 2. **Run with Pinecone Flags:**
    ```sh
    go run . serve \
      --pinecone-api-key YOUR_KEY \
      --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
-     --vectorizer-url http://localhost:8000
+     --ollama-url http://localhost:11434 \
+     --ollama-model nomic-embed-text
    ```
 
 ### 2. Index reviews into Weaviate
@@ -240,29 +235,17 @@ go run . index --checkpoint ""
 go run . index --start-offset 2155100
 ```
 
-#### GPU-accelerated indexing with `--vectorizer`
+#### GPU-accelerated indexing with Ollama
 
-By default, Weaviate handles vectorization internally: it calls the t2v-transformers sidecar once
-per object, sequentially. This means the GPU always receives a batch of one, leaving it heavily
-underutilized (~35% on typical hardware).
-
-Passing `--vectorizer` bypasses this and pre-vectorizes each batch directly from Go:
+By default, Weaviate handles vectorization internally using its own transformer. However, passing the Ollama flags bypasses this and pre-vectorizes each batch directly from Go using Ollama:
 
 ```sh
-go run . index --weaviate localhost:8090 --vectorizer localhost:8091
+go run . index --weaviate localhost:8090 --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
 ```
 
 **How it works:**
 
-For each batch, all review texts are sent to the transformer concurrently (one goroutine per text).
-The transformer is configured with `BATCH_WAIT_TIME_SECONDS=0.1` and `MAX_BATCH_SIZE=512`, so it
-accumulates the concurrent requests that arrive within 100 ms and runs them as a single GPU forward
-pass — giving the GPU a batch of up to 512 instead of 1. The resulting vectors are attached to the
-objects before they are sent to Weaviate. Weaviate detects that each object already has a vector
-and skips vectorization entirely — it never calls the transformer sidecar during import.
-
-Without `--vectorizer`, indexing still works correctly — Weaviate vectorizes each object itself.
-The flag only affects throughput, not correctness, so it can be omitted on CPU-only machines.
+For each batch, all review texts are sent to the embedder concurrently. The resulting vectors are attached to the objects before they are sent to Weaviate. Weaviate detects that each object already has a vector and skips vectorization entirely — it never calls the transformer sidecar during import.
 
 ### 3. Start the HTTP server
 
@@ -271,7 +254,7 @@ The flag only affects throughput, not correctness, so it can be omitted on CPU-o
 go run . serve --weaviate localhost:8090
 
 # With search enabled (Pinecone Cloud)
-go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --vectorizer-url http://localhost:8000
+go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
 
 # Without search (search endpoint returns 503)
 go run . serve
@@ -353,7 +336,8 @@ go run . index --weaviate localhost:8090
 | `--batch-size` | `512` | Reviews per batch |
 | `--workers` | `4` | Concurrent batch upload goroutines |
 | `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
-| `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization |
+| `--ollama-url` | `""` | Ollama server URL (e.g. `http://localhost:11434`) |
+| `--ollama-model` | `""` | Ollama embedding model (e.g. `nomic-embed-text`) |
 
 ##### Chat (interactive FODMAP/allergen agent)
 
