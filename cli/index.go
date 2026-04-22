@@ -216,7 +216,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 
 	// Stage 2: Parallel vectorizer workers
 	vWorkers := numWorkers
-	if vectorizerHost == "" {
+	if vectorizerHost == "" && (ollamaURL == "" || ollamaModel == "") {
 		vWorkers = 1 // If skip vectorization, single pass-through worker is fine
 	}
 	for range vWorkers {
