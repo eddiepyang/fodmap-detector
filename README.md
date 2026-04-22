@@ -22,7 +22,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
 | Vector search | [Weaviate](https://weaviate.io) (Local) or [Pinecone](https://pinecone.io) (Cloud) |
-| Embeddings | Locally-run transformers via Python proxy or internal Weaviate |
+| Embeddings | In-process native Go vectorizer via llama.cpp (llama-go) |
 
 ---
 
@@ -57,7 +57,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText/hybrid search
 │   ├── pinecone.go          # Pinecone client: REST-based query, upsert, BM25 re-ranking
 │   ├── bm25.go              # BM25 keyword scoring and score blending for hybrid search
-│   └── vectorizer.go        # Go client for the local embedding server (JSON/Binary)
+│   ├── embedder_llama.go    # Native Go in-process embedding generation via llama.cpp
+│   └── vectorizer.go        # HTTP client for external vectorizer APIs (fallback)
 │
 ├── auth/
 │   ├── store.go             # Unified Store interface
@@ -169,53 +170,50 @@ The CLI performs validation on startup. For example:
 
 ### 1. Start Vector Search Infrastructure
 
-You must run Weaviate and the embedding vectorizer to enable semantic search. The setup differs depending on whether you want to use Mac Apple Silicon (Metal/MPS) or a Linux machine with an NVIDIA GPU.
+You must run Weaviate to enable semantic search. The native Go vectorizer uses `llama-go` in-process, meaning embeddings are generated efficiently using hardware acceleration (Metal/MPS on macOS, CUDA on Linux) without needing an external Python service.
 
-*(Note: The chat app will gracefully fall back to BM25 keyword search if the vectorizer isn't running, meaning you only strictly need the python vectorizer for indexing or specialized semantic queries).*
+*(Note: The chat app will gracefully fall back to BM25 keyword search if vectorization is not configured).*
 
-#### Option A: Native Vectorizer (Mac / Linux / CPU)
+**Important Build Requirement:** Because `llama-go` relies on a C++ submodule (`llama.cpp`), you must build the C/C++ bindings locally before running the server for the first time. You will need `cmake` installed (e.g. `brew install cmake`).
 
-The vectorizer must run natively to use GPU acceleration on macOS (Metal/MPS), and will similarly utilize CUDA natively on Linux if available. Weaviate runs in Docker and connects back to the host.
+Run the setup command once:
+```sh
+make setup-llama
+```
+
+#### Option A: Local Weaviate + Native Vectorizer
+
+Weaviate runs in Docker, but all embeddings are generated natively in Go using `llama.cpp`.
 
 1. **Start Weaviate in Docker:**
    ```sh
    docker compose up -d
    ```
-   This starts Weaviate on port `8090`. It reaches the vectorizer via `host.docker.internal:8080` (resolved automatically on macOS Docker Desktop; on Linux, `extra_hosts` in the compose file handles this).
+   This starts Weaviate on port `8090`.
 
-2. **Start the Vectorizer Natively:**
-   ```sh
-   cd vectorizer-proxy
-   conda activate torch-env   # or use a venv
-   pip install -r requirements.txt
-   uvicorn app:app --host 0.0.0.0 --port 8080
-   ```
-   The vectorizer auto-detects the best device: MPS on Apple Silicon, CUDA if available, otherwise CPU.
-
-3. **Or use `start.sh`** to launch everything (Weaviate + vectorizer + Go server) in one command:
+2. **Or use `start.sh`** to launch everything (Weaviate + Go server) in one command:
    ```sh
    ./start.sh
    ```
 
-#### Option B: Pinecone (Cloud + Local Vectorizer)
+#### Option B: Pinecone (Cloud)
 
 Pinecone is a managed vector database. Use this if you want to offload storage to the cloud while keeping embeddings local.
 
-1. **Start the Vectorizer (Native):**
-   Follow the steps in Option A to start the `vectorizer-proxy`.
-
-2. **Run with Pinecone Flags:**
+1. **Run with Pinecone Flags:**
    ```sh
-   go run . serve \
+   go run -tags llamago . serve \
      --pinecone-api-key YOUR_KEY \
      --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
-     --vectorizer-url http://localhost:8000
+     --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
    ```
+
+*(On macOS, CGO flags for Metal acceleration are automatically applied via directives in the source code when building with the `-tags llamago` flag).*
 
 ### 2. Index reviews into Weaviate
 
 ```sh
-go run . index --weaviate localhost:8090
+go run -tags llamago . index --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 ```
 
 This reads the full Yelp archive, joins reviews with business metadata (city, state, categories),
@@ -225,53 +223,33 @@ an interrupted run resumes from where it left off rather than starting over.
 
 ```sh
 # Custom tuning
-go run . index --weaviate localhost:8090 --batch-size 1000 --workers 8
+go run -tags llamago . index --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf --batch-size 1000 --workers 8
 
 # Resume from a specific checkpoint file
-go run . index --checkpoint /tmp/my.checkpoint
+go run -tags llamago . index --checkpoint /tmp/my.checkpoint --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 
 # Point to a different archive
-go run . index --archive /data/yelp_dataset.tar
+go run -tags llamago . index --archive /data/yelp_dataset.tar --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 
 # Disable checkpointing
-go run . index --checkpoint ""
+go run -tags llamago . index --checkpoint "" --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 
 # Start from a known offset (e.g. after processing 2,155,100 reviews)
-go run . index --start-offset 2155100
+go run -tags llamago . index --start-offset 2155100 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 ```
 
-#### GPU-accelerated indexing with `--vectorizer`
+#### GPU-accelerated indexing
 
-By default, Weaviate handles vectorization internally: it calls the t2v-transformers sidecar once
-per object, sequentially. This means the GPU always receives a batch of one, leaving it heavily
-underutilized (~35% on typical hardware).
-
-Passing `--vectorizer` bypasses this and pre-vectorizes each batch directly from Go:
-
-```sh
-go run . index --weaviate localhost:8090 --vectorizer localhost:8091
-```
-
-**How it works:**
-
-For each batch, all review texts are sent to the transformer concurrently (one goroutine per text).
-The transformer is configured with `BATCH_WAIT_TIME_SECONDS=0.1` and `MAX_BATCH_SIZE=512`, so it
-accumulates the concurrent requests that arrive within 100 ms and runs them as a single GPU forward
-pass — giving the GPU a batch of up to 512 instead of 1. The resulting vectors are attached to the
-objects before they are sent to Weaviate. Weaviate detects that each object already has a vector
-and skips vectorization entirely — it never calls the transformer sidecar during import.
-
-Without `--vectorizer`, indexing still works correctly — Weaviate vectorizes each object itself.
-The flag only affects throughput, not correctness, so it can be omitted on CPU-only machines.
+Weaviate does not vectorize objects itself. Vectorization is performed in-process via the `llama-go` embedder by providing `--model-path`. For each batch, all review texts are generated concurrently using the local GGUF model, utilizing hardware acceleration (Metal/CUDA) directly.
 
 ### 3. Start the HTTP server
 
 ```sh
 # With search enabled (Weaviate local)
-go run . serve --weaviate localhost:8090
+go run -tags llamago . serve --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 
 # With search enabled (Pinecone Cloud)
-go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --vectorizer-url http://localhost:8000
+go run -tags llamago . serve --pinecone-api-key KEY --pinecone-index-host HOST --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 
 # Without search (search endpoint returns 503)
 go run . serve
@@ -344,7 +322,7 @@ go run .
 ##### Index (Weaviate)
 
 ```sh
-go run . index --weaviate localhost:8090
+go run -tags llamago . index --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 ```
 
 | Flag | Default | Description |
@@ -353,7 +331,7 @@ go run . index --weaviate localhost:8090
 | `--batch-size` | `512` | Reviews per batch |
 | `--workers` | `4` | Concurrent batch upload goroutines |
 | `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
-| `--vectorizer` | `""` | t2v-transformers host:port for direct pre-vectorization |
+| `--model-path` | `""` | Path to GGUF embedding model for in-process vectorization |
 
 ##### Chat (interactive FODMAP/allergen agent)
 

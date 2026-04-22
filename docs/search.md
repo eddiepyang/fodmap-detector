@@ -12,6 +12,7 @@ well their reviews match the query — optionally filtered by category, city, an
                           ┌─────────────────────────────┐
   GET /search/...    ───► │     Go HTTP Server           │
                           │  searchHandler               │
+                          │  (in-process llama-go)       │
                           └──────────┬──────────────────┘
                                      │
                   ┌──────────────────┴──────────────────┐
@@ -25,27 +26,22 @@ well their reviews match the query — optionally filtered by category, city, an
       ┌──────────▼──────────┐               ┌──────────▼──────────┐
       │  Weaviate           │               │  Pinecone (Cloud)   │
       │  Collection: Yelp   │               │  Namespace: yelp    │
-      └──────────┬──────────┘               └──────────▲──────────┘
-                 │                                     │
-      ┌──────────▼──────────┐               ┌──────────┴──────────┐
-      │  t2v-transformers    │ ◄──────────── │    vectorizer-proxy │
-      │  Inference Sidecar   │               │    (Python/FastAPI) │
       └─────────────────────┘               └─────────────────────┘
 ```
 
 **Data flow at index time:**
 1. `index` CLI command reads `archive.tar.gz` (reviews + business metadata)
 2. For each review, business metadata (`city`, `state`, `categories`) is joined in-memory
-3. Reviews are sent to Weaviate in batches of 100
-4. Weaviate calls the transformer sidecar to generate a vector for the `text` field
-5. Both the vector and metadata are stored in Weaviate
+3. The Go process generates embeddings in-memory via `llama-go`
+4. Both the vector and metadata are stored in Weaviate in batches
 
 **Data flow at query time:**
 1. `GET /search/<description>` arrives at the server
-2. Server calls Weaviate `nearText` with the query string (Weaviate embeds the query too)
-3. Top matching reviews are returned with `certainty` scores
-4. Server aggregates scores by `businessId` using Top-K average (see below)
-5. Top `limit` restaurant IDs are returned, ranked by aggregated score
+2. Server embeds the query locally via `llama-go`
+3. Server calls Weaviate or Pinecone with the raw query vector
+4. Top matching reviews are returned with scores
+5. Server aggregates scores by `businessId` using Top-K average (see below)
+6. Top `limit` restaurant IDs are returned, ranked by aggregated score
 
 ---
 
@@ -57,16 +53,10 @@ well their reviews match the query — optionally filtered by category, city, an
 ### Start Search Infrastructure
 
 #### Option A: Weaviate (Local)
-Run Weaviate and the transformers sidecar using `docker compose up -d`. Weaviate handles vectorization internally by calling the sidecar.
+Run Weaviate using `docker compose up -d`. Embeddings are generated locally using the `llama-go` embedder and passed directly to Weaviate.
 
 #### Option B: Pinecone (Cloud)
-Pinecone requires an external vectorizer. You must run the `vectorizer-proxy` (Python) to generate embeddings before sending them to Pinecone.
-
-**Vectorizer Proxy API:**
-- `POST /vectors` (JSON): Single string to vector.
-- `POST /vectors/batch` (Binary): Efficient multi-vector response.
-  - Returns `<II` (rows, dim) little-endian uint32 header.
-  - Followed by `float32` vector data.
+Pinecone requires client-side vectors, which are generated in-process using the same `llama-go` embedder before sending them to Pinecone.
 
 ---
 
@@ -76,7 +66,7 @@ Populate Weaviate from the Yelp archive. The command reads `./data/archive.tar.g
 and business data, and upserts to Weaviate in batches:
 
 ```bash
-go run . index --weaviate localhost:8090
+go run -tags llamago . index --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 ```
 
 Flags:
@@ -84,6 +74,7 @@ Flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
+| `--model-path` | `""` | Path to GGUF embedding model |
 | `--batch-size` | `100` | Reviews per Weaviate batch upsert |
 
 The command is **idempotent** — each review is assigned a deterministic UUID from its `review_id`,
@@ -141,7 +132,7 @@ curl "localhost:8080/search/romantic dinner candlelit?city=Las Vegas&state=NV"
 ### Server startup with search enabled
 
 ```bash
-go run . serve --weaviate localhost:8090
+go run -tags llamago . serve --weaviate localhost:8090 --model-path models/nomic-embed-text-v1.5.Q5_K_M.gguf
 ```
 
 If `--weaviate` is omitted, the server starts normally but `GET /search/<query>` returns `503 Service Unavailable`.
@@ -157,13 +148,14 @@ If `--weaviate` is omitted, the server starts normally but `GET /search/<query>`
 | `--weaviate` | `""` | Weaviate host:port |
 | `--pinecone-api-key` | `""` | Pinecone API key |
 | `--pinecone-index-host` | `""` | Pinecone host URL |
-| `--vectorizer-url` | `http://localhost:8000` | URL for the `vectorizer-proxy` |
+| `--model-path` | `""` | Path to GGUF embedding model |
 
 ### `index` flags
 
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
+| `--model-path` | `""` | Path to GGUF embedding model |
 | `--batch-size` | `100` | Reviews per batch |
 
 ---
@@ -203,68 +195,62 @@ Three approaches were considered for representing multi-review restaurants in We
 
 | Approach | Pros | Cons | Verdict |
 |---|---|---|---|
-| **One object per review** *(chosen)* | Works with auto-vectorizer, preserves review granularity | Requires client-side score aggregation | **Chosen** |
+| **One object per review** *(chosen)* | Cleanest mapping to dataset, preserves review-level signal and granularity | Requires client-side score aggregation | **Chosen** |
 | Concatenated profile | One object per restaurant; simpler query | Token limits hit for busy restaurants (1000+ reviews); loses review-level signal | Rejected |
-| Average embedding | True restaurant-level vector | Cannot use Weaviate auto-vectorizer — requires external embedding + manual averaging | Rejected |
+| Average embedding | True restaurant-level vector | Requires external embedding + manual averaging on every update | Rejected |
 
-The concatenated and average approaches both break Weaviate's built-in `text2vec-transformers`
-auto-vectorization, requiring a separate embedding pipeline. One-object-per-review is the only
+The concatenated and average approaches were initially evaluated, but one-object-per-review is the only
 approach that keeps the pipeline simple while still enabling restaurant-level ranking.
 
 ---
 
 ### Vector Database: Weaviate
 
-| Database | Built-in embedding | Filtering | Go client | Setup complexity | Notes |
-|---|---|---|---|---|---|
-| **Weaviate** *(chosen)* | Yes (`text2vec-transformers`) | Strong | Official | Medium (2 containers) | No-code embedding pipeline |
-| pgvector | No | Full SQL WHERE | `pgx` | Low (1 container) | Good for Postgres shops; structured + vector in one DB |
-| Qdrant | No | Strong (payload filters) | Official | Low (Rust, 1 container) | Best raw vector performance |
-| Milvus | No | Good | Official | High (etcd + MinIO) | Production scale; overkill for local dev |
-| Redis Stack | No | Moderate | Official | Low | Familiar ops; weaker vector quality |
-| In-memory (flat file) | No | Manual | None | None | Prototyping only; O(N) scan |
+| Database | Filtering | Go client | Setup complexity | Notes |
+|---|---|---|---|---|
+| **Weaviate** *(chosen)* | Strong | Official | Medium | Used as our primary backend |
+| pgvector | Full SQL WHERE | `pgx` | Low (1 container) | Good for Postgres shops; structured + vector in one DB |
+| Qdrant | Strong (payload filters) | Official | Low (Rust, 1 container) | Best raw vector performance |
+| Milvus | Good | Official | High (etcd + MinIO) | Production scale; overkill for local dev |
+| Redis Stack | Moderate | Official | Low | Familiar ops; weaker vector quality |
+| In-memory (flat file) | Manual | None | None | Prototyping only; O(N) scan |
 
-**Decision:** Weaviate's `text2vec-transformers` module is the decisive advantage for local-first development. It removes the need for explicit embedding code. 
+**Decision:** Weaviate is chosen for local development due to strong filtering capabilities and its robust REST/GraphQL APIs. 
 
-However, for managed cloud deployments, we now support **Pinecone**. Pinecone is better suited for production scale but requires client-side embedding, which we handle via the `vectorizer-proxy`.
+However, for managed cloud deployments, we now support **Pinecone**. Pinecone is better suited for production scale but requires client-side embedding, which we handle natively in the Go application.
 
 ---
 
-### Transformer Model: `multi-qa-MiniLM-L6-cos-v1`
+### Transformer Model: Nomic Embed Text v1.5
 
-Weaviate's `text2vec-transformers` module delegates to a separate inference container. Model options:
-
-| Model | Params | Download size | CPU speed | Quality | Best for |
-|---|---|---|---|---|---|
-| **multi-qa-MiniLM-L6-cos-v1** *(chosen)* | 22M | ~90 MB | Fast | Good | Asymmetric search: short query → long document |
-| all-MiniLM-L6-v2 | 22M | ~90 MB | Fast | Good | General sentence similarity; not search-tuned |
-| all-mpnet-base-v2 | 109M | ~420 MB | Moderate | Better | Higher quality; GPU recommended |
-| paraphrase-multilingual-mpnet-base-v2 | 278M | ~1.1 GB | Slow on CPU | Best + multilingual | Non-English reviews |
+We handle vectorization natively via `llama-go`.
 
 **Decision:** This service uses **asymmetric search** — a short query ("great tacos near downtown")
-is matched against long review documents. `multi-qa-MiniLM-L6-cos-v1` is specifically trained for
-this pattern (Multi-QA = question/query to document), unlike the `all-*` models which optimize for
-symmetric similarity (document to document). It also runs adequately on CPU at ~90 MB.
-
-To upgrade to higher quality, swap the image in `docker-compose.yml`:
-```yaml
-image: semitechnologies/transformers-inference:sentence-transformers-all-mpnet-base-v2
-```
-Note: `all-mpnet-base-v2` is ~5× larger and significantly slower on CPU — a GPU is recommended.
+is matched against long review documents. We use `nomic-embed-text-v1.5.Q5_K_M.gguf` because it provides excellent asymmetrical search quality with a relatively small footprint. It is loaded natively in-process via `llama.cpp`, which automatically offloads layers to available GPUs (Metal on Mac, CUDA on Linux) to accelerate embedding.
 
 ---
 
-### Vectorizer: Weaviate built-in vs external API
+### Vectorizer: Native Go In-Process vs External API
 
 | Option | Pros | Cons |
 |---|---|---|
-| **text2vec-transformers** *(chosen)* | Fully local, no API key, auto-vectorizes on insert | Extra Docker container; first-run model download |
-| Google Gemini embedding API | High quality, already integrated in codebase | API cost per embedding, rate limits, external dependency, requires manual embed-then-store code |
+| **llama-go (Native)** *(chosen)* | Fully local, no API key, high performance, uses native GPU, no external service required | Requires local model download (~800MB) |
+| Google Gemini embedding API | High quality, already integrated in codebase | API cost per embedding, rate limits, external dependency |
 | OpenAI embedding API | Industry standard, high quality | New API key required, cost, external dependency |
 
-**Decision:** `text2vec-transformers` keeps the entire pipeline local and removes the need for any
-explicit embedding code. The only trade-off is the extra Docker container and ~90 MB model download,
-which is a one-time cost.
+**Decision:** Using `llama-go` in-process keeps the entire pipeline local and eliminates IPC/HTTP overhead. The only trade-off is downloading the GGUF model once, but the single-binary deployment and native GPU acceleration make it the ideal choice.
+
+#### Compiling llama-go (macOS / CGO Notes)
+
+The migration to `llama-go` requires compiling the underlying `llama.cpp` C++ library using CGO. The compilation process had several platform-specific hurdles on macOS that are now automated by the `make setup-llama` target:
+
+1. **Missing `cmake`**: `llama.cpp` relies on CMake to generate its build files. You must install it (e.g., `brew install cmake`) before running the build.
+2. **Hardcoded `.so` vs `.dylib` extensions**: `llama-go`’s Makefile assumes it is running on Linux. When building shared libraries by default, it tries to copy `libllama.so` at the end of the build. However, on macOS, the compiler generates `libllama.dylib` files instead, causing the `make` script to crash.
+3. **Switching to Static Libraries (`.a`)**: To avoid the `.so` bug, the project's `Makefile` now passes `CMAKE_ARGS="-DBUILD_SHARED_LIBS=OFF"`. This forces `llama-go` to build static libraries (`.a` files), which are cross-platform compatible and preferable for Go binaries anyway.
+4. **Missing C++17 Standard Flag**: macOS’s Apple Clang defaults to an older C++ standard during CGO execution. Since `llama.cpp` requires `std::variant` (introduced in C++17), compiling it without explicit flags throws dozens of syntax errors. To fix this seamlessly for all users, `#cgo CXXFLAGS: -std=c++17` has been directly embedded into the `llama-go` Go source files.
+5. **Auto-linking Metal Frameworks**: In order to run the built embeddings on the GPU locally on Mac, it requires linking multiple Apple specific frameworks (`-framework Accelerate -framework Foundation -framework Metal -framework MetalKit`). To save developers from manually appending these `CGO_LDFLAGS` to every build command, they have been embedded directly in the `llama-go` source files utilizing the `darwin` constraint (`#cgo darwin LDFLAGS`), ensuring the project remains clean and entirely cross-platform.
+6. **Missing Static Libraries in the Root Folder**: After compiling the static libraries, the Go linker (`ld`) can fail with `Undefined symbols for architecture arm64: _ggml_backend_metal_reg`. This happens because `llama-go`'s Makefile compiles the Metal (`libggml-metal.a`) and BLAS (`libggml-blas.a`) static libraries, but neglects to copy them out of the `build/` folder.
+7. **The Final Fix**: To solve all of these issues, the `setup-llama` target in `fodmap-detector/Makefile` uses a `find` command to automatically extract and copy all generated `.a` files into the `llama-go` root directory. Once all libraries are present, `go build -tags llamago` successfully links them into the final binary.
 
 ---
 

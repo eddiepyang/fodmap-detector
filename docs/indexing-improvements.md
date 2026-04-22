@@ -110,7 +110,7 @@ To achieve maximum 100% saturation on modern hardware (like Apple M2 and desktop
 
 1. **Stage 0 (Disk Reader)**: The main thread linearly reads from the `.tar` archive as fast as the NVMe drive permits and pumps raw `[]byte` arrays into an enormous channel buffer.
 2. **Stage 1 (JSON Parsers)**: `N` independent workers pull from the channel, running `json.Unmarshal` simultaneously to bypass JSON parsing bottlenecks.
-3. **Stage 2 (Vectorize Proxies)**: `N` workers fire HTTP requests to the Python vectorizer backend concurrently. When running `uvicorn` with `--workers 4`, PyTorch processes all batches simultaneously in separate OS processes.
+3. **Stage 2 (In-Process Vectorization)**: `N` workers concurrently execute embedding generation within the Go process using `llama-go`. `llama.cpp` handles batching and GPU offloading internally, eliminating IPC and HTTP overhead.
 4. **Stage 3 (Uploaders)**: `N` workers push vectorized batches into Weaviate.
 
 ### Safe Rewind Checkpointing
