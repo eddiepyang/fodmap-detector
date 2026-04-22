@@ -58,3 +58,8 @@ Project-level rules for this codebase.
 ## Static Assets
 
 - Always use `//go:embed` for static text files, prompts, and templates instead of reading from disk with `os.ReadFile`. This bundles assets directly into the Go binary and guarantees they are present at deployment.
+
+## Documentation & Scripts
+
+- Always keep the `start.sh` script in working condition. If you make architectural changes, add new services, or change startup flags, you must update `start.sh` to reflect those changes.
+- Ensure `README.md` and any relevant files in the `docs/` folder are kept up-to-date with your changes. Always verify instructions and CLI flags remain accurate.

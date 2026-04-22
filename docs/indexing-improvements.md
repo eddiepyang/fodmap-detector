@@ -69,7 +69,7 @@ t2v-transformers:
             capabilities: [gpu]
 ```
 
-With GPU, the vectorizer is no longer the bottleneck — the concurrent workers change becomes more valuable (keeps the GPU fed). Estimated combined speedup: **8-15x** vs CPU-only sequential baseline. Not applicable on macOS/M2 (Docker's Linux VM blocks Metal/MPS access).
+With GPU, the vectorizer is no longer the bottleneck — the concurrent workers change becomes more valuable (keeps the GPU fed). Estimated combined speedup: **8-15x** vs CPU-only sequential baseline.
 
 ### Checkpoint / resume
 
@@ -104,13 +104,13 @@ Import grouping in `cli/index.go`: stdlib → project (`fodmap/...`) → third-p
 
 ## Update: V2 Massively Parallel Pipeline
 
-The initial concurrency improvements focused primarily on Weaviate uploads. However, profiling revealed that the pipeline was still bottlenecked by the sequential scanning and JSON parsing loop, as well as the PyTorch Global Interpreter Lock (GIL) in the single-process vectorizer.
+The initial concurrency improvements focused primarily on Weaviate uploads. However, profiling revealed that the pipeline was still bottlenecked by the sequential scanning and JSON parsing loop.
 
 To achieve maximum 100% saturation on modern hardware (like Apple M2 and desktop CPUs), the pipeline was completely overhauled into a **4-Stage Asynchronous Architecture**:
 
 1. **Stage 0 (Disk Reader)**: The main thread linearly reads from the `.tar` archive as fast as the NVMe drive permits and pumps raw `[]byte` arrays into an enormous channel buffer.
 2. **Stage 1 (JSON Parsers)**: `N` independent workers pull from the channel, running `json.Unmarshal` simultaneously to bypass JSON parsing bottlenecks.
-3. **Stage 2 (Vectorize Proxies)**: `N` workers fire HTTP requests to the Python vectorizer backend concurrently. When running `uvicorn` with `--workers 4`, PyTorch processes all batches simultaneously in separate OS processes.
+3. **Stage 2 (Embedders)**: `N` workers fire HTTP requests to Ollama concurrently. Ollama handles these requests and batches them efficiently on the GPU/CPU.
 4. **Stage 3 (Uploaders)**: `N` workers push vectorized batches into Weaviate.
 
 ### Safe Rewind Checkpointing

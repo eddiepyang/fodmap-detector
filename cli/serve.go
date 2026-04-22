@@ -59,19 +59,16 @@ var serveCmd = &cobra.Command{
 			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
 		}
 		vectorizerURL := viper.GetString("vectorizer-url")
-		modelPath := viper.GetString("model-path")
+		ollamaURL := viper.GetString("ollama-url")
+		ollamaModel := viper.GetString("ollama-model")
 		postgresSearch := viper.GetBool("postgres-search")
 
-		// Create embedder: prefer in-process llama-go, fall back to HTTP vectorizer.
+		// Create embedder: prefer Ollama, fall back to HTTP vectorizer.
 		var embedder search.Embedder
-		if modelPath != "" {
-			var err error
-			embedder, err = search.NewLlamaEmbedder(modelPath)
-			if err != nil {
-				return fmt.Errorf("loading embedding model: %w", err)
-			}
+		if ollamaURL != "" && ollamaModel != "" {
+			embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
 			defer embedder.Close()
-			slog.Info("in-process embedder loaded", "model", modelPath)
+			slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
 		} else if vectorizerURL != "" {
 			embedder = search.NewVectorizerClient(vectorizerURL)
 			slog.Info("using HTTP vectorizer", "url", vectorizerURL)
@@ -154,8 +151,9 @@ func init() {
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
-	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy (fallback if no model-path)")
-	serveCmd.Flags().String("model-path", "", "Path to GGUF embedding model for in-process vectorization (e.g. models/nomic-embed-text-v1.5-Q8_0.gguf)")
+	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy")
+	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
+	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 }

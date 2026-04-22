@@ -5,7 +5,9 @@ set -e
 cleanup() {
     echo ""
     echo "Shutting down..."
-    kill $VECTORIZER_PID 2>/dev/null || true
+    if [ -n "$OLLAMA_PID" ]; then
+        kill $OLLAMA_PID 2>/dev/null || true
+    fi
     kill $SERVER_PID 2>/dev/null || true
     pkill -f "fodmap-detector serve" 2>/dev/null || true
     wait 2>/dev/null
@@ -17,40 +19,38 @@ echo "======================================"
 echo " Starting FODMAP Detector Services"
 echo "======================================"
 
-# 1. Start the Python Vectorizer locally (auto-detects CUDA / MPS / CPU)
-# Must start before Weaviate — Weaviate blocks on the transformer API being ready.
-echo "[1/3] Starting Python Vectorizer on port 8080..."
-(
-    cd vectorizer-proxy
-    if command -v conda &> /dev/null; then
-        eval "$(conda shell.bash hook)"
-        if [[ -z "$CONDA_DEFAULT_ENV" || "$CONDA_DEFAULT_ENV" == "base" ]]; then
-            conda activate torch-env 2>/dev/null || true
+# 1. Start Ollama
+echo "[1/3] Starting Ollama server..."
+if curl -s -o /dev/null http://localhost:11434/api/tags 2>/dev/null; then
+    echo "    Ollama is already running."
+    OLLAMA_PID=""
+else
+    # Start Ollama in the background
+    OLLAMA_HOST="127.0.0.1" ollama serve > /dev/null 2>&1 &
+    OLLAMA_PID=$!
+    
+    echo "    Waiting for Ollama to be ready..."
+    for i in $(seq 1 30); do
+        if curl -s -o /dev/null http://localhost:11434/api/tags 2>/dev/null; then
+            echo "    Ollama is ready!"
+            break
         fi
-    fi
-    uvicorn app:app --host 0.0.0.0 --port 8080
-) &
-VECTORIZER_PID=$!
+        if ! kill -0 $OLLAMA_PID 2>/dev/null; then
+            echo "    ERROR: Ollama process died. Is it installed?"
+            exit 1
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "    ERROR: Ollama did not become ready in time."
+            exit 1
+        fi
+        sleep 1
+    done
+fi
 
-# Wait for the vectorizer to become healthy
-echo "    Waiting for vectorizer to be ready..."
-for i in $(seq 1 30); do
-    if curl -s -o /dev/null http://localhost:8080/.well-known/ready 2>/dev/null; then
-        echo "    Vectorizer is ready!"
-        break
-    fi
-    if ! kill -0 $VECTORIZER_PID 2>/dev/null; then
-        echo "    ERROR: Vectorizer process died."
-        exit 1
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "    ERROR: Vectorizer did not become ready in time."
-        exit 1
-    fi
-    sleep 1
-done
+echo "    Ensuring nomic-embed-text model is available..."
+ollama pull nomic-embed-text > /dev/null 2>&1 || echo "    Warning: failed to pull nomic-embed-text model"
 
-# 2. Start Weaviate in Docker (after vectorizer is up so it can connect immediately)
+# 2. Start Weaviate in Docker
 echo "[2/3] Starting Weaviate in Docker..."
 docker compose up -d
 
@@ -76,8 +76,8 @@ SERVER_PID=$!
 echo ""
 echo "======================================"
 echo " All services running!"
+echo "  Ollama:     localhost:11434"
 echo "  Weaviate:   localhost:8090"
-echo "  Vectorizer: localhost:8080"
 echo "  Go Server:  localhost:8081"
 echo ""
 echo " Run the chat app in another terminal:"
@@ -86,5 +86,5 @@ echo ""
 echo " Press Ctrl+C to stop all services."
 echo "======================================"
 
-# Wait for either background process to exit
+# Wait for background process to exit
 wait

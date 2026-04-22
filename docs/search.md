@@ -25,12 +25,8 @@ well their reviews match the query — optionally filtered by category, city, an
       ┌──────────▼──────────┐               ┌──────────▼──────────┐
       │  Weaviate           │               │  Pinecone (Cloud)   │
       │  Collection: Yelp   │               │  Namespace: yelp    │
-      └──────────┬──────────┘               └──────────▲──────────┘
-                 │                                     │
-      ┌──────────▼──────────┐               ┌──────────┴──────────┐
-      │  t2v-transformers    │ ◄──────────── │    vectorizer-proxy │
-      │  Inference Sidecar   │               │    (Python/FastAPI) │
       └─────────────────────┘               └─────────────────────┘
+                                            (Uses Ollama for Embeddings)
 ```
 
 **Data flow at index time:**
@@ -60,13 +56,7 @@ well their reviews match the query — optionally filtered by category, city, an
 Run Weaviate and the transformers sidecar using `docker compose up -d`. Weaviate handles vectorization internally by calling the sidecar.
 
 #### Option B: Pinecone (Cloud)
-Pinecone requires an external vectorizer. You must run the `vectorizer-proxy` (Python) to generate embeddings before sending them to Pinecone.
-
-**Vectorizer Proxy API:**
-- `POST /vectors` (JSON): Single string to vector.
-- `POST /vectors/batch` (Binary): Efficient multi-vector response.
-  - Returns `<II` (rows, dim) little-endian uint32 header.
-  - Followed by `float32` vector data.
+Pinecone requires an external vectorizer. You must run `ollama serve` and pass `--ollama-url` and `--ollama-model` to the Go server so it can generate embeddings via Ollama's API before sending them to Pinecone.
 
 ---
 
@@ -157,7 +147,8 @@ If `--weaviate` is omitted, the server starts normally but `GET /search/<query>`
 | `--weaviate` | `""` | Weaviate host:port |
 | `--pinecone-api-key` | `""` | Pinecone API key |
 | `--pinecone-index-host` | `""` | Pinecone host URL |
-| `--vectorizer-url` | `http://localhost:8000` | URL for the `vectorizer-proxy` |
+| `--ollama-url` | `""` | Ollama server URL (e.g. `http://localhost:11434`) |
+| `--ollama-model` | `""` | Ollama embedding model (e.g. `nomic-embed-text`) |
 
 ### `index` flags
 
@@ -226,7 +217,7 @@ approach that keeps the pipeline simple while still enabling restaurant-level ra
 
 **Decision:** Weaviate's `text2vec-transformers` module is the decisive advantage for local-first development. It removes the need for explicit embedding code. 
 
-However, for managed cloud deployments, we now support **Pinecone**. Pinecone is better suited for production scale but requires client-side embedding, which we handle via the `vectorizer-proxy`.
+However, for managed cloud deployments, we now support **Pinecone**. Pinecone is better suited for production scale but requires client-side embedding, which we handle via Ollama.
 
 ---
 
@@ -254,17 +245,15 @@ Note: `all-mpnet-base-v2` is ~5× larger and significantly slower on CPU — a G
 
 ---
 
-### Vectorizer: Weaviate built-in vs external API
+### Vectorizer: Ollama vs external API
 
 | Option | Pros | Cons |
 |---|---|---|
-| **text2vec-transformers** *(chosen)* | Fully local, no API key, auto-vectorizes on insert | Extra Docker container; first-run model download |
+| **Ollama** *(chosen)* | Fully local, no API key, very fast | Requires Ollama running in the background |
 | Google Gemini embedding API | High quality, already integrated in codebase | API cost per embedding, rate limits, external dependency, requires manual embed-then-store code |
 | OpenAI embedding API | Industry standard, high quality | New API key required, cost, external dependency |
 
-**Decision:** `text2vec-transformers` keeps the entire pipeline local and removes the need for any
-explicit embedding code. The only trade-off is the extra Docker container and ~90 MB model download,
-which is a one-time cost.
+**Decision:** `Ollama` keeps the entire pipeline local and provides incredible performance. We bypass Weaviate's auto-vectorizer to use Ollama directly for maximum batching throughput and model flexibility.
 
 ---
 

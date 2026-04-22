@@ -39,8 +39,9 @@ func init() {
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
-	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091); empty = use model-path")
-	indexCmd.Flags().String("model-path", "", "Path to GGUF embedding model for in-process vectorization")
+	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091)")
+	indexCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
+	indexCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 	indexCmd.Flags().String("filter-city", "", "Filter reviews by city")
 	indexCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
 	indexCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if postgres-search is true)")
@@ -65,7 +66,8 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	checkpointPath := viper.GetString("checkpoint")
 	startOffset := viper.GetInt("start-offset")
 	vectorizerHost := viper.GetString("vectorizer")
-	modelPath := viper.GetString("model-path")
+	ollamaURL := viper.GetString("ollama-url")
+	ollamaModel := viper.GetString("ollama-model")
 	filterCity := viper.GetString("filter-city")
 	ctx := context.Background()
 
@@ -81,16 +83,12 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	pineconeAPIKey := viper.GetString("pinecone-api-key")
 	pineconeIndexHost := viper.GetString("pinecone-index-host")
 
-	// Create embedder: prefer in-process llama-go, fall back to HTTP vectorizer.
+	// Create embedder: prefer Ollama, fall back to HTTP vectorizer.
 	var embedder search.Embedder
-	if modelPath != "" {
-		var err error
-		embedder, err = search.NewLlamaEmbedder(modelPath)
-		if err != nil {
-			return fmt.Errorf("loading embedding model: %w", err)
-		}
+	if ollamaURL != "" && ollamaModel != "" {
+		embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
 		defer embedder.Close()
-		slog.Info("in-process embedder loaded", "model", modelPath)
+		slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
 	} else if vectorizerHost != "" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
 			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
@@ -229,7 +227,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 				if firstErr.Load() != nil {
 					continue
 				}
-				if vectorizerHost != "" || modelPath != "" {
+				if vectorizerHost != "" || (ollamaURL != "" && ollamaModel != "") {
 					var err error
 					for attempt := 0; attempt < 5; attempt++ {
 						texts := make([]string, len(batch))
