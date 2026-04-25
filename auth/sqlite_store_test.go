@@ -82,4 +82,24 @@ func TestSQLiteStore(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when creating user with duplicate email")
 	}
+
+	// 7. Update status
+	err = store.UpdateUserStatus(ctx, user.ID, "deleted")
+	if err != nil {
+		t.Fatalf("UpdateUserStatus failed: %v", err)
+	}
+
+	gotDeleted, err := store.GetUserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID failed after update: %v", err)
+	}
+	if gotDeleted == nil || gotDeleted.Status != "deleted" {
+		t.Errorf("expected user status to be deleted, got %+v", gotDeleted)
+	}
+
+	// 8. Update non-existent user status
+	err = store.UpdateUserStatus(ctx, "nonexistent-id", "deleted")
+	if err == nil {
+		t.Error("expected error when updating status of non-existent user")
+	}
 }

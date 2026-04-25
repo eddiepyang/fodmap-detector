@@ -106,6 +106,39 @@ func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPostgresStore_UpdateUserStatus(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	id := "u1"
+	status := "deleted"
+
+	mock.ExpectExec("UPDATE users SET status = \\$1 WHERE id = \\$2").
+		WithArgs(status, id).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := store.UpdateUserStatus(context.Background(), id, status)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_UpdateUserStatus_NotFound(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	id := "missing"
+	status := "deleted"
+
+	mock.ExpectExec("UPDATE users SET status = \\$1 WHERE id = \\$2").
+		WithArgs(status, id).
+		WillReturnResult(sqlmock.NewResult(1, 0))
+
+	err := store.UpdateUserStatus(context.Background(), id, status)
+	assert.Error(t, err)
+	assert.Equal(t, "user not found", err.Error())
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPostgresStore_CreateConversation(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer store.Close()
