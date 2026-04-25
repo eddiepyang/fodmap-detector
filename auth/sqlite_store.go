@@ -163,6 +163,22 @@ func (s *SQLiteStore) GetUserByID(ctx context.Context, id string) (*User, error)
 	return user, nil
 }
 
+// UpdateUserStatus updates a user's status (e.g. "active", "deleted").
+func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE users SET status = ? WHERE id = ?", status, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 // CreateConversation inserts a new conversation.
 func (s *SQLiteStore) CreateConversation(ctx context.Context, conv *Conversation) error {
 	if conv.CreatedAt.IsZero() {

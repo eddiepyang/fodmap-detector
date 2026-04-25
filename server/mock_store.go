@@ -60,6 +60,16 @@ func (m *mockUserStore) GetUserByID(ctx context.Context, id string) (*auth.User,
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *mockUserStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+	for _, u := range m.users {
+		if u.ID == userID {
+			u.Status = status
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
 func (m *mockUserStore) CreateConversation(ctx context.Context, conv *auth.Conversation) error {
 	m.conversations[conv.ID] = conv
 	return nil

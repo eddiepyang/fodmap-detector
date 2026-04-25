@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -273,5 +274,106 @@ func TestAuthHandler_RefreshUserNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestAuthHandler_LoginDeletedUser(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	// Register a user first.
+	user := &auth.User{ID: "del-user-1", Email: "deleted@example.com", Status: "active"}
+	_ = user.SetPassword("password123")
+	store.users[user.Email] = user
+
+	// Mark user as deleted.
+	_ = store.UpdateUserStatus(nil, user.ID, "deleted")
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"email":    "deleted@example.com",
+		"password": "password123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.loginHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestAuthHandler_RefreshDeletedUser(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	user := &auth.User{ID: "del-user-2", Email: "deleted2@example.com", Status: "active"}
+	store.users[user.Email] = user
+
+	_, refreshToken, _ := auth.GenerateTokens(user.ID, "test-secret")
+
+	// Mark user as deleted after token was issued.
+	_ = store.UpdateUserStatus(nil, user.ID, "deleted")
+
+	reqBody, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	s.refreshHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestAuthHandler_DeleteUser(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	user := &auth.User{ID: "del-user-3", Email: "todelete@example.com", Status: "active"}
+	store.users[user.Email] = user
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/user", nil)
+	ctx := context.WithValue(req.Context(), userContextKey, user.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	s.deleteUserHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify the user is now deleted.
+	updated, _ := store.GetUserByID(nil, user.ID)
+	if updated.Status != "deleted" {
+		t.Errorf("user status = %q, want %q", updated.Status, "deleted")
+	}
+}
+
+func TestAuthHandler_DeleteUserNoAuth(t *testing.T) {
+	store := newMockStore()
+	s := &Server{
+		userStore: store,
+		jwtSecret: "test-secret",
+	}
+
+	// Request with no user context.
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/user", nil)
+	rec := httptest.NewRecorder()
+
+	s.deleteUserHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }

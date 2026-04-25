@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.loginHandler)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refreshHandler)
 	mux.Handle("POST /api/v1/auth/logout", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.logoutHandler)))
+	mux.Handle("DELETE /api/v1/auth/user", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.deleteUserHandler)))
 
 	// Conversation handlers (protected by JWT)
 	mux.Handle("GET /api/v1/conversations", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.listConversationsHandler)))

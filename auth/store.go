@@ -8,6 +8,7 @@ type Store interface {
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
+	UpdateUserStatus(ctx context.Context, userID string, status string) error
 
 	// Dietary Profile operations
 	GetDietaryProfile(ctx context.Context, userID string) ([]byte, error)
