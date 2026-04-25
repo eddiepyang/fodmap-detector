@@ -36,7 +36,14 @@ func NewSQLiteStore(dataSourceName string) (*SQLiteStore, error) {
 			id         TEXT PRIMARY KEY,
 			email      TEXT UNIQUE NOT NULL,
 			password   TEXT NOT NULL,
+			status     TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_profiles (
+			user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			profile    TEXT NOT NULL DEFAULT '{}',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS conversations (
 			id          TEXT PRIMARY KEY,
@@ -66,12 +73,15 @@ func NewSQLiteStore(dataSourceName string) (*SQLiteStore, error) {
 
 	// Add new columns if they don't exist (migrations).
 	columns := []string{
+		"ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active';",
 		"ALTER TABLE conversations ADD COLUMN review_context TEXT;",
 		"ALTER TABLE conversations ADD COLUMN search_category TEXT;",
 		"ALTER TABLE conversations ADD COLUMN search_city TEXT;",
 		"ALTER TABLE conversations ADD COLUMN search_state TEXT;",
 		"ALTER TABLE conversations ADD COLUMN search_description TEXT;",
 		"ALTER TABLE conversations ADD COLUMN business_name TEXT;",
+		"ALTER TABLE user_profiles ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+		"ALTER TABLE user_profiles ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
 	}
 
 	for _, col := range columns {
@@ -88,10 +98,37 @@ func NewSQLiteStore(dataSourceName string) (*SQLiteStore, error) {
 
 // CreateUser inserts a new user into the database.
 func (s *SQLiteStore) CreateUser(ctx context.Context, user *User) error {
-	query := `INSERT INTO users (id, email, password, created_at) VALUES (?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.CreatedAt)
+	if user.Status == "" {
+		user.Status = "active"
+	}
+	query := `INSERT INTO users (id, email, password, status, created_at) VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.Status, user.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
+	}
+	return nil
+}
+
+// GetDietaryProfile retrieves a user's dietary profile.
+func (s *SQLiteStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+	var profileStr string
+	query := `SELECT profile FROM user_profiles WHERE user_id = ?`
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(&profileStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dietary profile: %w", err)
+	}
+	return []byte(profileStr), nil
+}
+
+// SaveDietaryProfile upserts a user's dietary profile.
+func (s *SQLiteStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
+	query := `INSERT INTO user_profiles (user_id, profile) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET profile = excluded.profile, updated_at = CURRENT_TIMESTAMP`
+	_, err := s.db.ExecContext(ctx, query, userID, string(profile))
+	if err != nil {
+		return fmt.Errorf("failed to save dietary profile: %w", err)
 	}
 	return nil
 }
@@ -99,9 +136,9 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, user *User) error {
 // GetUserByEmail retrieves a user by their email address.
 func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, created_at FROM users WHERE email = ?`
+	query := `SELECT id, email, password, status, created_at FROM users WHERE email = ?`
 	row := s.db.QueryRowContext(ctx, query, email)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}
@@ -114,9 +151,9 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, 
 // GetUserByID retrieves a user by their ID.
 func (s *SQLiteStore) GetUserByID(ctx context.Context, id string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, created_at FROM users WHERE id = ?`
+	query := `SELECT id, email, password, status, created_at FROM users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, id)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}

@@ -338,27 +338,28 @@ func FodmapAllergenTools() *genai.Tool {
 // ---- system prompt rendering ----
 
 type PromptData struct {
-	BusinessName string
-	City         string
-	State        string
+	BusinessName   string
+	City           string
+	State          string
+	DietaryProfile string
 }
 
-func RenderChatSystemPrompt(tmplStr string, biz *Business) (string, error) {
+func RenderChatSystemPrompt(tmplStr string, biz *Business, dietaryProfile string) (string, error) {
 	tmpl, err := template.New("chat").Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing instruction template: %w", err)
 	}
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, PromptData{
-		BusinessName: biz.Name,
-		City:         biz.City,
-		State:        biz.State,
+		BusinessName:   biz.Name,
+		City:           biz.City,
+		State:          biz.State,
+		DietaryProfile: dietaryProfile,
 	}); err != nil {
 		return "", fmt.Errorf("executing prompt: %w", err)
 	}
 	return buf.String(), nil
 }
-
 // FormatReviewsContext builds a context message that establishes the model's
 // grounding in specific customer reviews.
 func FormatReviewsContext(bizName string, reviews []Review) string {

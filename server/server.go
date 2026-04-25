@@ -233,6 +233,16 @@ func (s *Server) Handler() http.Handler {
 	)
 	mux.Handle("POST /api/v1/conversations", createConvMid)
 
+	// User Profile
+	profileMid := chain(
+		http.HandlerFunc(s.updateProfileHandler),
+		jwtAuth(s.jwtSecret),
+		rateLimitMiddleware(s.chatRateLimiter),
+		concurrencyLimiter(s.chatMaxConcurrent),
+	)
+	mux.Handle("POST /api/v1/profile", profileMid)
+	mux.Handle("GET /api/v1/profile", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.getProfileHandler)))
+
 	// Chat message stream (protected by JWT/API Key, rate limited)
 	postChatMid := chain(
 		s.chatHandler(s.genaiClient),

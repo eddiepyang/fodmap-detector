@@ -26,11 +26,12 @@ func TestPostgresStore_CreateUser(t *testing.T) {
 		ID:        "u1",
 		Email:     "test@example.com",
 		Password:  "hash",
+		Status:    "active",
 		CreatedAt: time.Now(),
 	}
 
 	mock.ExpectExec("INSERT INTO users").
-		WithArgs(user.ID, user.Email, user.Password, user.CreatedAt).
+		WithArgs(user.ID, user.Email, user.Password, user.Status, user.CreatedAt).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := store.CreateUser(context.Background(), user)
@@ -45,10 +46,10 @@ func TestPostgresStore_GetUserByEmail(t *testing.T) {
 	email := "test@example.com"
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users WHERE email = \\$1").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users WHERE email = \\$1").
 		WithArgs(email).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "created_at"}).
-			AddRow("u1", email, "hash", now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "status", "created_at"}).
+			AddRow("u1", email, "hash", "active", now))
 
 	user, err := store.GetUserByEmail(context.Background(), email)
 	assert.NoError(t, err)
@@ -62,7 +63,7 @@ func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer store.Close()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing@example.com").
 		WillReturnError(sql.ErrNoRows)
 
@@ -79,10 +80,10 @@ func TestPostgresStore_GetUserByID(t *testing.T) {
 	id := "u1"
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users WHERE id = \\$1").
 		WithArgs(id).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "created_at"}).
-			AddRow(id, "test@example.com", "hash", now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "status", "created_at"}).
+			AddRow(id, "test@example.com", "hash", "active", now))
 
 	user, err := store.GetUserByID(context.Background(), id)
 	assert.NoError(t, err)
@@ -95,7 +96,7 @@ func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer store.Close()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 

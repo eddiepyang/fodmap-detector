@@ -80,7 +80,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 		tmplStr = string(b)
 	}
 
-	systemPrompt, err := chat.RenderChatSystemPrompt(tmplStr, biz)
+	systemPrompt, err := chat.RenderChatSystemPrompt(tmplStr, biz, "")
 	if err != nil {
 		return fmt.Errorf("rendering system prompt: %w", err)
 	}
