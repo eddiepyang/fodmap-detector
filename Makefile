@@ -91,7 +91,7 @@ lint:
 	# Ignore version mismatch errors during custom script linting if target version is newer than linter
 	golangci-lint run ./... || go vet ./...
 
-check: lint test
+check: lint test build
 
 run:
 	go run . serve

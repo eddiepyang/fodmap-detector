@@ -77,18 +77,9 @@ func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStor
 	}
 
 	// Migrations
-	_, err = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';")
-	if err != nil {
-		_ = err // Ignore error
-	}
-	_, err = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-	if err != nil {
-		_ = err // Ignore error
-	}
-	_, err = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-	if err != nil {
-		_ = err // Ignore error, as the column might already exist or syntax might differ
-	}
+	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';")
+	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
 	return &PostgresStore{db: db}, nil
 }
