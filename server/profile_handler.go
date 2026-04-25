@@ -55,7 +55,9 @@ func (s *Server) updateProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(profileJSON)
+	if _, err := w.Write(profileJSON); err != nil {
+		slog.Error("failed to write profile JSON response", "error", err)
+	}
 }
 
 func (s *Server) getProfileHandler(w http.ResponseWriter, r *http.Request) {
@@ -73,8 +75,12 @@ func (s *Server) getProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if len(profile) > 0 {
-		w.Write(profile)
+		if _, err := w.Write(profile); err != nil {
+			slog.Error("failed to write profile response", "error", err)
+		}
 	} else {
-		w.Write([]byte("{}"))
+		if _, err := w.Write([]byte("{}")); err != nil {
+			slog.Error("failed to write empty profile response", "error", err)
+		}
 	}
 }

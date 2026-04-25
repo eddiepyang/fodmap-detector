@@ -290,7 +290,7 @@ func TestAuthHandler_LoginDeletedUser(t *testing.T) {
 	store.users[user.Email] = user
 
 	// Mark user as deleted.
-	_ = store.UpdateUserStatus(nil, user.ID, "deleted")
+	_ = store.UpdateUserStatus(context.Background(), user.ID, "deleted")
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"email":    "deleted@example.com",
@@ -319,7 +319,7 @@ func TestAuthHandler_RefreshDeletedUser(t *testing.T) {
 	_, refreshToken, _ := auth.GenerateTokens(user.ID, "test-secret")
 
 	// Mark user as deleted after token was issued.
-	_ = store.UpdateUserStatus(nil, user.ID, "deleted")
+	_ = store.UpdateUserStatus(context.Background(), user.ID, "deleted")
 
 	reqBody, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(reqBody))
@@ -354,7 +354,7 @@ func TestAuthHandler_DeleteUser(t *testing.T) {
 	}
 
 	// Verify the user is now deleted.
-	updated, _ := store.GetUserByID(nil, user.ID)
+	updated, _ := store.GetUserByID(context.Background(), user.ID)
 	if updated.Status != "deleted" {
 		t.Errorf("user status = %q, want %q", updated.Status, "deleted")
 	}
