@@ -157,7 +157,7 @@ func TestSession_SendWithToolCalls(t *testing.T) {
 	var chunks []string
 	res, err := s.SendWithToolCalls(context.Background(), client, "hello", func(s string) {
 		chunks = append(chunks, s)
-	})
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -212,7 +212,7 @@ func TestValidateChatInput_InjectionCaseInsensitive(t *testing.T) {
 
 func TestRenderChatSystemPrompt_OK(t *testing.T) {
 	biz := &Business{Name: "TestBiz", City: "C", State: "S"}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestRenderChatSystemPrompt_OK(t *testing.T) {
 }
 
 func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
-	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{})
+	_, err := RenderChatSystemPrompt("{{.Unclosed", &Business{}, "")
 	if err == nil {
 		t.Error("expected error for invalid template")
 	}
@@ -230,7 +230,7 @@ func TestRenderChatSystemPrompt_InvalidTemplate(t *testing.T) {
 
 func TestRenderChatSystemPrompt_NoReviews(t *testing.T) {
 	biz := &Business{Name: "B", City: "C", State: "S"}
-	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz)
+	result, err := RenderChatSystemPrompt(DefaultChatInstruction, biz, "")
 	if err != nil {
 		t.Fatal(err)
 	}

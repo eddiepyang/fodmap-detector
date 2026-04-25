@@ -11,6 +11,7 @@ type mockUserStore struct {
 	users         map[string]*auth.User
 	conversations map[string]*auth.Conversation
 	messages      map[string][]*auth.Message
+	profiles      map[string][]byte
 }
 
 func newMockStore() *mockUserStore {
@@ -18,6 +19,7 @@ func newMockStore() *mockUserStore {
 		users:         make(map[string]*auth.User),
 		conversations: make(map[string]*auth.Conversation),
 		messages:      make(map[string][]*auth.Message),
+		profiles:      make(map[string][]byte),
 	}
 }
 
@@ -26,6 +28,18 @@ func (m *mockUserStore) CreateUser(ctx context.Context, user *auth.User) error {
 		return fmt.Errorf("user already exists")
 	}
 	m.users[user.Email] = user
+	return nil
+}
+
+func (m *mockUserStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+	if profile, ok := m.profiles[userID]; ok {
+		return profile, nil
+	}
+	return nil, nil
+}
+
+func (m *mockUserStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
+	m.profiles[userID] = profile
 	return nil
 }
 
@@ -44,6 +58,16 @@ func (m *mockUserStore) GetUserByID(ctx context.Context, id string) (*auth.User,
 		}
 	}
 	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockUserStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+	for _, u := range m.users {
+		if u.ID == userID {
+			u.Status = status
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
 }
 
 func (m *mockUserStore) CreateConversation(ctx context.Context, conv *auth.Conversation) error {

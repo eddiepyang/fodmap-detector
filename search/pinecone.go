@@ -100,12 +100,14 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 			continue
 		}
 		seen[bizID] = true
+		categories, _ := m.Metadata["categories"].(string)
 		businesses = append(businesses, BusinessResult{
-			ID:    bizID,
-			Name:  m.Metadata["business_name"].(string),
-			City:  m.Metadata["city"].(string),
-			State: m.Metadata["state"].(string),
-			Score: m.Score,
+			ID:         bizID,
+			Name:       m.Metadata["business_name"].(string),
+			City:       m.Metadata["city"].(string),
+			State:      m.Metadata["state"].(string),
+			Categories: categories,
+			Score:      m.Score,
 		})
 		if len(businesses) >= limit {
 			break

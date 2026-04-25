@@ -43,21 +43,9 @@ var serveCmd = &cobra.Command{
 		postgresDSN := viper.GetString("postgres-dsn")
 		jwtSecret := viper.GetString("jwt-secret")
 		weaviateScheme := viper.GetString("weaviate-scheme")
-		if weaviateScheme == "" {
-			weaviateScheme = os.Getenv("WEAVIATE_SCHEME")
-		}
 		weaviateAPIKey := viper.GetString("weaviate-api-key")
-		if weaviateAPIKey == "" {
-			weaviateAPIKey = os.Getenv("WEAVIATE_API_KEY")
-		}
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
-		if pineconeAPIKey == "" {
-			pineconeAPIKey = os.Getenv("PINECONE_API_KEY")
-		}
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
-		if pineconeIndexHost == "" {
-			pineconeIndexHost = os.Getenv("PINECONE_INDEX_HOST")
-		}
 		vectorizerURL := viper.GetString("vectorizer-url")
 		ollamaURL := viper.GetString("ollama-url")
 		ollamaModel := viper.GetString("ollama-model")
@@ -72,9 +60,6 @@ var serveCmd = &cobra.Command{
 		} else if vectorizerURL != "" {
 			embedder = search.NewVectorizerClient(vectorizerURL)
 			slog.Info("using HTTP vectorizer", "url", vectorizerURL)
-		}
-		if jwtSecret == "" {
-			jwtSecret = os.Getenv("JWT_SECRET")
 		}
 		if jwtSecret == "" {
 			slog.Warn("JWT_SECRET not set; using insecure default — do not use in production")

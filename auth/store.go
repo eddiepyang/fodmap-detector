@@ -8,6 +8,11 @@ type Store interface {
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
+	UpdateUserStatus(ctx context.Context, userID string, status string) error
+
+	// Dietary Profile operations
+	GetDietaryProfile(ctx context.Context, userID string) ([]byte, error)
+	SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error
 
 	// Conversation operations
 	CreateConversation(ctx context.Context, conv *Conversation) error

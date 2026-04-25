@@ -102,6 +102,15 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 		var history []*genai.Content
 		userID, _ := r.Context().Value(userContextKey).(string)
 
+		dietaryProfile := ""
+		if userID != "" && userID != "anonymous" {
+			if profile, err := s.userStore.GetDietaryProfile(ctx, userID); err == nil && len(profile) > 0 {
+				if string(profile) != "{}" {
+					dietaryProfile = string(profile)
+				}
+			}
+		}
+
 		if req.ConversationID != "" {
 			var err error
 			conv, err = s.userStore.GetConversation(ctx, req.ConversationID)
@@ -171,7 +180,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				slog.Warn("chat: failed to reload business context, using formatted fallback", "error", err)
 				biz = chatBusinessResponse{Name: "this restaurant", City: "local area"}
 				chatBiz := &chat.Business{Name: biz.Name, City: biz.City}
-				systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+				systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 			} else {
 				biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
 				chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
@@ -217,7 +226,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 					slog.Warn("chat: failed to load reviews", "error", err)
 				}
 
-				systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+				systemPrompt, err = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 				if err != nil {
 					slog.Warn("chat: render prompt failed, using name-only fallback", "error", err)
 					systemPrompt = fmt.Sprintf("You are a FODMAP and food allergen expert helping people understand dishes at %s (%s, %s).", biz.Name, biz.City, biz.State)
@@ -227,7 +236,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			// General inquiry without a specific business context.
 			slog.Info("chat: using general assistant mode", "id", conv.ID, "business_id", conv.BusinessID)
 			chatBiz := &chat.Business{Name: "General Assistant", City: "Anywhere"}
-			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz)
+			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 		}
 
 		chatModel := s.chatModel
@@ -329,7 +338,14 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 			}
 
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, onText)
+			onToolCall := func(calls []string) {
+				sseEvent := map[string]any{"type": "tool", "tool_calls": calls}
+				sseData, _ := json.Marshal(sseEvent)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", sseData)
+				flusher.Flush()
+			}
+
+			result, err := session.SendWithToolCalls(ctx, client, req.Message, onText, onToolCall)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				sseEvent := map[string]string{"type": "error", "text": "chat processing failed"}
@@ -354,7 +370,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			flusher.Flush()
 
 		} else {
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, nil)
+			result, err := session.SendWithToolCalls(ctx, client, req.Message, nil, nil)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				respondError(w, "chat processing failed", http.StatusInternalServerError)
