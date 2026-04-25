@@ -14,8 +14,11 @@ filter-model: "gemini-3.1-flash-lite-preview"
 # Port to listen on HTTP
 port: 8081
 
-# Bearer token clients must present for /chat endpoint. Omit to disable chat.
-chat-api-key: ""
+# Secrets (API keys, JWT secret) should be set via environment variables, not here.
+# Viper maps hyphenated keys to UPPER_SNAKE_CASE env vars automatically:
+#   chat-api-key  → CHAT_API_KEY
+#   jwt-secret    → JWT_SECRET
+#   weaviate-api-key → WEAVIATE_API_KEY
 
 # Allowed CORS origins for browser-based clients 
 cors-origins:
