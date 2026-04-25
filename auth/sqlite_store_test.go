@@ -102,4 +102,27 @@ func TestSQLiteStore(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when updating status of non-existent user")
 	}
+
+	// 9. Dietary Profile
+	profileData := []byte(`{"preferences":["vegan"]}`)
+	err = store.SaveDietaryProfile(ctx, user.ID, profileData)
+	if err != nil {
+		t.Fatalf("SaveDietaryProfile failed: %v", err)
+	}
+
+	gotProfile, err := store.GetDietaryProfile(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetDietaryProfile failed: %v", err)
+	}
+	if string(gotProfile) != string(profileData) {
+		t.Errorf("expected profile %s, got %s", profileData, gotProfile)
+	}
+
+	missingProfile, err := store.GetDietaryProfile(ctx, "nonexistent-id")
+	if err != nil {
+		t.Fatalf("GetDietaryProfile for missing user failed: %v", err)
+	}
+	if missingProfile != nil {
+		t.Errorf("expected nil profile for missing user, got %s", missingProfile)
+	}
 }

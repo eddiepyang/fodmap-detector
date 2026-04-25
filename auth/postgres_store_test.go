@@ -282,3 +282,39 @@ func TestPostgresStore_GetMessages(t *testing.T) {
 	assert.Equal(t, "m2", msgs[1].ID)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestPostgresStore_DietaryProfile(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	userID := "u1"
+	profileData := []byte(`{"preferences":["vegan"]}`)
+
+	// Test Save
+	mock.ExpectExec("INSERT INTO user_profiles").
+		WithArgs(userID, profileData).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := store.SaveDietaryProfile(context.Background(), userID, profileData)
+	assert.NoError(t, err)
+
+	// Test Get
+	mock.ExpectQuery("SELECT profile FROM user_profiles WHERE user_id = \\$1").
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"profile"}).AddRow(profileData))
+
+	got, err := store.GetDietaryProfile(context.Background(), userID)
+	assert.NoError(t, err)
+	assert.Equal(t, profileData, got)
+
+	// Test Get NotFound
+	mock.ExpectQuery("SELECT profile FROM user_profiles WHERE user_id = \\$1").
+		WithArgs("missing").
+		WillReturnError(sql.ErrNoRows)
+
+	got, err = store.GetDietaryProfile(context.Background(), "missing")
+	assert.NoError(t, err)
+	assert.Nil(t, got)
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
