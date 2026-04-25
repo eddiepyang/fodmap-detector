@@ -48,7 +48,7 @@ state: ""
 
 # ---- index command settings ----
 # Number of reviews per Weaviate batch
-batch-size: 512
+batch-size: 1024
 
 # Number of concurrent batch upload goroutines
 workers: 4

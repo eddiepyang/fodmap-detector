@@ -183,7 +183,8 @@ type SendResult struct {
 // SendWithToolCalls sends a user message and iterates until the model returns a
 // plain-text response, dispatching any function calls in between.
 // The optional onText callback is invoked for each streamed text chunk.
-func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, input string, onText func(string)) (SendResult, error) {
+// The optional onToolCall callback is invoked when the model requests tool calls.
+func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, input string, onText func(string), onToolCall func([]string)) (SendResult, error) {
 	if input != "" {
 		s.History = append(s.History, &genai.Content{
 			Role:  "user",
@@ -226,7 +227,9 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 					}
 				}
 				if part.FunctionCall != nil {
-					if onText != nil {
+					if onToolCall != nil {
+						onToolCall([]string{part.FunctionCall.Name})
+					} else if onText != nil {
 						onText(fmt.Sprintf("\n[Tool Call] %s\n", part.FunctionCall.Name))
 					}
 				}

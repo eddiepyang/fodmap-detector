@@ -157,7 +157,7 @@ func TestSession_SendWithToolCalls(t *testing.T) {
 	var chunks []string
 	res, err := s.SendWithToolCalls(context.Background(), client, "hello", func(s string) {
 		chunks = append(chunks, s)
-	})
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

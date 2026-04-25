@@ -281,7 +281,7 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 	// averaging the top scores. To do this efficiently:
 	sqlQuery := fmt.Sprintf(`
 		WITH top_reviews AS (
-			SELECT business_id, business_name, city, state, stars,
+			SELECT business_id, business_name, city, state, categories, stars,
 			       (1 - (embedding <=> $1)) AS certainty,
 				   ROW_NUMBER() OVER(PARTITION BY business_id ORDER BY embedding <=> $1) as rn
 			FROM reviews
@@ -289,12 +289,12 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 		),
 		avg_scores AS (
 			SELECT business_id, MAX(business_name) as name, MAX(city) as city, MAX(state) as state,
-			       AVG(stars) as avg_stars, AVG(certainty) as avg_certainty
+			       MAX(categories) as categories, AVG(stars) as avg_stars, AVG(certainty) as avg_certainty
 			FROM top_reviews
 			WHERE rn <= 5
 			GROUP BY business_id
 		)
-		SELECT business_id, name, city, state, avg_stars, avg_certainty
+		SELECT business_id, name, city, state, categories, avg_stars, avg_certainty
 		FROM avg_scores
 		ORDER BY avg_certainty DESC
 		LIMIT $%d
@@ -312,11 +312,15 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 	for rows.Next() {
 		var b BusinessResult
 		var stars sql.NullFloat64
-		if err := rows.Scan(&b.ID, &b.Name, &b.City, &b.State, &stars, &b.Score); err != nil {
+		var categories sql.NullString
+		if err := rows.Scan(&b.ID, &b.Name, &b.City, &b.State, &categories, &stars, &b.Score); err != nil {
 			return SearchResult{}, fmt.Errorf("scan business: %w", err)
 		}
 		if stars.Valid {
 			b.Stars = stars.Float64
+		}
+		if categories.Valid {
+			b.Categories = categories.String
 		}
 		businesses = append(businesses, b)
 	}

@@ -148,7 +148,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 		result, err := session.SendWithToolCalls(ctx, geminiClient, input, func(text string) {
 			fmt.Print(text)
-		})
+		}, nil)
 		if err != nil {
 			fmt.Printf("[error] %v\n> ", err)
 			continue

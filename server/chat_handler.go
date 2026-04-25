@@ -338,7 +338,14 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 			}
 
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, onText)
+			onToolCall := func(calls []string) {
+				sseEvent := map[string]any{"type": "tool", "tool_calls": calls}
+				sseData, _ := json.Marshal(sseEvent)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", sseData)
+				flusher.Flush()
+			}
+
+			result, err := session.SendWithToolCalls(ctx, client, req.Message, onText, onToolCall)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				sseEvent := map[string]string{"type": "error", "text": "chat processing failed"}
@@ -363,7 +370,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			flusher.Flush()
 
 		} else {
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, nil)
+			result, err := session.SendWithToolCalls(ctx, client, req.Message, nil, nil)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				respondError(w, "chat processing failed", http.StatusInternalServerError)

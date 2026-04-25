@@ -38,12 +38,13 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID    string
-	Name  string
-	City  string
-	State string
-	Stars float64
-	Score float64
+	ID         string
+	Name       string
+	City       string
+	State      string
+	Categories string
+	Stars      float64
+	Score      float64
 }
 
 // SearchResult holds the ranked list of businesses returned by a search query.
@@ -192,6 +193,7 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 		{Name: "businessName"},
 		{Name: "city"},
 		{Name: "state"},
+		{Name: "categories"},
 		{Name: "stars"},
 		{Name: "_additional { certainty score }"},
 	}
@@ -406,11 +408,12 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 
 	// Collect certainty scores and name per business.
 	type bizEntry struct {
-		name   string
-		city   string
-		state  string
-		scores []float64
-		stars  []float64
+		name       string
+		city       string
+		state      string
+		categories string
+		scores     []float64
+		stars      []float64
 	}
 	entries := make(map[string]*bizEntry)
 	for _, raw := range items {
@@ -432,7 +435,8 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			name, _ := obj["businessName"].(string)
 			city, _ := obj["city"].(string)
 			state, _ := obj["state"].(string)
-			e = &bizEntry{name: name, city: city, state: state}
+			categories, _ := obj["categories"].(string)
+			e = &bizEntry{name: name, city: city, state: state, categories: categories}
 			entries[businessID] = e
 		}
 		e.scores = append(e.scores, certainty)
@@ -443,12 +447,13 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 
 	// Compute top-K average per business.
 	type ranked struct {
-		id    string
-		name  string
-		city  string
-		state string
-		stars float64
-		score float64
+		id         string
+		name       string
+		city       string
+		state      string
+		categories string
+		stars      float64
+		score      float64
 	}
 	results := make([]ranked, 0, len(entries))
 	for id, e := range entries {
@@ -460,10 +465,11 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			sum += s[i]
 		}
 		results = append(results, ranked{
-			id:    id,
-			name:  e.name,
-			city:  e.city,
-			state: e.state,
+			id:         id,
+			name:       e.name,
+			city:       e.city,
+			state:      e.state,
+			categories: e.categories,
 			score: sum / float64(k),
 			stars: func() float64 {
 				if len(e.stars) == 0 {
@@ -483,12 +489,13 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	out := make([]BusinessResult, 0, min(limit, len(results)))
 	for i := 0; i < limit && i < len(results); i++ {
 		out = append(out, BusinessResult{
-			ID:    results[i].id,
-			Name:  results[i].name,
-			City:  results[i].city,
-			State: results[i].state,
-			Stars: results[i].stars,
-			Score: results[i].score,
+			ID:         results[i].id,
+			Name:       results[i].name,
+			City:       results[i].city,
+			State:      results[i].state,
+			Categories: results[i].categories,
+			Stars:      results[i].stars,
+			Score:      results[i].score,
 		})
 	}
 	return SearchResult{Businesses: out}
