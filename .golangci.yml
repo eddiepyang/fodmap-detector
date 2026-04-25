@@ -1,9 +1,9 @@
 run:
-  go: "1.26.2"
-
+  go: 1.26.2
 linters:
   exclusions:
-    rules:
-      - linters:
-          - errcheck
-        source: "defer.*Close"
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

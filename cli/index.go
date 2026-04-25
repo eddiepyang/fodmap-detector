@@ -53,13 +53,7 @@ func init() {
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")
 	scheme := viper.GetString("weaviate-scheme")
-	if scheme == "" {
-		scheme = os.Getenv("WEAVIATE_SCHEME")
-	}
 	apiKey := viper.GetString("weaviate-api-key")
-	if apiKey == "" {
-		apiKey = os.Getenv("WEAVIATE_API_KEY")
-	}
 	batchSize := viper.GetInt("batch-size")
 	numWorkers := viper.GetInt("workers")
 	archivePath := viper.GetString("archive")

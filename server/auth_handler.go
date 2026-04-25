@@ -116,6 +116,11 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Status == "deleted" {
+		respondError(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
 	access, refresh, err := auth.GenerateTokens(user.ID, s.jwtSecret)
 	if err != nil {
 		respondError(w, "failed to generate tokens", http.StatusInternalServerError)
@@ -158,6 +163,10 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, "user not found", http.StatusUnauthorized)
 			return
 		}
+		if user.Status == "deleted" {
+			respondError(w, "user not found", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	access, refresh, err := auth.GenerateTokens(claims.UserID, s.jwtSecret)
@@ -176,6 +185,28 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "logged out"})
+}
+
+func (s *Server) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	if s.userStore == nil {
+		respondError(w, "authentication is not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	userID, ok := r.Context().Value(userContextKey).(string)
+	if !ok || userID == "" {
+		respondError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := s.userStore.UpdateUserStatus(r.Context(), userID, "deleted"); err != nil {
+		slog.Warn("failed to delete user", "user_id", userID, "error", err)
+		respondError(w, "failed to delete account", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "account deleted"})
 }
 
 func respondError(w http.ResponseWriter, message string, code int) {

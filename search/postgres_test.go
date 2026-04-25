@@ -235,8 +235,8 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 
 	mock.ExpectQuery("WITH top_reviews AS \\(").
 		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), "%Pizza%", "%New York%", "NY", 10).
-		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "avg_stars", "avg_certainty"}).
-			AddRow("bus1", "Joe's Pizza", "New York", "NY", 4.5, 0.9))
+		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "categories", "avg_stars", "avg_certainty"}).
+			AddRow("bus1", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
 
 	res, err := client.GetBusinesses(context.Background(), "good pizza", 10, SearchFilter{
 		Category: "Pizza",

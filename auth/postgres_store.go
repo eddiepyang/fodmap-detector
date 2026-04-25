@@ -35,7 +35,14 @@ func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStor
 			id         TEXT PRIMARY KEY,
 			email      TEXT UNIQUE NOT NULL,
 			password   TEXT NOT NULL,
+			status     TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_profiles (
+			user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			profile    JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS conversations (
 			id                 TEXT PRIMARY KEY,
@@ -69,15 +76,47 @@ func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStor
 		}
 	}
 
+	// Migrations
+	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';")
+	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
 	return &PostgresStore{db: db}, nil
 }
 
 // CreateUser inserts a new user into the database.
 func (s *PostgresStore) CreateUser(ctx context.Context, user *User) error {
-	query := `INSERT INTO users (id, email, password, created_at) VALUES ($1, $2, $3, $4)`
-	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.CreatedAt)
+	if user.Status == "" {
+		user.Status = "active"
+	}
+	query := `INSERT INTO users (id, email, password, status, created_at) VALUES ($1, $2, $3, $4, $5)`
+	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.Status, user.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
+	}
+	return nil
+}
+
+// GetDietaryProfile retrieves a user's dietary profile.
+func (s *PostgresStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+	var profile []byte
+	query := `SELECT profile FROM user_profiles WHERE user_id = $1`
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(&profile)
+	if err == sql.ErrNoRows {
+		return nil, nil // Profile not found, return nil without error
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dietary profile: %w", err)
+	}
+	return profile, nil
+}
+
+// SaveDietaryProfile upserts a user's dietary profile.
+func (s *PostgresStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
+	query := `INSERT INTO user_profiles (user_id, profile) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET profile = EXCLUDED.profile, updated_at = CURRENT_TIMESTAMP`
+	_, err := s.db.ExecContext(ctx, query, userID, profile)
+	if err != nil {
+		return fmt.Errorf("failed to save dietary profile: %w", err)
 	}
 	return nil
 }
@@ -85,9 +124,9 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user *User) error {
 // GetUserByEmail retrieves a user by their email address.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, created_at FROM users WHERE email = $1`
+	query := `SELECT id, email, password, status, created_at FROM users WHERE email = $1`
 	row := s.db.QueryRowContext(ctx, query, email)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}
@@ -100,9 +139,9 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 // GetUserByID retrieves a user by their ID.
 func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, created_at FROM users WHERE id = $1`
+	query := `SELECT id, email, password, status, created_at FROM users WHERE id = $1`
 	row := s.db.QueryRowContext(ctx, query, id)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}
@@ -110,6 +149,22 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*User, erro
 		return nil, fmt.Errorf("failed to get user by ID: %w", err)
 	}
 	return user, nil
+}
+
+// UpdateUserStatus updates a user's status (e.g. "active", "deleted").
+func (s *PostgresStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE users SET status = $1 WHERE id = $2", status, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // CreateConversation inserts a new conversation.

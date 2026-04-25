@@ -26,11 +26,12 @@ func TestPostgresStore_CreateUser(t *testing.T) {
 		ID:        "u1",
 		Email:     "test@example.com",
 		Password:  "hash",
+		Status:    "active",
 		CreatedAt: time.Now(),
 	}
 
 	mock.ExpectExec("INSERT INTO users").
-		WithArgs(user.ID, user.Email, user.Password, user.CreatedAt).
+		WithArgs(user.ID, user.Email, user.Password, user.Status, user.CreatedAt).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := store.CreateUser(context.Background(), user)
@@ -45,10 +46,10 @@ func TestPostgresStore_GetUserByEmail(t *testing.T) {
 	email := "test@example.com"
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users WHERE email = \\$1").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users WHERE email = \\$1").
 		WithArgs(email).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "created_at"}).
-			AddRow("u1", email, "hash", now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "status", "created_at"}).
+			AddRow("u1", email, "hash", "active", now))
 
 	user, err := store.GetUserByEmail(context.Background(), email)
 	assert.NoError(t, err)
@@ -62,7 +63,7 @@ func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer store.Close()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing@example.com").
 		WillReturnError(sql.ErrNoRows)
 
@@ -79,10 +80,10 @@ func TestPostgresStore_GetUserByID(t *testing.T) {
 	id := "u1"
 	now := time.Now()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users WHERE id = \\$1").
 		WithArgs(id).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "created_at"}).
-			AddRow(id, "test@example.com", "hash", now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "status", "created_at"}).
+			AddRow(id, "test@example.com", "hash", "active", now))
 
 	user, err := store.GetUserByID(context.Background(), id)
 	assert.NoError(t, err)
@@ -95,13 +96,46 @@ func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer store.Close()
 
-	mock.ExpectQuery("SELECT id, email, password, created_at FROM users").
+	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
 	user, err := store.GetUserByID(context.Background(), "missing")
 	assert.NoError(t, err)
 	assert.Nil(t, user)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_UpdateUserStatus(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	id := "u1"
+	status := "deleted"
+
+	mock.ExpectExec("UPDATE users SET status = \\$1 WHERE id = \\$2").
+		WithArgs(status, id).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := store.UpdateUserStatus(context.Background(), id, status)
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_UpdateUserStatus_NotFound(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	id := "missing"
+	status := "deleted"
+
+	mock.ExpectExec("UPDATE users SET status = \\$1 WHERE id = \\$2").
+		WithArgs(status, id).
+		WillReturnResult(sqlmock.NewResult(1, 0))
+
+	err := store.UpdateUserStatus(context.Background(), id, status)
+	assert.Error(t, err)
+	assert.Equal(t, "user not found", err.Error())
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -246,5 +280,41 @@ func TestPostgresStore_GetMessages(t *testing.T) {
 	require.Len(t, msgs, 2)
 	assert.Equal(t, "m1", msgs[0].ID)
 	assert.Equal(t, "m2", msgs[1].ID)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_DietaryProfile(t *testing.T) {
+	store, mock := newMockStore(t)
+	defer store.Close()
+
+	userID := "u1"
+	profileData := []byte(`{"preferences":["vegan"]}`)
+
+	// Test Save
+	mock.ExpectExec("INSERT INTO user_profiles").
+		WithArgs(userID, profileData).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := store.SaveDietaryProfile(context.Background(), userID, profileData)
+	assert.NoError(t, err)
+
+	// Test Get
+	mock.ExpectQuery("SELECT profile FROM user_profiles WHERE user_id = \\$1").
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"profile"}).AddRow(profileData))
+
+	got, err := store.GetDietaryProfile(context.Background(), userID)
+	assert.NoError(t, err)
+	assert.Equal(t, profileData, got)
+
+	// Test Get NotFound
+	mock.ExpectQuery("SELECT profile FROM user_profiles WHERE user_id = \\$1").
+		WithArgs("missing").
+		WillReturnError(sql.ErrNoRows)
+
+	got, err = store.GetDietaryProfile(context.Background(), "missing")
+	assert.NoError(t, err)
+	assert.Nil(t, got)
+
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

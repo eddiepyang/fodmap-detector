@@ -11,6 +11,7 @@ fodmap
 coverage*
 coverage.*
 *.out
+.env
 
 # Jupyter notebooks
 *.ipynb

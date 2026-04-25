@@ -43,6 +43,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # HTTP request handlers
+│   ├── auth_handler.go      # Auth endpoints (register, login, refresh, delete)
+│   ├── middleware.go         # JWT auth, rate limiting, CORS middleware
 │
 ├── data/
 │   ├── data.go              # Archive reading, Parquet write/read
@@ -124,6 +126,24 @@ EventWriter.Write()
    |
 *.avro
 ```
+
+---
+
+## Quick Start
+
+The fastest way to get everything running:
+
+```sh
+make setup                        # installs Go deps, Ollama, model, Weaviate
+export GOOGLE_API_KEY=your_key    # required for chat
+make run                          # starts the server on :8081
+```
+
+`make setup` works on both **Linux** and **macOS**. It will:
+1. Download Go module dependencies
+2. Install [golangci-lint](https://golangci-lint.run/) (via Homebrew on macOS, install script on Linux)
+3. Install [Ollama](https://ollama.com/) if not present and pull the `nomic-embed-text` embedding model
+4. Start Weaviate via Docker Compose
 
 ---
 
@@ -247,6 +267,47 @@ go run . index --weaviate localhost:8090 --ollama-url http://localhost:11434 --o
 
 For each batch, all review texts are sent to the embedder concurrently. The resulting vectors are attached to the objects before they are sent to Weaviate. Weaviate detects that each object already has a vector and skips vectorization entirely — it never calls the transformer sidecar during import.
 
+**Tuning GPU utilization:**
+
+The indexing pipeline has three concurrent stages: JSON parsing → Ollama embedding (GPU) → Weaviate upload. The GPU embedding stage is the bottleneck. Each `--batch-size` worth of texts is sent as a single `/api/embed` call to Ollama, so **larger batches = better GPU utilization**.
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `--batch-size` | `512` | Texts per GPU embedding call. **Primary tuning lever.** Increase to `1024` or `2048` if VRAM allows. |
+| `--workers` | `4` | Concurrent goroutines per pipeline stage. For embedding, this controls parallel requests to Ollama. |
+| `OLLAMA_NUM_PARALLEL` | `4` | Ollama's internal request concurrency (set in `start.sh`). Caps the effective `--workers`. |
+
+```sh
+# Recommended for GPUs with 8GB+ VRAM
+go run . index --weaviate localhost:8090 --batch-size 1024 --workers 4
+
+# Aggressive (large VRAM, e.g. 16GB+)
+go run . index --weaviate localhost:8090 --batch-size 2048 --workers 8
+```
+
+> **Note:** Increasing `--workers` beyond `OLLAMA_NUM_PARALLEL` just queues requests without improving throughput. If you raise `--workers`, also raise `OLLAMA_NUM_PARALLEL` in `start.sh`. If Ollama returns out-of-memory errors, halve `--batch-size`.
+
+#### Troubleshooting: "no vectorizer found" or vector dimension mismatch
+
+If you see errors like:
+```
+no vectorizer found for class "YelpReview"
+vector lengths don't match: 384 vs 768
+```
+
+This means the Weaviate schema was created by a previous run with a different configuration. The fix is to delete the stale classes and re-index:
+
+```sh
+# 1. Delete the stale Weaviate classes
+curl -X DELETE http://localhost:8090/v1/schema/YelpReview
+curl -X DELETE http://localhost:8090/v1/schema/FodmapIngredient
+
+# 2. Re-index (Ollama flags default automatically)
+go run . index --weaviate localhost:8090
+```
+
+The `index` command defaults to `--ollama-url http://localhost:11434 --ollama-model nomic-embed-text`, so it will pre-vectorize via Ollama as long as Ollama is running.
+
 ### 3. Start the HTTP server
 
 ```sh
@@ -264,11 +325,23 @@ Default port is `8081`.
 
 #### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/reviews` | List reviews for a business |
-| `GET` | `/api/v1/search/businesses/{query...}` | Semantic business search — returns ranked restaurants (requires Weaviate) |
-| `GET` | `/api/v1/search/reviews/{query...}` | Semantic review search — returns top matching review texts (requires Weaviate) |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/reviews` | — | List reviews for a business |
+| `GET` | `/api/v1/search/businesses/{query...}` | — | Semantic business search (requires Weaviate) |
+| `GET` | `/api/v1/search/reviews/{query...}` | — | Semantic review search (requires Weaviate) |
+| `POST` | `/api/v1/auth/register` | — | Register a new user account |
+| `POST` | `/api/v1/auth/login` | — | Log in and receive access/refresh tokens |
+| `POST` | `/api/v1/auth/refresh` | — | Exchange a refresh token for new tokens |
+| `POST` | `/api/v1/auth/logout` | JWT | Log out (client-side token discard) |
+| `DELETE` | `/api/v1/auth/user` | JWT | Delete the authenticated user's account |
+| `GET` | `/api/v1/conversations` | JWT | List conversations |
+| `POST` | `/api/v1/conversations` | JWT | Create a new conversation |
+| `GET` | `/api/v1/conversations/{id}` | JWT | Get a conversation |
+| `DELETE` | `/api/v1/conversations/{id}` | JWT | Delete a conversation |
+| `POST` | `/api/v1/conversations/{id}/messages` | JWT | Send a chat message (streaming) |
+| `GET` | `/api/v1/profile` | JWT | Get dietary profile |
+| `POST` | `/api/v1/profile` | JWT | Update dietary profile |
 
 **Common query parameters** for search endpoints:
 
@@ -279,6 +352,39 @@ Default port is `8081`.
 | `city` | — | Filter by city (exact match) |
 | `state` | — | Filter by state (exact match) |
 | `alpha` | `0` | Hybrid search weight: `0`=pure vector, `0.75`=balanced, `1`=pure vector |
+
+#### Authentication
+
+The server uses JWT-based authentication. Access tokens expire after **2 hours**; refresh tokens last **7 days**.
+
+```sh
+# Register
+curl -X POST localhost:8081/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "user@example.com", "password": "mypassword"}'
+
+# Login
+curl -X POST localhost:8081/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "user@example.com", "password": "mypassword"}'
+# → {"access_token": "...", "refresh_token": "...", "user": {...}}
+
+# Use the access token for protected endpoints
+curl -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/conversations
+
+# Refresh tokens
+curl -X POST localhost:8081/api/v1/auth/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token": "..."}'
+
+# Delete account (soft delete — the user is marked as deleted and cannot log in again)
+curl -X DELETE -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/auth/user
+# → {"message": "account deleted"}
+```
+
+> **Note:** Account deletion is a soft delete — the user's status is set to `"deleted"` and they are
+> blocked from logging in or refreshing tokens. Existing access tokens remain valid until they expire
+> (up to 2 hours). User data (conversations, messages) is retained for potential recovery.
 
 #### Search endpoints
 
