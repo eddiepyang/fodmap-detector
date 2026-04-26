@@ -20,12 +20,11 @@ jobs:
         run: go fmt ./...
         
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         env:
           GOTOOLCHAIN: go1.26.2
         with:
           version: latest
-          install-mode: goinstall
 
       - name: Test with coverage
         run: go test ./... -coverprofile=coverage.out
