@@ -20,7 +20,7 @@ func newMockStore(t *testing.T) (*PostgresStore, sqlmock.Sqlmock) {
 
 func TestPostgresStore_CreateUser(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	user := &User{
 		ID:        "u1",
@@ -41,7 +41,7 @@ func TestPostgresStore_CreateUser(t *testing.T) {
 
 func TestPostgresStore_GetUserByEmail(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	email := "test@example.com"
 	now := time.Now()
@@ -61,7 +61,7 @@ func TestPostgresStore_GetUserByEmail(t *testing.T) {
 
 func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing@example.com").
@@ -75,7 +75,7 @@ func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
 
 func TestPostgresStore_GetUserByID(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id := "u1"
 	now := time.Now()
@@ -94,7 +94,7 @@ func TestPostgresStore_GetUserByID(t *testing.T) {
 
 func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("SELECT id, email, password, status, created_at FROM users").
 		WithArgs("missing").
@@ -108,7 +108,7 @@ func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 
 func TestPostgresStore_UpdateUserStatus(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id := "u1"
 	status := "deleted"
@@ -124,7 +124,7 @@ func TestPostgresStore_UpdateUserStatus(t *testing.T) {
 
 func TestPostgresStore_UpdateUserStatus_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id := "missing"
 	status := "deleted"
@@ -141,7 +141,7 @@ func TestPostgresStore_UpdateUserStatus_NotFound(t *testing.T) {
 
 func TestPostgresStore_CreateConversation(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	conv := &Conversation{
 		ID:                "c1",
@@ -168,7 +168,7 @@ func TestPostgresStore_CreateConversation(t *testing.T) {
 
 func TestPostgresStore_ListConversations(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	userID := "u1"
 	now := time.Now()
@@ -190,7 +190,7 @@ func TestPostgresStore_ListConversations(t *testing.T) {
 
 func TestPostgresStore_GetConversation(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id := "c1"
 	now := time.Now()
@@ -210,7 +210,7 @@ func TestPostgresStore_GetConversation(t *testing.T) {
 
 func TestPostgresStore_GetConversation_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("SELECT id, user_id, business_id, business_name, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations").
 		WithArgs("missing").
@@ -224,7 +224,7 @@ func TestPostgresStore_GetConversation_NotFound(t *testing.T) {
 
 func TestPostgresStore_DeleteConversation(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id := "c1"
 	mock.ExpectExec("DELETE FROM conversations WHERE id = \\$1").
@@ -238,7 +238,7 @@ func TestPostgresStore_DeleteConversation(t *testing.T) {
 
 func TestPostgresStore_AddMessage(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	msg := &Message{
 		ID:             "m1",
@@ -264,7 +264,7 @@ func TestPostgresStore_AddMessage(t *testing.T) {
 
 func TestPostgresStore_GetMessages(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	conversationID := "c1"
 	now := time.Now()
@@ -285,7 +285,7 @@ func TestPostgresStore_GetMessages(t *testing.T) {
 
 func TestPostgresStore_DietaryProfile(t *testing.T) {
 	store, mock := newMockStore(t)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	userID := "u1"
 	profileData := []byte(`{"preferences":["vegan"]}`)

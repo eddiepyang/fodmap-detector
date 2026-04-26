@@ -17,7 +17,7 @@ func TestSQLiteStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	user := &User{

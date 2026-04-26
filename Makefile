@@ -98,3 +98,6 @@ run:
 
 start:
 	./start.sh
+
+restart-index:
+	./restart_index.sh

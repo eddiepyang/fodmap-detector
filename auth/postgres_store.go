@@ -200,7 +200,7 @@ func (s *PostgresStore) ListConversations(ctx context.Context, userID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var convs []*Conversation
 	for rows.Next() {
@@ -281,7 +281,7 @@ func (s *PostgresStore) GetMessages(ctx context.Context, conversationID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var msgs []*Message
 	for rows.Next() {

@@ -55,7 +55,7 @@ var serveCmd = &cobra.Command{
 		var embedder search.Embedder
 		if ollamaURL != "" && ollamaModel != "" {
 			embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
-			defer embedder.Close()
+			defer func() { _ = embedder.Close() }()
 			slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
 		} else if vectorizerURL != "" {
 			embedder = search.NewVectorizerClient(vectorizerURL)
@@ -81,7 +81,7 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("initializing user store: %w", err)
 		}
-		defer userStore.Close()
+		defer func() { _ = userStore.Close() }()
 
 		if port <= 0 || port > 65535 {
 			return fmt.Errorf("invalid port: %d (must be between 1 and 65535)", port)

@@ -81,7 +81,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	var embedder search.Embedder
 	if ollamaURL != "" && ollamaModel != "" {
 		embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
-		defer embedder.Close()
+		defer func() { _ = embedder.Close() }()
 		slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
 	} else if vectorizerHost != "" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
@@ -137,7 +137,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 	buf := make([]byte, 4*1024*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 
@@ -212,6 +212,11 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	vWorkers := numWorkers
 	if vectorizerHost == "" && (ollamaURL == "" || ollamaModel == "") {
 		vWorkers = 1 // If skip vectorization, single pass-through worker is fine
+	} else if vWorkers > 4 {
+		// GPU processes embedding requests sequentially, so more workers just
+		// create contention. 2-4 workers is enough to keep the GPU saturated
+		// (one embedding while the next batch is being prepared/uploaded).
+		vWorkers = 4
 	}
 	for range vWorkers {
 		vecWg.Add(1)
@@ -226,7 +231,7 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 					for attempt := 0; attempt < 5; attempt++ {
 						texts := make([]string, len(batch))
 						for i, item := range batch {
-							texts[i] = "search_document: " + item.Review.Text
+							texts[i] = item.Review.Text
 						}
 						var vecs [][]float32
 						vecs, err = embedder.EmbedBatch(ctx, texts)

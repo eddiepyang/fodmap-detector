@@ -89,13 +89,13 @@ func GetReviewsByBusiness(archivePath, businessID string) ([]schemas.Review, err
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer files.Close()
+	defer func() { _ = files.Close() }()
 
 	archiveFiles, gz, err := getTarReader(files)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {
@@ -141,13 +141,13 @@ func GetBusinessMap(archivePath string) (map[string]schemas.Business, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening archive: %w", err)
 	}
-	defer files.Close()
+	defer func() { _ = files.Close() }()
 
 	archiveFiles, gz, err := getTarReader(files)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	for {
 		file, err := archiveFiles.Next()
 		if errors.Is(err, goio.EOF) {

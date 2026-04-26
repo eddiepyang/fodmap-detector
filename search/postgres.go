@@ -96,7 +96,7 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	if err != nil {
 		return fmt.Errorf("prepare stmt: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, item := range items {
 		if _, err := stmt.ExecContext(ctx,
@@ -166,7 +166,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	if err != nil {
 		return fmt.Errorf("prepare stmt: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for name, entry := range items {
 		// Vectorize the ingredient name
@@ -306,7 +306,7 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("query businesses: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var businesses []BusinessResult
 	for rows.Next() {
@@ -380,7 +380,7 @@ func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int
 	if err != nil {
 		return SearchReviews{}, fmt.Errorf("query reviews: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var reviews []RankedReview
 	for rows.Next() {

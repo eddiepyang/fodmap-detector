@@ -286,7 +286,7 @@ func (c *PineconeClient) doQuery(ctx context.Context, payload map[string]any) (P
 	if err != nil {
 		return PineconeQueryResponse{}, fmt.Errorf("executing pinecone query: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		out, _ := io.ReadAll(resp.Body)
@@ -316,7 +316,7 @@ func (c *PineconeClient) doUpsert(ctx context.Context, vectors []map[string]any,
 	if err != nil {
 		return fmt.Errorf("executing pinecone upsert: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		out, _ := io.ReadAll(resp.Body)

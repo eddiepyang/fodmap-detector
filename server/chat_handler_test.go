@@ -82,7 +82,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Assertions
 	if resp.StatusCode != http.StatusOK {
