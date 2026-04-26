@@ -84,13 +84,14 @@ type AllergenClient interface {
 // ---- tool response types ----
 
 type FodmapToolResponse struct {
-	Ingredient   string   `json:"ingredient"`
-	Found        bool     `json:"found"`
-	FodmapLevel  string   `json:"fodmap_level,omitempty"`
-	FodmapGroups []string `json:"fodmap_groups,omitempty"`
-	Notes        string   `json:"notes,omitempty"`
-	Message      string   `json:"message,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	Ingredient    string   `json:"ingredient"`
+	Found         bool     `json:"found"`
+	FodmapLevel   string   `json:"fodmap_level,omitempty"`
+	FodmapGroups  []string `json:"fodmap_groups,omitempty"`
+	Notes         string   `json:"notes,omitempty"`
+	Substitutions []string `json:"substitutions,omitempty"`
+	Message       string   `json:"message,omitempty"`
+	Error         string   `json:"error,omitempty"`
 }
 
 type AllergenToolResponse struct {
@@ -363,6 +364,7 @@ func RenderChatSystemPrompt(tmplStr string, biz *Business, dietaryProfile string
 	}
 	return buf.String(), nil
 }
+
 // FormatReviewsContext builds a context message that establishes the model's
 // grounding in specific customer reviews.
 func FormatReviewsContext(bizName string, reviews []Review) string {
@@ -526,20 +528,22 @@ func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient st
 	}
 
 	var data struct {
-		Level  string   `json:"level"`
-		Groups []string `json:"groups"`
-		Notes  string   `json:"notes"`
+		Level         string   `json:"level"`
+		Groups        []string `json:"groups"`
+		Notes         string   `json:"notes"`
+		Substitutions []string `json:"substitutions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return FodmapToolResponse{}, err
 	}
 
 	return FodmapToolResponse{
-		Ingredient:   ingredient,
-		Found:        true,
-		FodmapLevel:  data.Level,
-		FodmapGroups: data.Groups,
-		Notes:        data.Notes,
+		Ingredient:    ingredient,
+		Found:         true,
+		FodmapLevel:   data.Level,
+		FodmapGroups:  data.Groups,
+		Notes:         data.Notes,
+		Substitutions: data.Substitutions,
 	}, nil
 }
 

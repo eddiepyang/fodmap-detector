@@ -126,6 +126,7 @@ func (c *PostgresClient) EnsureFodmapSchema(ctx context.Context) error {
 			level TEXT,
 			groups TEXT[],
 			notes TEXT,
+			substitutions TEXT[],
 			embedding vector(768)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_fodmap_embedding ON fodmap_ingredients USING hnsw (embedding vector_cosine_ops);`,
@@ -155,12 +156,13 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, embedding) 
-		VALUES ($1, $2, $3, $4, $5) 
-		ON CONFLICT (ingredient) DO UPDATE SET 
-			level = EXCLUDED.level, 
-			groups = EXCLUDED.groups, 
-			notes = EXCLUDED.notes, 
+		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, substitutions, embedding)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (ingredient) DO UPDATE SET
+			level = EXCLUDED.level,
+			groups = EXCLUDED.groups,
+			notes = EXCLUDED.notes,
+			substitutions = EXCLUDED.substitutions,
 			embedding = EXCLUDED.embedding
 	`)
 	if err != nil {
@@ -175,7 +177,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 			return fmt.Errorf("vectorize %q: %w", name, err)
 		}
 
-		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pgvector.NewVector(vec)); err != nil {
+		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pq.Array(entry.Substitutions), pgvector.NewVector(vec)); err != nil {
 			return fmt.Errorf("insert fodmap %q: %w", name, err)
 		}
 	}
@@ -191,7 +193,7 @@ func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (F
 	}
 
 	query := `
-		SELECT ingredient, level, groups, notes, (1 - (embedding <=> $1)) AS certainty
+		SELECT ingredient, level, groups, notes, substitutions, (1 - (embedding <=> $1)) AS certainty
 		FROM fodmap_ingredients
 		ORDER BY embedding <=> $1
 		LIMIT 1
@@ -199,10 +201,8 @@ func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (F
 
 	var res FodmapResult
 	var certainty float64
-	// In pgx v5 array of string usually scans into []string if supported by database/sql via lib/pq or pgx/stdlib
-	// However, we can use a string fallback or generic scan if needed, but let's assume it works for pq/pgx arrays.
 	err = c.db.QueryRowContext(ctx, query, pgvector.NewVector(vec)).Scan(
-		&res.Ingredient, &res.Level, (*pgxStringArray)(&res.Groups), &res.Notes, &certainty,
+		&res.Ingredient, &res.Level, (*pgxStringArray)(&res.Groups), &res.Notes, (*pgxStringArray)(&res.Substitutions), &certainty,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

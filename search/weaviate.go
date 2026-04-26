@@ -54,10 +54,11 @@ type SearchResult struct {
 
 // FodmapResult represents a parsed FODMAP ingredient from Weaviate.
 type FodmapResult struct {
-	Ingredient string
-	Level      string
-	Groups     []string
-	Notes      string
+	Ingredient    string
+	Level         string
+	Groups        []string
+	Notes         string
+	Substitutions []string
 }
 
 // SearchReviews holds the reviews associated with a search result, including their metadata.
@@ -470,7 +471,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			city:       e.city,
 			state:      e.state,
 			categories: e.categories,
-			score: sum / float64(k),
+			score:      sum / float64(k),
 			stars: func() float64 {
 				if len(e.stars) == 0 {
 					return 0
@@ -580,6 +581,7 @@ func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
 			{Name: "level", DataType: []string{"text"}},
 			{Name: "groups", DataType: []string{"text[]"}},
 			{Name: "notes", DataType: []string{"text"}},
+			{Name: "substitutions", DataType: []string{"text[]"}},
 		},
 	}
 	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
@@ -606,10 +608,11 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 			ID:     strfmt.UUID(id),
 			Vector: models.C11yVector(vec),
 			Properties: map[string]any{
-				"ingredient": name,
-				"level":      entry.Level,
-				"groups":     entry.Groups,
-				"notes":      entry.Notes,
+				"ingredient":    name,
+				"level":         entry.Level,
+				"groups":        entry.Groups,
+				"notes":         entry.Notes,
+				"substitutions": entry.Substitutions,
 			},
 		})
 	}
@@ -644,6 +647,7 @@ func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapRes
 		{Name: "level"},
 		{Name: "groups"},
 		{Name: "notes"},
+		{Name: "substitutions"},
 		{Name: "_additional { certainty }"},
 	}
 
@@ -698,16 +702,26 @@ func ParseFodmapResult(result map[string]models.JSONObject) (FodmapResult, float
 		}
 	}
 
+	var substitutions []string
+	if subSlice, ok := obj["substitutions"].([]any); ok {
+		for _, s := range subSlice {
+			if str, ok := s.(string); ok {
+				substitutions = append(substitutions, str)
+			}
+		}
+	}
+
 	certainty := 0.0
 	if additional, ok := obj["_additional"].(map[string]any); ok {
 		certainty, _ = additional["certainty"].(float64)
 	}
 
 	return FodmapResult{
-		Ingredient: ingredient,
-		Level:      level,
-		Groups:     groups,
-		Notes:      notes,
+		Ingredient:    ingredient,
+		Level:         level,
+		Groups:        groups,
+		Notes:         notes,
+		Substitutions: substitutions,
 	}, certainty, true
 }
 func formatGraphQLErrors(errs []*models.GraphQLError) string {
