@@ -268,3 +268,71 @@ Phase D (Advanced):     11 → 12 → 14
 ```
 
 Phase A items are low-effort, high-impact improvements that build directly on existing patterns. Phase B extends the core product surface. Phase C adds engagement and quality loops. Phase D requires significant new capabilities.
+
+---
+
+## Frontend Implementation Plan (Phase 1)
+
+The `fodmap-chat` frontend (React/Tailwind/Vite) needs updates to expose backend features that already have API endpoints but no UI. Phase 1 covers only features with working backends.
+
+### 1. Navigation — Expand Sidebar
+
+**Files to modify:**
+- `fodmap-chat/src/components/ConversationList.tsx` — Add a nav section above the conversation list with icon+text links for "Chat" and "Ingredients"
+- `fodmap-chat/src/App.tsx` — Add `/ingredients` route, import IngredientsPage
+
+**Details:**
+- Sidebar gets a top section with icon+text nav links (using lucide-react icons: `MessageSquare` for Chat, `Leaf` for Ingredients)
+- "Chat" link navigates to `/`, "Ingredients" link navigates to `/ingredients`
+- Below the nav, the existing conversation list continues as-is
+- Active route is highlighted
+
+### 2. FODMAP Ingredient Lookup Page
+
+**New files:**
+- `fodmap-chat/src/pages/ingredients.tsx` — Page wrapper with layout
+- `fodmap-chat/src/components/IngredientSearch.tsx` — Search form + results display
+
+**Files to modify:**
+- `fodmap-chat/src/types/api.ts` — Add `FodmapResult` type: `{ ingredient, level, groups, notes, substitutions }`
+
+**Behavior:**
+- Search input → calls `GET /api/v1/search/fodmap/{ingredient}`
+- Result displayed as a styled card with: ingredient name, FODMAP level badge (color-coded: red=high, yellow=moderate, green=low), groups as tags, substitutions as chips, and notes
+- Consistent dark glass-morphism styling (bg-card/50, backdrop-blur, ring-white/10)
+- Handles "not found" gracefully with a message directing users to the Monash app
+
+### 3. Conversation Export Button
+
+**New files:**
+- `fodmap-chat/src/lib/export.ts` — Utility for triggering browser file downloads
+
+**Files to modify:**
+- `fodmap-chat/src/components/ChatWindow.tsx` — Add export dropdown/icon button in the conversation header area
+
+**Behavior:**
+- Export icon button appears in the ChatWindow header when viewing a conversation
+- Click opens a small dropdown: "Export as JSON" / "Export as Markdown"
+- Calls `GET /api/v1/conversations/{id}/export?format=json|markdown`
+- Triggers browser download of the response
+
+### 4. Dietary Profile Polish
+
+**Files to modify:**
+- `fodmap-chat/src/components/DietaryProfileModal.tsx` — Replace raw JSON `<pre>` display with structured field rendering
+
+**Behavior:**
+- Parse the profile object and render structured fields:
+  - `diet_phase` → colored badge (elimination/reintroduction/personalized)
+  - `intolerances` → list of colored tags
+  - `triggers` → list of warning tags
+  - Other fields → key-value display
+- Keep the textarea for updating
+- Maintain existing update functionality
+
+### Implementation Order
+
+```
+1 → 2 → 3 → 4
+Nav    FODMAP   Export   Profile
+```
