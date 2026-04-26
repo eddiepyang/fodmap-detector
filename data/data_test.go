@@ -18,10 +18,10 @@ func createTestTar(t *testing.T, path string, entries map[string]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	tw := tar.NewWriter(f)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	for name, content := range entries {
 		hdr := &tar.Header{
@@ -71,7 +71,7 @@ func TestGetArchive_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 
 	if !scanner.Scan() {
 		t.Fatal("expected at least one line")
@@ -211,13 +211,13 @@ func TestGetTarReader_PlainTar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	tr, closer, err := getTarReader(f)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 
 	hdr, err := tr.Next()
 	if err != nil {

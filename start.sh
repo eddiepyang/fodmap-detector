@@ -25,8 +25,8 @@ if curl -s -o /dev/null http://localhost:11434/api/tags 2>/dev/null; then
     echo "    Ollama is already running."
     OLLAMA_PID=""
 else
-    # Start Ollama in the background (allow up to 4 parallel concurrent models/requests)
-    OLLAMA_HOST="127.0.0.1" OLLAMA_NUM_PARALLEL=4 ollama serve > /dev/null 2>&1 &
+    # Start Ollama in the background (allow up to 16 parallel concurrent models/requests)
+    OLLAMA_HOST="127.0.0.1" OLLAMA_NUM_PARALLEL=16 ollama serve > /dev/null 2>&1 &
     OLLAMA_PID=$!
     
     echo "    Waiting for Ollama to be ready..."

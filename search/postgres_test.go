@@ -38,7 +38,7 @@ func TestPostgresClient_EnsureSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	client := &PostgresClient{
 		db:       db,
@@ -64,7 +64,7 @@ func TestPostgresClient_EnsureFodmapSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	client := &PostgresClient{
 		db:       db,
@@ -90,7 +90,7 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	client := &PostgresClient{
 		db:       db,
@@ -144,7 +144,7 @@ func TestPostgresClient_BatchUpsertFodmap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
@@ -188,7 +188,7 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
@@ -224,7 +224,7 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 
@@ -261,7 +261,7 @@ func TestPostgresClient_GetReviews(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 

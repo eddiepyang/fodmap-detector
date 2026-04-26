@@ -451,7 +451,7 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 	if err != nil {
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -486,7 +486,7 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 	if err != nil {
 		return nil, fmt.Errorf("HTTP GET %s: %w", u, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -512,7 +512,7 @@ func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient st
 	if err != nil {
 		return FodmapToolResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return FodmapToolResponse{
@@ -587,7 +587,7 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 	if err != nil {
 		return AllergenToolResponse{}, fmt.Errorf("OFF request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return AllergenToolResponse{

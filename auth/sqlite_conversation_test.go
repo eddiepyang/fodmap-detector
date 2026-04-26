@@ -17,7 +17,7 @@ func TestSQLiteStore_ConversationCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
@@ -109,7 +109,7 @@ func TestSQLiteStore_MessageCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 
