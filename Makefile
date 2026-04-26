@@ -29,7 +29,7 @@ ifeq ($(UNAME),Darwin)
 else
 	@which golangci-lint > /dev/null 2>&1 || { \
 		echo "    Installing golangci-lint via install script..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $$(go env GOPATH)/bin latest; \
 	}
 endif
 	@echo "    golangci-lint: $$(golangci-lint --version 2>/dev/null || echo 'not found')"
@@ -88,8 +88,7 @@ test: lint
 	go test ./... -count=1 -v
 
 lint:
-	# Ignore version mismatch errors during custom script linting if target version is newer than linter
-	golangci-lint run ./... || go vet ./...
+	golangci-lint run ./...
 
 check: lint test build
 
