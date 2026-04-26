@@ -337,6 +337,7 @@ func TestDispatchTool_FodmapFound(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"level": "high", "groups": []string{"fructans"}, "notes": "avoid",
+			"substitutions": []string{"garlic-infused olive oil", "garlic chives"},
 		})
 	}))
 	defer srv.Close()

@@ -16,13 +16,20 @@ import (
 // mockEmbedder implements Embedder for testing.
 type mockEmbedder struct {
 	vec []float32
+	err error // if non-nil, EmbedSingle/EmbedBatch return this error
 }
 
 func (m *mockEmbedder) EmbedSingle(_ context.Context, _ string) ([]float32, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
 	return m.vec, nil
 }
 
 func (m *mockEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
 	result := make([][]float32, len(texts))
 	for i := range texts {
 		result[i] = m.vec
@@ -31,7 +38,6 @@ func (m *mockEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float3
 }
 
 func (m *mockEmbedder) Close() error { return nil }
-
 
 func TestPostgresClient_EnsureSchema(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -155,9 +161,10 @@ func TestPostgresClient_BatchUpsertFodmap(t *testing.T) {
 
 	items := map[string]data.FodmapEntry{
 		"garlic": {
-			Level:  "high",
-			Groups: []string{"Fructans"},
-			Notes:  "High in fructans",
+			Level:         "high",
+			Groups:        []string{"Fructans"},
+			Notes:         "High in fructans",
+			Substitutions: []string{"garlic-infused olive oil", "garlic chives"},
 		},
 	}
 
@@ -168,6 +175,7 @@ func TestPostgresClient_BatchUpsertFodmap(t *testing.T) {
 			"high",
 			pq.Array([]string{"Fructans"}),
 			"High in fructans",
+			pq.Array([]string{"garlic-infused olive oil", "garlic chives"}),
 			pgvector.NewVector([]float32{0.1, 0.2, 0.3}),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -197,10 +205,10 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 		embedder: mockEmb,
 	}
 
-	mock.ExpectQuery("SELECT ingredient, level, groups, notes, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM fodmap_ingredients").
+	mock.ExpectQuery("SELECT ingredient, level, groups, notes, substitutions, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM fodmap_ingredients").
 		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3})).
-		WillReturnRows(sqlmock.NewRows([]string{"ingredient", "level", "groups", "notes", "certainty"}).
-			AddRow("garlic", "high", "{Fructans}", "High in fructans", 0.95))
+		WillReturnRows(sqlmock.NewRows([]string{"ingredient", "level", "groups", "notes", "substitutions", "certainty"}).
+			AddRow("garlic", "high", "{Fructans}", "High in fructans", "{garlic-infused olive oil,garlic chives}", 0.95))
 
 	res, certainty, err := client.SearchFodmap(context.Background(), "garlic")
 	if err != nil {
@@ -209,6 +217,9 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 
 	if res.Ingredient != "garlic" || res.Level != "high" || res.Groups[0] != "Fructans" {
 		t.Errorf("Unexpected result: %+v", res)
+	}
+	if len(res.Substitutions) != 2 || res.Substitutions[0] != "garlic-infused olive oil" {
+		t.Errorf("Unexpected substitutions: %v", res.Substitutions)
 	}
 	if certainty != 0.95 {
 		t.Errorf("Unexpected certainty: %v", certainty)

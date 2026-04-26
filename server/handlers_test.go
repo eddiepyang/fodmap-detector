@@ -393,11 +393,12 @@ func TestGetFodmapHandler_Success(t *testing.T) {
 	}
 
 	var body struct {
-		Ingredient string   `json:"ingredient"`
-		Level      string   `json:"level"`
-		Groups     []string `json:"groups"`
-		Notes      string   `json:"notes"`
-		Certainty  float64  `json:"certainty"`
+		Ingredient    string   `json:"ingredient"`
+		Level         string   `json:"level"`
+		Groups        []string `json:"groups"`
+		Notes         string   `json:"notes"`
+		Substitutions []string `json:"substitutions"`
+		Certainty     float64  `json:"certainty"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)

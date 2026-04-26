@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 
 	"fodmap/auth"
+
 	"golang.org/x/time/rate"
 )
 
@@ -64,7 +66,8 @@ func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 	return l
 }
 
-// rateLimitMiddleware returns middleware that enforces per-IP rate limits.
+// rateLimitMiddleware returns middleware that enforces per-IP rate limits and
+// sets standard rate limit response headers on every response.
 func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +77,15 @@ func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 				ip = strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
 			}
 			limiter := rl.getLimiter(ip)
+
+			// Set rate limit headers before processing.
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%.0f", float64(rl.rate)))
+			remaining := limiter.Tokens()
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%.0f", remaining))
+
 			if !limiter.Allow() {
 				slog.Warn("rate limit exceeded", "ip", ip)
+				w.Header().Set("Retry-After", "1")
 				http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
 				return
 			}

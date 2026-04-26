@@ -44,6 +44,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # HTTP request handlers
 │   ├── auth_handler.go      # Auth endpoints (register, login, refresh, delete)
+│   ├── conversation_handler.go       # Conversation CRUD endpoints
+│   ├── conversation_export_handler.go # Conversation export (JSON/Markdown)
 │   ├── middleware.go         # JWT auth, rate limiting, CORS middleware
 │
 ├── data/
@@ -106,6 +108,19 @@ type Business struct {
     Categories string // Comma-separated, e.g. "Italian, Pizza, Restaurants"
 }
 ```
+
+The FODMAP ingredient database (`data/fodmap.go`) contains 100+ entries with FODMAP level, group tags, notes, and substitution suggestions:
+
+```go
+type FodmapEntry struct {
+    Level         string   `json:"level"`                    // "high", "moderate", or "low"
+    Groups        []string `json:"groups"`                   // FODMAP groups, e.g. ["fructan", "mannitol"]
+    Notes         string   `json:"notes,omitempty"`          // Additional context (serving thresholds, etc.)
+    Substitutions []string `json:"substitutions,omitempty"`  // Low-FODMAP alternatives for high/moderate ingredients
+}
+```
+
+When the chat agent looks up a high or moderate FODMAP ingredient, it automatically presents the substitution suggestions to the user as practical alternatives.
 
 The Avro streaming schema (`EventSchema`) mirrors the `Review` struct and carries `business_id` but not the business name. During indexing, the name is joined from the business dataset and stored in Weaviate so search results include it directly.
 
@@ -340,8 +355,31 @@ Default port is `8081`.
 | `GET` | `/api/v1/conversations/{id}` | JWT | Get a conversation |
 | `DELETE` | `/api/v1/conversations/{id}` | JWT | Delete a conversation |
 | `POST` | `/api/v1/conversations/{id}/messages` | JWT | Send a chat message (streaming) |
+| `GET` | `/api/v1/conversations/{id}/export` | JWT | Export a conversation (JSON or Markdown) |
 | `GET` | `/api/v1/profile` | JWT | Get dietary profile |
 | `POST` | `/api/v1/profile` | JWT | Update dietary profile |
+
+**Conversation export** — the `GET /api/v1/conversations/{id}/export` endpoint supports a `format` query parameter:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `format` | `json` | Export format: `json` (machine-readable) or `markdown` (human-readable) |
+
+```sh
+# Export as JSON (default)
+curl -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/conversations/42/export
+
+# Export as Markdown
+curl -H 'Authorization: Bearer <access_token>' "localhost:8081/api/v1/conversations/42/export?format=markdown"
+```
+
+**Rate limiting** — all endpoints are rate-limited. The server returns standard headers on every response:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Maximum requests allowed per window |
+| `X-RateLimit-Remaining` | Requests remaining in the current window |
+| `Retry-After` | Seconds until the limit resets (only present on `429 Too Many Requests` responses) |
 
 **Common query parameters** for search endpoints:
 
