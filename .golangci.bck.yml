@@ -1,9 +1,0 @@
-run:
-  go: "1.26.2"
-
-linters:
-  exclusions:
-    rules:
-      - linters:
-          - errcheck
-        source: "defer.*Close"

@@ -29,7 +29,7 @@ func TestProfileHandler_Update(t *testing.T) {
 	}
 
 	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey: "test",
+		APIKey:      "test",
 		HTTPOptions: genai.HTTPOptions{BaseURL: geminiServer.URL + "/"},
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func TestProfileHandler_Update(t *testing.T) {
 
 	reqBody := `{"input": "I am vegan"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(reqBody))
-	
+
 	// Add userContextKey
 	ctx := context.WithValue(req.Context(), userContextKey, "u1")
 	req = req.WithContext(ctx)
@@ -67,9 +67,9 @@ func TestProfileHandler_Update_Unauthorized(t *testing.T) {
 	reqBody := `{"input": "I am vegan"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(reqBody))
 	rec := httptest.NewRecorder()
-	
+
 	s.updateProfileHandler(rec, req)
-	
+
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
@@ -118,5 +118,86 @@ func TestProfileHandler_Get_Empty(t *testing.T) {
 
 	if rec.Body.String() != `{}` {
 		t.Errorf("expected {}, got %s", rec.Body.String())
+	}
+}
+
+func TestProfileHandler_Get_Unauthorized(t *testing.T) {
+	s := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/profile", nil)
+	rec := httptest.NewRecorder()
+
+	s.getProfileHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestProfileHandler_Update_EmptyInput(t *testing.T) {
+	store := newMockStore()
+	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
+
+	s := &Server{userStore: store}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"input": ""}`))
+	ctx := context.WithValue(req.Context(), userContextKey, "u1")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	s.updateProfileHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestProfileHandler_Update_InvalidJSON(t *testing.T) {
+	store := newMockStore()
+	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
+
+	s := &Server{userStore: store}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`not json`))
+	ctx := context.WithValue(req.Context(), userContextKey, "u1")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	s.updateProfileHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestProfileHandler_Update_UserNotFound(t *testing.T) {
+	store := newMockStore()
+	// No user with ID "u-missing" in the store
+
+	s := &Server{userStore: store}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"input": "I am vegan"}`))
+	ctx := context.WithValue(req.Context(), userContextKey, "u-missing")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	s.updateProfileHandler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestProfileHandler_Update_ChatServiceNotConfigured(t *testing.T) {
+	store := newMockStore()
+	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
+
+	// genaiClient is nil — simulates missing GOOGLE_API_KEY
+	s := &Server{userStore: store}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"input": "I am vegan"}`))
+	ctx := context.WithValue(req.Context(), userContextKey, "u1")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	s.updateProfileHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
 	}
 }

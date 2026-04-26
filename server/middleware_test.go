@@ -180,6 +180,47 @@ func TestRateLimiter_BlocksExcess(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_SetsHeaders(t *testing.T) {
+	rl := newIPRateLimiter(10, 10)
+	h := rateLimitMiddleware(rl)(okHandler())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/pizza", nil)
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-RateLimit-Limit"); got != "10" {
+		t.Errorf("X-RateLimit-Limit = %q, want %q", got, "10")
+	}
+	got := rec.Header().Get("X-RateLimit-Remaining")
+	if got == "" {
+		t.Error("X-RateLimit-Remaining is empty, expected a value")
+	}
+}
+
+func TestRateLimiter_SetsRetryAfterOn429(t *testing.T) {
+	rl := newIPRateLimiter(0.001, 1) // very low rate, burst of 1
+	h := rateLimitMiddleware(rl)(okHandler())
+
+	// First request succeeds.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/pizza", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", rec.Code)
+	}
+
+	// Second request should be rate-limited.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/chat/pizza", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request: expected 429, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got == "" {
+		t.Error("Retry-After header is empty on 429, expected a value")
+	}
+}
+
 // ---- concurrencyLimiter ----
 
 func TestConcurrencyLimiter_RejectsWhenFull(t *testing.T) {

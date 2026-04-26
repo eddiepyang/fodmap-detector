@@ -46,14 +46,14 @@ type Config struct {
 	Port int
 
 	// Search configuration.
-	WeaviateHost      string // optional; if empty, Weaviate is not used
-	WeaviateScheme    string // optional; e.g. "http" or "https"
-	WeaviateAPIKey    string // optional; for Weaviate Cloud (WCD)
-	PineconeAPIKey    string // optional
-	PineconeIndexHost string // optional (must start with https://)
-	VectorizerURL     string // required for Pinecone; optional otherwise
-	PostgresSearch    bool           // optional; if true, uses PostgreSQL for search
-	PostgresDSN       string         // required if PostgresSearch is true
+	WeaviateHost      string          // optional; if empty, Weaviate is not used
+	WeaviateScheme    string          // optional; e.g. "http" or "https"
+	WeaviateAPIKey    string          // optional; for Weaviate Cloud (WCD)
+	PineconeAPIKey    string          // optional
+	PineconeIndexHost string          // optional (must start with https://)
+	VectorizerURL     string          // required for Pinecone; optional otherwise
+	PostgresSearch    bool            // optional; if true, uses PostgreSQL for search
+	PostgresDSN       string          // required if PostgresSearch is true
 	Embedder          search.Embedder // embedding provider (LlamaEmbedder or VectorizerClient)
 
 	// Chat endpoint configuration.
@@ -224,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/conversations", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.listConversationsHandler)))
 	mux.Handle("GET /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.getConversationHandler)))
 	mux.Handle("DELETE /api/v1/conversations/{id}", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.deleteConversationHandler)))
+	mux.Handle("GET /api/v1/conversations/{id}/export", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.exportConversationHandler)))
 
 	// Conversation creation (protected by JWT, rate limited)
 	createConvMid := chain(

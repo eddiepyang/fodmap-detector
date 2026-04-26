@@ -33,10 +33,11 @@ func (c *DirectFodmapClient) LookupFODMAP(ctx context.Context, ingredient string
 	}
 
 	return chat.FodmapToolResponse{
-		Ingredient:   ingredient,
-		Found:        true,
-		FodmapLevel:  res.Level,
-		FodmapGroups: res.Groups,
-		Notes:        res.Notes,
+		Ingredient:    ingredient,
+		Found:         true,
+		FodmapLevel:   res.Level,
+		FodmapGroups:  res.Groups,
+		Notes:         res.Notes,
+		Substitutions: res.Substitutions,
 	}, nil
 }

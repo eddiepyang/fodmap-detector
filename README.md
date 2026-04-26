@@ -21,7 +21,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Streaming format | Apache Avro (OCF) via [hamba/avro](https://github.com/hamba/avro) |
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
-| Vector search | [Weaviate](https://weaviate.io) (Local) or [Pinecone](https://pinecone.io) (Cloud) |
+| Vector search | [Weaviate](https://weaviate.io) (Local), [Pinecone](https://pinecone.io) (Cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
 | Embeddings | Ollama |
 
 ---
@@ -36,18 +36,29 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── event.go             # Avro subcommand (event write / event read)
 │   ├── serve.go             # Serve subcommand (starts the HTTP server)
 │   ├── index.go             # Index subcommand (populates Weaviate for search)
-│   ├── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
-│   ├── chat-instruction.txt # Embedded instruction template for the interactive chat agent
-│   └── fodmap_data.go       # Static FODMAP ingredient database + lookup
+│   └── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
+│
+├── chat/
+│   ├── chat.go              # Chat session logic, tool dispatch, system prompt rendering
+│   ├── profile.go           # Dietary profile generation via Gemini
+│   └── chat-instruction.txt # Embedded instruction template for the chat agent
 │
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
-│   ├── handlers.go          # HTTP request handlers
+│   ├── handlers.go          # Search & FODMAP HTTP handlers
 │   ├── auth_handler.go      # Auth endpoints (register, login, refresh, delete)
+│   ├── chat_handler.go      # Chat streaming handler (SSE)
+│   ├── conversation_handler.go       # Conversation CRUD endpoints
+│   ├── conversation_export_handler.go # Conversation export (JSON/Markdown)
+│   ├── create_conversation.go        # Conversation creation + review summary
+│   ├── direct_fodmap_client.go       # Direct FODMAP lookup client for chat
+│   ├── profile_handler.go             # Dietary profile endpoints
 │   ├── middleware.go         # JWT auth, rate limiting, CORS middleware
+│   └── mock_store.go         # In-memory test store
 │
 ├── data/
 │   ├── data.go              # Archive reading, Parquet write/read
+│   ├── fodmap.go            # Static FODMAP ingredient database (100+ entries)
 │   │
 │   ├── io/
 │   │   └── event.go         # Avro OCF read/write helpers
@@ -58,19 +69,26 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── search/
 │   ├── weaviate.go          # Weaviate client: schema, batch upsert, nearText/hybrid search
 │   ├── pinecone.go          # Pinecone client: REST-based query, upsert, BM25 re-ranking
+│   ├── postgres.go           # PostgreSQL/pgvector client: vector search via SQL
 │   ├── bm25.go              # BM25 keyword scoring and score blending for hybrid search
-│   └── embedder_ollama.go   # Go client for Ollama embeddings API
+│   ├── embedder.go           # Embedder interface
+│   ├── embedder_ollama.go   # Go client for Ollama embeddings API
+│   └── vectorizer.go        # HTTP vectorizer proxy client
 │
 ├── auth/
 │   ├── store.go             # Unified Store interface
 │   ├── sqlite_store.go      # SQLite implementation
 │   ├── postgres_store.go    # PostgreSQL implementation
+│   ├── conversation.go      # Conversation & Message models
 │   ├── jwt.go               # Token generation/validation
 │   └── user.go              # User model
 │
 ├── docs/
 │   ├── search.md                    # Search service design decisions and API reference
 │   ├── chat.md                      # Chat agent design decisions, tradeoffs, and future work
+│   ├── server.md                    # Server design and API documentation
+│   ├── dietary-profile-plan.md      # Dietary profile feature plan
+│   ├── FRONTEND_IMPLEMENTATION_PLAN.md # Frontend implementation roadmap
 │   └── indexing-improvements.md     # Indexing performance tuning plan
 │
 └── docker-compose.yaml      # Vector database configuration (Weaviate)
@@ -106,6 +124,19 @@ type Business struct {
     Categories string // Comma-separated, e.g. "Italian, Pizza, Restaurants"
 }
 ```
+
+The FODMAP ingredient database (`data/fodmap.go`) contains 100+ entries with FODMAP level, group tags, notes, and substitution suggestions:
+
+```go
+type FodmapEntry struct {
+    Level         string   `json:"level"`                    // "high", "moderate", or "low"
+    Groups        []string `json:"groups"`                   // FODMAP groups, e.g. ["fructan", "mannitol"]
+    Notes         string   `json:"notes,omitempty"`          // Additional context (serving thresholds, etc.)
+    Substitutions []string `json:"substitutions,omitempty"`  // Low-FODMAP alternatives for high/moderate ingredients
+}
+```
+
+When the chat agent looks up a high or moderate FODMAP ingredient, it automatically presents the substitution suggestions to the user as practical alternatives.
 
 The Avro streaming schema (`EventSchema`) mirrors the `Review` struct and carries `business_id` but not the business name. During indexing, the name is joined from the business dataset and stored in Weaviate so search results include it directly.
 
@@ -178,6 +209,8 @@ chat-model: "gemini-3-flash-preview"
 filter-model: "gemini-3.1-flash-lite-preview"
 batch-size: 512
 workers: 4
+# postgres-search: true          # Enable PostgreSQL/pgvector search backend
+# postgres-dsn: "postgres://user:pass@localhost:5432/fodmap?sslmode=disable"
 ```
 
 #### Validation
@@ -223,6 +256,27 @@ Pinecone is a managed vector database. Use this if you want to offload storage t
    go run . serve \
      --pinecone-api-key YOUR_KEY \
      --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
+     --ollama-url http://localhost:11434 \
+     --ollama-model nomic-embed-text
+   ```
+
+#### Option C: PostgreSQL (pgvector) + Ollama
+
+Use PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension for vector search. This is a good option if you already have PostgreSQL running and want to keep everything in one database.
+
+1. **Start Ollama:**
+   Follow the steps in Option A to start Ollama and pull the model.
+
+2. **Set up PostgreSQL with pgvector:**
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+3. **Run with PostgreSQL Flags:**
+   ```sh
+   go run . serve \
+     --postgres-search \
+     --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" \
      --ollama-url http://localhost:11434 \
      --ollama-model nomic-embed-text
    ```
@@ -317,6 +371,9 @@ go run . serve --weaviate localhost:8090
 # With search enabled (Pinecone Cloud)
 go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
 
+# With search enabled (PostgreSQL/pgvector)
+go run . serve --postgres-search --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
+
 # Without search (search endpoint returns 503)
 go run . serve
 ```
@@ -327,9 +384,10 @@ Default port is `8081`.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/reviews` | — | List reviews for a business |
-| `GET` | `/api/v1/search/businesses/{query...}` | — | Semantic business search (requires Weaviate) |
-| `GET` | `/api/v1/search/reviews/{query...}` | — | Semantic review search (requires Weaviate) |
+| `GET` | `/api/v1/reviews` | — | List reviews for a business |
+| `GET` | `/api/v1/search/businesses/{query...}` | — | Semantic business search |
+| `GET` | `/api/v1/search/reviews/{query...}` | — | Semantic review search |
+| `GET` | `/api/v1/search/fodmap/{ingredient...}` | — | FODMAP ingredient lookup |
 | `POST` | `/api/v1/auth/register` | — | Register a new user account |
 | `POST` | `/api/v1/auth/login` | — | Log in and receive access/refresh tokens |
 | `POST` | `/api/v1/auth/refresh` | — | Exchange a refresh token for new tokens |
@@ -340,8 +398,32 @@ Default port is `8081`.
 | `GET` | `/api/v1/conversations/{id}` | JWT | Get a conversation |
 | `DELETE` | `/api/v1/conversations/{id}` | JWT | Delete a conversation |
 | `POST` | `/api/v1/conversations/{id}/messages` | JWT | Send a chat message (streaming) |
+| `GET` | `/api/v1/conversations/{id}/export` | JWT | Export a conversation (JSON or Markdown) |
 | `GET` | `/api/v1/profile` | JWT | Get dietary profile |
 | `POST` | `/api/v1/profile` | JWT | Update dietary profile |
+| `POST` | `/chat/{query...}` | JWT/API Key | Legacy chat endpoint (streaming) |
+
+**Conversation export** — the `GET /api/v1/conversations/{id}/export` endpoint supports a `format` query parameter:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `format` | `json` | Export format: `json` (machine-readable) or `markdown` (human-readable) |
+
+```sh
+# Export as JSON (default)
+curl -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/conversations/42/export
+
+# Export as Markdown
+curl -H 'Authorization: Bearer <access_token>' "localhost:8081/api/v1/conversations/42/export?format=markdown"
+```
+
+**Rate limiting** — all endpoints are rate-limited. The server returns standard headers on every response:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Maximum requests allowed per window |
+| `X-RateLimit-Remaining` | Requests remaining in the current window |
+| `Retry-After` | Seconds until the limit resets (only present on `429 Too Many Requests` responses) |
 
 **Common query parameters** for search endpoints:
 

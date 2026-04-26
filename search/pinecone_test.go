@@ -3,11 +3,13 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"fodmap/data"
+	"fodmap/data/schemas"
 )
 
 func TestPineconeClient_SearchFodmap(t *testing.T) {
@@ -334,5 +336,282 @@ func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
 	}
 	if result2.BusinessReviews[0].Review.Review.ReviewID != "rA" {
 		t.Errorf("expected dense-score review A to rank first with alpha=1, got %q", result2.BusinessReviews[0].Review.Review.ReviewID)
+	}
+}
+
+func TestPineconeClient_EnsureSchema(t *testing.T) {
+	client := NewPineconeClient("test-key", "http://localhost:1234", &mockEmbedder{vec: []float32{0.1}})
+	// EnsureSchema is a no-op for Pinecone
+	if err := client.EnsureSchema(context.Background()); err != nil {
+		t.Errorf("EnsureSchema returned unexpected error: %v", err)
+	}
+}
+
+func TestPineconeClient_GetBusinesses_WithFilters(t *testing.T) {
+	mockEmb := mockVecEmbedder()
+
+	var requestPayload map[string]any
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/query" {
+			_ = json.NewDecoder(r.Body).Decode(&requestPayload)
+			res := PineconeQueryResponse{
+				Matches: []struct {
+					ID       string         `json:"id"`
+					Score    float64        `json:"score"`
+					Metadata map[string]any `json:"metadata"`
+				}{
+					{ID: "r1", Score: 0.9, Metadata: map[string]any{
+						"business_id": "biz-1", "business_name": "Pizza Place",
+						"city": "Las Vegas", "state": "NV", "categories": "Italian",
+					}},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(res)
+		}
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{City: "Las Vegas", State: "NV"})
+	if err != nil {
+		t.Fatalf("GetBusinesses with filters failed: %v", err)
+	}
+
+	filter, ok := requestPayload["filter"].(map[string]any)
+	if !ok {
+		t.Fatal("expected filter in request payload")
+	}
+	cityFilter, _ := filter["city"].(map[string]any)
+	if cityFilter["$eq"] != "Las Vegas" {
+		t.Errorf("expected city filter $eq 'Las Vegas', got %v", cityFilter)
+	}
+	stateFilter, _ := filter["state"].(map[string]any)
+	if stateFilter["$eq"] != "NV" {
+		t.Errorf("expected state filter $eq 'NV', got %v", stateFilter)
+	}
+}
+
+func TestPineconeClient_GetBusinesses_EmptyResult(t *testing.T) {
+	mockEmb := mockVecEmbedder()
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(PineconeQueryResponse{})
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	result, err := client.GetBusinesses(context.Background(), "nonexistent", 5, SearchFilter{})
+	if err != nil {
+		t.Fatalf("GetBusinesses failed: %v", err)
+	}
+	if len(result.Businesses) != 0 {
+		t.Errorf("expected 0 businesses, got %d", len(result.Businesses))
+	}
+}
+
+func TestPineconeClient_SearchFodmap_WithSubstitutions(t *testing.T) {
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/query" {
+			res := PineconeQueryResponse{
+				Matches: []struct {
+					ID       string         `json:"id"`
+					Score    float64        `json:"score"`
+					Metadata map[string]any `json:"metadata"`
+				}{
+					{
+						ID:    "fodmap-garlic",
+						Score: 0.97,
+						Metadata: map[string]any{
+							"ingredient":    "garlic",
+							"level":         "high",
+							"groups":        []any{"fructans"},
+							"notes":         "Even small amounts are high FODMAP",
+							"substitutions": []any{"garlic-infused olive oil", "chives"},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(res)
+		}
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	res, score, err := client.SearchFodmap(context.Background(), "garlic")
+	if err != nil {
+		t.Fatalf("SearchFodmap failed: %v", err)
+	}
+	if res.Ingredient != "garlic" {
+		t.Errorf("ingredient = %q, want %q", res.Ingredient, "garlic")
+	}
+	if res.Level != "high" {
+		t.Errorf("level = %q, want %q", res.Level, "high")
+	}
+	if len(res.Substitutions) != 2 {
+		t.Fatalf("substitutions length = %d, want 2", len(res.Substitutions))
+	}
+	if res.Substitutions[0] != "garlic-infused olive oil" {
+		t.Errorf("substitutions[0] = %q, want %q", res.Substitutions[0], "garlic-infused olive oil")
+	}
+	if res.Notes != "Even small amounts are high FODMAP" {
+		t.Errorf("notes = %q, want %q", res.Notes, "Even small amounts are high FODMAP")
+	}
+	if score != 0.97 {
+		t.Errorf("score = %f, want 0.97", score)
+	}
+}
+
+func TestPineconeClient_SearchFodmap_NotFound(t *testing.T) {
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/query" {
+			_ = json.NewEncoder(w).Encode(PineconeQueryResponse{Matches: nil})
+		}
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	_, _, err := client.SearchFodmap(context.Background(), "xyz")
+	if err == nil {
+		t.Error("expected error for not found ingredient")
+	}
+}
+
+func TestPineconeClient_EnsureFodmapSchema(t *testing.T) {
+	client := NewPineconeClient("test-key", "http://localhost:1234", &mockEmbedder{vec: []float32{0.1}})
+	// EnsureFodmapSchema is a no-op for Pinecone; should return nil
+	if err := client.EnsureFodmapSchema(context.Background()); err != nil {
+		t.Errorf("EnsureFodmapSchema returned unexpected error: %v", err)
+	}
+}
+
+func TestPineconeClient_BatchUpsertFodmap_WithSubstitutions(t *testing.T) {
+	mockEmb := &mockEmbedder{vec: []float32{0.0, 0.0, 0.0}}
+
+	var upsertedBody map[string]any
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/vectors/upsert" {
+			if err := json.NewDecoder(r.Body).Decode(&upsertedBody); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	err := client.BatchUpsertFodmap(context.Background(), map[string]data.FodmapEntry{
+		"garlic": {Level: "high", Groups: []string{"fructans"}, Substitutions: []string{"garlic-infused olive oil", "chives"}},
+	})
+	if err != nil {
+		t.Fatalf("BatchUpsertFodmap failed: %v", err)
+	}
+
+	vectors := upsertedBody["vectors"].([]any)
+	if len(vectors) != 1 {
+		t.Fatalf("got %d vectors, want 1", len(vectors))
+	}
+	vec := vectors[0].(map[string]any)
+	meta := vec["metadata"].(map[string]any)
+	subs, ok := meta["substitutions"].([]any)
+	if !ok {
+		t.Fatal("substitutions not found in metadata")
+	}
+	if len(subs) != 2 {
+		t.Errorf("got %d substitutions, want 2", len(subs))
+	}
+}
+
+func TestPineconeClient_BatchUpsertFodmap_Empty(t *testing.T) {
+	mockEmb := &mockEmbedder{vec: []float32{0.1}}
+	client := NewPineconeClient("test-key", "http://localhost:1234", mockEmb)
+
+	err := client.BatchUpsertFodmap(context.Background(), map[string]data.FodmapEntry{})
+	if err != nil {
+		t.Errorf("BatchUpsertFodmap with empty map should be no-op, got error: %v", err)
+	}
+}
+
+func TestPineconeClient_BatchUpsert(t *testing.T) {
+	mockEmb := mockVecEmbedder()
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/vectors/upsert" {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"upsertedCount": 1})
+		}
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	items := []IndexItem{
+		{
+			Review:       schemas.Review{ReviewID: "r1", BusinessID: "b1", Stars: 5, Text: "great"},
+			BusinessName: "Pizza Place",
+			City:         "NYC",
+			State:        "NY",
+			Categories:   "Italian",
+			Vector:       []float32{0.1, 0.2, 0.3},
+		},
+	}
+	if err := client.BatchUpsert(context.Background(), items); err != nil {
+		t.Fatalf("BatchUpsert failed: %v", err)
+	}
+}
+
+func TestPineconeClient_BatchUpsert_Empty(t *testing.T) {
+	mockEmb := mockVecEmbedder()
+	client := NewPineconeClient("test-key", "http://localhost:1234", mockEmb)
+
+	err := client.BatchUpsert(context.Background(), nil)
+	if err != nil {
+		t.Errorf("BatchUpsert with nil items should succeed, got: %v", err)
+	}
+}
+
+func TestPineconeClient_GetBusinesses_EmbedError(t *testing.T) {
+	mockEmb := &mockEmbedder{err: fmt.Errorf("embed failed")}
+	client := NewPineconeClient("test-key", "http://localhost:1234", mockEmb)
+
+	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	if err == nil {
+		t.Error("expected error when embedder fails")
+	}
+}
+
+func TestPineconeClient_SearchFodmap_EmbedError(t *testing.T) {
+	mockEmb := &mockEmbedder{err: fmt.Errorf("embed failed")}
+	client := NewPineconeClient("test-key", "http://localhost:1234", mockEmb)
+
+	_, _, err := client.SearchFodmap(context.Background(), "garlic")
+	if err == nil {
+		t.Error("expected error when embedder fails")
+	}
+}
+
+func TestPineconeClient_GetBusinesses_ServerError(t *testing.T) {
+	mockEmb := mockVecEmbedder()
+
+	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal server error"))
+	}))
+	defer pineServer.Close()
+
+	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
+
+	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	if err == nil {
+		t.Error("expected error when server returns 500")
 	}
 }

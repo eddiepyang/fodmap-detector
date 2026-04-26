@@ -193,18 +193,20 @@ func (s *Server) getFodmapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type response struct {
-		Ingredient string   `json:"ingredient"`
-		Level      string   `json:"level"`
-		Groups     []string `json:"groups"`
-		Notes      string   `json:"notes"`
-		Certainty  float64  `json:"certainty"`
+		Ingredient    string   `json:"ingredient"`
+		Level         string   `json:"level"`
+		Groups        []string `json:"groups"`
+		Notes         string   `json:"notes"`
+		Substitutions []string `json:"substitutions,omitempty"`
+		Certainty     float64  `json:"certainty"`
 	}
 	out := response{
-		Ingredient: res.Ingredient,
-		Level:      res.Level,
-		Groups:     res.Groups,
-		Notes:      res.Notes,
-		Certainty:  cert,
+		Ingredient:    res.Ingredient,
+		Level:         res.Level,
+		Groups:        res.Groups,
+		Notes:         res.Notes,
+		Substitutions: res.Substitutions,
+		Certainty:     cert,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(out); err != nil {

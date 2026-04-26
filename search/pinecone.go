@@ -203,11 +203,23 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 		}
 	}
 
+	var substitutions []string
+	if subSlice, ok := m.Metadata["substitutions"].([]any); ok {
+		for _, s := range subSlice {
+			if str, ok := s.(string); ok {
+				substitutions = append(substitutions, str)
+			}
+		}
+	}
+
+	notes, _ := m.Metadata["notes"].(string)
+
 	return FodmapResult{
-		Ingredient: m.Metadata["ingredient"].(string),
-		Level:      m.Metadata["level"].(string),
-		Groups:     groups,
-		Notes:      m.Metadata["notes"].(string),
+		Ingredient:    m.Metadata["ingredient"].(string),
+		Level:         m.Metadata["level"].(string),
+		Groups:        groups,
+		Notes:         notes,
+		Substitutions: substitutions,
 	}, m.Score, nil
 }
 
@@ -253,15 +265,19 @@ func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	var pineconeVectors []map[string]any
 	i := 0
 	for name, entry := range items {
+		meta := map[string]any{
+			"ingredient": name,
+			"level":      entry.Level,
+			"groups":     entry.Groups,
+			"notes":      entry.Notes,
+		}
+		if len(entry.Substitutions) > 0 {
+			meta["substitutions"] = entry.Substitutions
+		}
 		pineconeVectors = append(pineconeVectors, map[string]any{
-			"id":     fmt.Sprintf("fodmap-%s", name),
-			"values": vectors[i],
-			"metadata": map[string]any{
-				"ingredient": name,
-				"level":      entry.Level,
-				"groups":     entry.Groups,
-				"notes":      entry.Notes,
-			},
+			"id":       fmt.Sprintf("fodmap-%s", name),
+			"values":   vectors[i],
+			"metadata": meta,
 		})
 		i++
 	}

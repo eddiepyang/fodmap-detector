@@ -234,10 +234,11 @@ func TestParseFodmapResult_Valid(t *testing.T) {
 		"Get": map[string]any{
 			"FodmapIngredient": []any{
 				map[string]any{
-					"ingredient": "garlic",
-					"level":      "high",
-					"groups":     []any{"fructans"},
-					"notes":      "Keep away",
+					"ingredient":    "garlic",
+					"level":         "high",
+					"groups":        []any{"fructans"},
+					"notes":         "Keep away",
+					"substitutions": []any{"garlic-infused olive oil", "garlic chives"},
 					"_additional": map[string]any{
 						"certainty": 0.95,
 					},
@@ -260,6 +261,9 @@ func TestParseFodmapResult_Valid(t *testing.T) {
 	}
 	if result.Notes != "Keep away" {
 		t.Errorf("got notes %q, want %q", result.Notes, "Keep away")
+	}
+	if len(result.Substitutions) != 2 || result.Substitutions[0] != "garlic-infused olive oil" {
+		t.Errorf("got substitutions %v, want [garlic-infused olive oil, garlic chives]", result.Substitutions)
 	}
 	if certainty != 0.95 {
 		t.Errorf("got certainty %f, want 0.95", certainty)
@@ -673,5 +677,242 @@ func TestClient_BatchUpsertFodmap(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("expected 2 items, got %d", count)
+	}
+}
+
+func TestClient_BatchUpsertFodmap_NoEmbedder(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	items := map[string]data.FodmapEntry{"garlic": {Level: "high"}}
+	err := client.BatchUpsertFodmap(context.Background(), items)
+	if err == nil {
+		t.Error("expected error when embedder is nil")
+	}
+}
+
+func TestClient_EnsureFodmapSchema(t *testing.T) {
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, fodmapCollectionName) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	if err := client.EnsureFodmapSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureFodmapSchema failed: %v", err)
+	}
+	if !created {
+		t.Error("expected fodmap schema to be created")
+	}
+}
+
+func TestClient_SearchFodmap_WithSubstitutions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := map[string]any{
+				"Get": map[string]any{
+					fodmapCollectionName: []any{
+						map[string]any{
+							"ingredient":    "garlic",
+							"level":         "high",
+							"groups":        []any{"fructans"},
+							"notes":         "Even small amounts are high FODMAP",
+							"substitutions": []any{"garlic-infused olive oil", "chives"},
+							"_additional":   map[string]any{"certainty": 0.95},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	res, cert, err := client.SearchFodmap(context.Background(), "garlic")
+	if err != nil {
+		t.Fatalf("SearchFodmap failed: %v", err)
+	}
+	if res.Ingredient != "garlic" {
+		t.Errorf("ingredient = %q, want %q", res.Ingredient, "garlic")
+	}
+	if res.Level != "high" {
+		t.Errorf("level = %q, want %q", res.Level, "high")
+	}
+	if len(res.Substitutions) != 2 {
+		t.Errorf("substitutions length = %d, want 2", len(res.Substitutions))
+	}
+	if res.Substitutions[0] != "garlic-infused olive oil" {
+		t.Errorf("substitutions[0] = %q, want %q", res.Substitutions[0], "garlic-infused olive oil")
+	}
+	if cert != 0.95 {
+		t.Errorf("certainty = %f, want 0.95", cert)
+	}
+}
+
+func TestClient_SearchFodmap_NoEmbedder(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	_, _, err := client.SearchFodmap(context.Background(), "garlic")
+	if err == nil {
+		t.Error("expected error when embedder is nil")
+	}
+}
+
+func TestClient_GetReviews_NoEmbedder(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	_, err := client.GetReviews(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
+	if err == nil {
+		t.Error("expected error when embedder is nil for hybrid search")
+	}
+}
+
+func TestClient_GetReviews_NoEmbedderPureVector(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	_, err := client.GetReviews(context.Background(), "pizza", 5, SearchFilter{})
+	if err == nil {
+		t.Error("expected error when embedder is nil for pure vector search")
+	}
+}
+
+func TestClient_NewClient_DefaultScheme(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	// Empty scheme should default to "http"
+	client, err := NewClient(host, "", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+	if err != nil {
+		t.Fatalf("NewClient with empty scheme failed: %v", err)
+	}
+	if client == nil {
+		t.Error("expected non-nil client")
+	}
+}
+
+func TestClient_GetBusinesses_NoQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := makeData([]struct {
+				businessID   string
+				businessName string
+				certainty    float64
+			}{
+				{"biz1", "Pizza", 0.9},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	// Empty query should use the no-query path (limit=100)
+	res, err := client.GetBusinesses(context.Background(), "", 5, SearchFilter{})
+	if err != nil {
+		t.Fatalf("GetBusinesses with empty query failed: %v", err)
+	}
+	if len(res.Businesses) != 1 {
+		t.Errorf("got %d businesses, want 1", len(res.Businesses))
+	}
+}
+
+func TestClient_GetBusinesses_NoEmbedder(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
+	if err == nil {
+		t.Error("expected error when embedder is nil for hybrid search")
+	}
+}
+
+func TestClient_GetBusinesses_NoEmbedderPureVector(t *testing.T) {
+	client, _ := NewClient("localhost:8090", "http", "", nil)
+	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	if err == nil {
+		t.Error("expected error when embedder is nil for pure vector search")
+	}
+}
+
+func TestClient_GetReviews_NoQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := makeReviewData([]struct {
+				businessID   string
+				reviewID     string
+				businessName string
+				city         string
+				state        string
+				text         string
+				certainty    float64
+			}{{"biz1", "r1", "Pizza", "NYC", "NY", "great pizza", 0.9}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	// Empty query should use the no-query path (limit*10)
+	res, err := client.GetReviews(context.Background(), "", 5, SearchFilter{})
+	if err != nil {
+		t.Fatalf("GetReviews with empty query failed: %v", err)
+	}
+	if len(res.BusinessReviews) != 1 {
+		t.Errorf("got %d reviews, want 1", len(res.BusinessReviews))
+	}
+}
+
+func TestFormatGraphQLErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		errs []*models.GraphQLError
+		want string
+	}{
+		{
+			name: "nil errors",
+			errs: nil,
+			want: "",
+		},
+		{
+			name: "empty errors",
+			errs: []*models.GraphQLError{},
+			want: "",
+		},
+		{
+			name: "single error",
+			errs: []*models.GraphQLError{{Message: "something went wrong"}},
+			want: "something went wrong",
+		},
+		{
+			name: "multiple errors",
+			errs: []*models.GraphQLError{
+				{Message: "error one"},
+				{Message: "error two"},
+			},
+			want: "error one; error two",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatGraphQLErrors(tt.errs)
+			if got != tt.want {
+				t.Errorf("formatGraphQLErrors() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
