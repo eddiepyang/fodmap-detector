@@ -15,7 +15,7 @@ Based on a thorough review of the codebase, documentation, and existing plans, b
 | Profile | Gemini-generated structured dietary profile, injected into system prompt |
 | CLI | `index`, `serve`, `chat` commands |
 
-*Note: Features 1 (Expanded FODMAP DB) and 2 (Substitution Suggestions) from the original roadmap have been successfully implemented.*
+*Note: Features 1 (Expanded FODMAP DB), 2 (Substitution Suggestions), and 9 (Rate Limit Headers) from the original roadmap have been successfully implemented. Feature 4 (Conversation Export API) is complete, pending CLI integration.*
 
 ---
 
@@ -67,18 +67,12 @@ This document primarily focuses on backend API changes in the `fodmap-detector` 
 
 ---
 
-### 4. Conversation Export (IN PROGRESS ⏳)
+### 4. Conversation Export (PARTIALLY COMPLETED ⏳)
 
-**Problem:** Already identified in `docs/chat.md` as a medium-term goal. Users have no way to save or share their conversation transcript.
+**Status:** The backend API endpoint (`GET /api/v1/conversations/{id}/export?format=json|markdown`) is implemented with strict JWT validation. 
 
-**Proposal:**
-- Add `GET /api/v1/conversations/{id}/export?format=json|markdown`
-- JSON format: full structured export including tool calls and responses
-- Markdown format: human-readable transcript with tool call annotations
-- Add `--output` flag to the CLI `chat` command
-- **Security Gap:** Ensure strict JWT validation so users can only export their own conversations (prevent IDOR). Include a disclaimer in exports advising users about sharing personal health/dietary data.
-
-**Architecture fit:** Simple read-only endpoint. Data already exists in the `messages` table via `GetMessages`.
+**Remaining Work:**
+- Add `--output` flag to the CLI `chat` command to consume this endpoint.
 
 ---
 
@@ -152,18 +146,9 @@ This document primarily focuses on backend API changes in the `fodmap-detector` 
 
 ---
 
-### 9. Rate Limit Response Headers
+### 9. <s>Rate Limit Response Headers</s> (COMPLETED ✅)
 
-**Problem:** The `rateLimitMiddleware` rejects requests but provides no visibility into remaining quota. Well-behaved clients cannot adapt their behavior.
-
-**Proposal:**
-- Add standard rate limit headers to all rate-limited responses:
-  - `X-RateLimit-Limit`: requests per second
-  - `X-RateLimit-Remaining`: tokens remaining
-  - `X-RateLimit-Reset`: time until bucket refills
-- Add `Retry-After` header on 429 responses
-
-**Architecture fit:** Small change to the existing middleware. The `rate.Limiter` from `golang.org/x/time/rate` exposes `Tokens()` and `Reservation` data needed for these headers.
+**Status:** Completed. Standard rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After`) have been integrated into the `rateLimitMiddleware` in `server/middleware.go`.
 
 ---
 
@@ -260,12 +245,10 @@ This document primarily focuses on backend API changes in the `fodmap-detector` 
 | # | Feature | Impact | Effort | Tier |
 |---|---------|--------|--------|------|
 | 3 | Batch ingredient analysis | High | Medium | 1 |
-| 4 | Conversation export | Medium | Low | 1 |
 | 5 | Multi-business comparison | High | Medium | 1 |
 | 6 | Reintroduction tracker | High | Medium | 2 |
 | 7 | Restaurant favorites | Medium | Low | 2 |
 | 8 | OpenAPI spec | Medium | Low | 2 |
-| 9 | Rate limit headers | Low | Low | 2 |
 | 10 | Usage metrics | Medium | Medium | 2 |
 | 11 | Menu/photo analysis | High | High | 3 |
 | 12 | USDA allergen fallback | Medium | Medium | 3 |
@@ -278,7 +261,7 @@ This document primarily focuses on backend API changes in the `fodmap-detector` 
 ## Recommended Implementation Order
 
 ```
-Phase A (Quick Wins):  4 → 9
+Phase A (Quick Wins):  CLI flag for 4
 Phase B (Core Features): 3 → 5 → 7 → 8
 Phase C (Engagement):   6 → 13 → 15 → 10
 Phase D (Advanced):     11 → 12 → 14
