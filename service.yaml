@@ -70,3 +70,12 @@ model-path: ""
 
 # Filter reviews by city
 filter-city: ""
+
+# ---- Scraper settings ----
+# SQLite database for the restaurant discovery cache and scraped menus.
+scraper-db: "scraper.db"
+
+# Ollama vision model used for menu image/PDF transcription.
+# Recommended: "gemma3" (fast) or "gemma3:12b" (more accurate).
+# Pull with: ollama pull gemma3
+ollama-vision-model: "gemma3"

@@ -50,6 +50,7 @@ func TestSQLiteStore_ConversationCRUD(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("GetConversation returned nil")
+		return
 	}
 	if got.Title != "Test Conversation" {
 		t.Errorf("Title = %q, want %q", got.Title, "Test Conversation")

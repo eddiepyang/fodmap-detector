@@ -39,6 +39,7 @@ func TestSQLiteStore(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatalf("User not found by email")
+		return
 	}
 	if got.ID != user.ID || got.Email != user.Email {
 		t.Errorf("User mismatch: got %+v, want %+v", got, user)
@@ -51,6 +52,7 @@ func TestSQLiteStore(t *testing.T) {
 	}
 	if gotByID == nil {
 		t.Fatalf("User not found by ID")
+		return
 	}
 	if gotByID.ID != user.ID {
 		t.Errorf("ID mismatch: got %s, want %s", gotByID.ID, user.ID)

@@ -22,7 +22,10 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 | Input | TAR.GZ compressed JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
 | Vector search | [Weaviate](https://weaviate.io) (Local), [Pinecone](https://pinecone.io) (Cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
-| Embeddings | Ollama |
+| Embeddings | Ollama (`nomic-embed-text`) |
+| Restaurant discovery | [OpenStreetMap Overpass API](https://overpass-api.de/) (free, no API key) |
+| Menu transcription | Ollama vision models (`gemma3`, `llava`) |
+| Menu storage | SQLite (structured cache + menu items) |
 
 ---
 
@@ -90,6 +93,17 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── dietary-profile-plan.md      # Dietary profile feature plan
 │   ├── FRONTEND_IMPLEMENTATION_PLAN.md # Frontend implementation roadmap
 │   └── indexing-improvements.md     # Indexing performance tuning plan
+│
+├── scraper/
+│   ├── agent.go             # Pipeline orchestrator (OSM → fetch → extract → analyze → store)
+│   ├── discovery.go         # OpenStreetMap Overpass API client
+│   ├── fetcher.go           # Two-tier HTTP fetcher (plain HTTP + chromedp stub)
+│   ├── extractor.go         # Three-strategy HTML menu parser (Schema.org, CSS, heuristic)
+│   ├── vision.go            # Ollama vision transcriber (structured JSON output)
+│   ├── analyzer.go          # FODMAP cross-reference against static ingredient DB
+│   ├── store.go             # SQLite cache: restaurants + menus + menu_items
+│   ├── types.go             # Shared types: MenuItem, ScrapeRequest, OSMRestaurant, etc.
+│   └── util.go              # Shared helpers
 │
 └── docker-compose.yaml      # Vector database configuration (Weaviate)
 ```
@@ -537,6 +551,80 @@ GOOGLE_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state
 See [docs/chat.md](docs/chat.md) for design decisions and tradeoffs.
 
 ---
+
+## Menu Scraping Agent
+
+The scraper autonomously discovers NYC restaurants via OpenStreetMap, fetches their menus, and cross-references every dish against the FODMAP ingredient database — no paid APIs required.
+
+### How it works
+
+```
+OpenStreetMap (Overpass API)
+        ↓  restaurant name + website URL
+  Page Fetch (HTTP → chromedp fallback)
+        ↓  raw HTML / PDF / image
+  Extraction (Schema.org → CSS → heuristic → Ollama vision)
+        ↓  structured []MenuItem
+  FODMAP Analyzer
+        ↓  safety score + flags per item
+  SQLite Store  (restaurants + menus + menu_items)
+```
+
+### Discovery — OpenStreetMap
+
+Restaurant metadata is sourced from the free [Overpass API](https://overpass-api.de/). Seed the local SQLite cache once:
+
+```sh
+go run . scrape --discover-nyc
+```
+
+This downloads every restaurant tagged in OpenStreetMap for New York City and stores it in `scraper.db`. Subsequent scrapes use the local cache — no repeated network calls.
+
+### Scraping a restaurant
+
+```sh
+# By direct URL
+go run . scrape --url "https://example-restaurant.com/menu"
+
+# By name (OSM lookup finds the website automatically)
+go run . scrape --name "Joe's Pizza" --area "New York City"
+
+# With FODMAP analysis
+go run . scrape --name "Joe's Pizza" --analyze
+
+# JSON output
+go run . scrape --url "https://example.com/menu" --analyze --json
+```
+
+### Vision transcription
+
+When HTML extraction yields fewer than 3 items, the agent falls back to a local [Ollama](https://ollama.com/) vision model. Pull the model once:
+
+```sh
+ollama pull gemma3
+```
+
+Configure the model in `service.yaml`:
+
+```yaml
+ollama-vision-model: "gemma3"       # or gemma3:12b for higher accuracy
+scraper-db: "scraper.db"            # SQLite path for the restaurant cache
+```
+
+### Extraction strategies (HTML)
+
+The extractor tries three strategies in order, stopping at the first that returns ≥ 3 items:
+
+| Strategy | How | Best for |
+|---|---|---|
+| Schema.org JSON-LD | Parses `<script type="application/ld+json">` | Well-structured restaurant sites |
+| CSS class patterns | Matches `menu-item`, `dish`, `food-item`, etc. | Common CMS themes |
+| Price heuristic | Finds `$XX.XX` and extracts adjacent text | Bare-bones / legacy pages |
+
+If all three fail, the raw HTML text is sent to Ollama for LLM-based extraction.
+
+---
+
 
 ## Testing
 
