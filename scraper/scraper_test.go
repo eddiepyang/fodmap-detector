@@ -487,7 +487,7 @@ func TestScoreFromFlags(t *testing.T) {
 // ---- store_test ----
 
 func TestStore_CreateAndSearch(t *testing.T) {
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
@@ -504,7 +504,7 @@ func TestStore_CreateAndSearch(t *testing.T) {
 }
 
 func TestStore_UpsertIdempotent(t *testing.T) {
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
@@ -521,7 +521,7 @@ func TestStore_UpsertIdempotent(t *testing.T) {
 }
 
 func TestStore_SaveMenu(t *testing.T) {
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
@@ -546,7 +546,7 @@ func TestStore_SaveMenu(t *testing.T) {
 }
 
 func TestStore_SearchNoResults(t *testing.T) {
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
@@ -573,7 +573,7 @@ func TestAgent_ScrapeHTMLMenu(t *testing.T) {
 	}))
 	defer menuServer.Close()
 
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 
 	agent := &Agent{
@@ -606,7 +606,7 @@ func TestAgent_ScrapeHTMLMenu(t *testing.T) {
 }
 
 func TestAgent_ScrapeRequiresURLOrName(t *testing.T) {
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 	agent := &Agent{
 		cfg:   Config{},
@@ -626,7 +626,7 @@ func TestAgent_DiscoverNYC_CachesResults(t *testing.T) {
 	}))
 	defer fakeOverpass.Close()
 
-	store, err := NewStore(":memory:")
+	store, err := NewSQLiteStore(":memory:")
 	require.NoError(t, err)
 
 	agent := &Agent{

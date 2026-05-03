@@ -75,7 +75,7 @@ type Agent struct {
 	extractor *Extractor
 	vision    *VisionTranscriber
 	analyzer  *Analyzer
-	store     *Store
+	store     Store
 }
 
 // NewAgent creates a new Agent with the given configuration.
@@ -83,7 +83,13 @@ type Agent struct {
 func NewAgent(cfg Config) (*Agent, error) {
 	cfg.applyDefaults()
 
-	store, err := NewStore(cfg.ScraperDBPath)
+	var store Store
+	var err error
+	if strings.HasPrefix(cfg.ScraperDBPath, "postgres://") || strings.HasPrefix(cfg.ScraperDBPath, "postgresql://") {
+		store, err = NewPostgresStore(cfg.ScraperDBPath)
+	} else {
+		store, err = NewSQLiteStore(cfg.ScraperDBPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("opening scraper store: %w", err)
 	}
