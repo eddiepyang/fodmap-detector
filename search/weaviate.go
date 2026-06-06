@@ -30,6 +30,24 @@ const (
 	topKReviews          = 5
 )
 
+// MenuItem is a single scraped menu item stored in the RestaurantMenu
+// collection. IDs are deterministic so re-scraping the same URL is idempotent.
+type MenuItem struct {
+	MenuItemID         string
+	BusinessID         string
+	MenuSection        string
+	RestaurantName     string
+	City               string
+	State              string
+	DishName           string
+	Description        string
+	StatedIngredients  []string
+	HasFullIngredients bool
+	SourceURL          string
+	ScrapedAtUTC       string
+	Vector             []float32
+}
+
 // Client wraps the Weaviate client with domain-specific operations.
 type Client struct {
 	wv       *weaviate.Client
@@ -733,4 +751,146 @@ func formatGraphQLErrors(errs []*models.GraphQLError) string {
 		msgs[i] = e.Message
 	}
 	return strings.Join(msgs, "; ")
+}
+
+// ─── RestaurantMenu collection ────────────────────────────────────────────────
+
+const menuCollectionName = "RestaurantMenu"
+
+// EnsureMenuSchema creates the RestaurantMenu Weaviate collection if absent.
+// It is idempotent — safe to call on every scrape-command startup.
+func (c *Client) EnsureMenuSchema(ctx context.Context) error {
+	_, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
+	if err == nil {
+		return nil
+	}
+	class := &models.Class{
+		Class:      menuCollectionName,
+		Vectorizer: "none",
+		Properties: []*models.Property{
+			{Name: "menuItemId", DataType: []string{"text"}},
+			{Name: "businessId", DataType: []string{"text"}},
+			{Name: "menuSection", DataType: []string{"text"}},
+			{Name: "restaurantName", DataType: []string{"text"}},
+			{Name: "city", DataType: []string{"text"}},
+			{Name: "state", DataType: []string{"text"}},
+			{Name: "dishName", DataType: []string{"text"}},
+			{Name: "description", DataType: []string{"text"}},
+			{Name: "statedIngredients", DataType: []string{"text[]"}},
+			{Name: "hasFullIngredients", DataType: []string{"boolean"}},
+			{Name: "sourceUrl", DataType: []string{"text"}},
+			{Name: "scrapedAtUtc", DataType: []string{"text"}},
+		},
+	}
+	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+		return fmt.Errorf("creating menu schema: %w", err)
+	}
+	return nil
+}
+
+// BatchUpsertMenu inserts or updates scraped menu items. Each item carries a
+// pre-computed Vector and a deterministic MenuItemID for idempotent upserts.
+func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
+	batcher := c.wv.Batch().ObjectsBatcher()
+	for _, item := range items {
+		batcher = batcher.WithObjects(&models.Object{
+			Class:  menuCollectionName,
+			ID:     strfmt.UUID(item.MenuItemID),
+			Vector: models.C11yVector(item.Vector),
+			Properties: map[string]any{
+				"menuItemId":         item.MenuItemID,
+				"businessId":         item.BusinessID,
+				"menuSection":        item.MenuSection,
+				"restaurantName":     item.RestaurantName,
+				"city":               item.City,
+				"state":              item.State,
+				"dishName":           item.DishName,
+				"description":        item.Description,
+				"statedIngredients":  item.StatedIngredients,
+				"hasFullIngredients": item.HasFullIngredients,
+				"sourceUrl":          item.SourceURL,
+				"scrapedAtUtc":       item.ScrapedAtUTC,
+			},
+		})
+	}
+	responses, err := batcher.Do(ctx)
+	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("batch upsert menu: %w", wErr.DerivedFromError)
+		}
+		return fmt.Errorf("batch upsert menu: %w", err)
+	}
+	for _, resp := range responses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("batch upsert menu item error", "errors", resp.Result.Errors)
+		}
+	}
+	return nil
+}
+
+// SearchMenu performs a nearVector semantic search over the RestaurantMenu collection.
+func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]MenuItem, error) {
+	if c.embedder == nil {
+		return nil, errors.New("embedder is not configured (required for menu search)")
+	}
+	vec, err := c.embedder.EmbedSingle(ctx, "search_query: "+query)
+	if err != nil {
+		return nil, fmt.Errorf("embedding query: %w", err)
+	}
+	fields := []graphql.Field{
+		{Name: "menuItemId"}, {Name: "businessId"}, {Name: "restaurantName"},
+		{Name: "dishName"}, {Name: "description"}, {Name: "statedIngredients"},
+		{Name: "hasFullIngredients"}, {Name: "sourceUrl"}, {Name: "city"}, {Name: "state"},
+		{Name: "_additional { certainty }"},
+	}
+	resp, err := c.wv.GraphQL().Get().
+		WithClassName(menuCollectionName).
+		WithFields(fields...).
+		WithNearVector(c.wv.GraphQL().NearVectorArgBuilder().WithVector(vec)).
+		WithLimit(limit).
+		Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("menu search: %w", err)
+	}
+	if resp.Errors != nil {
+		return nil, fmt.Errorf("menu search graphql: %s", formatGraphQLErrors(resp.Errors))
+	}
+	raw, ok := resp.Data["Get"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+	rawItems, ok := raw[menuCollectionName].([]interface{})
+	if !ok {
+		return nil, nil
+	}
+	var results []MenuItem
+	for _, ri := range rawItems {
+		m, ok := ri.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		results = append(results, MenuItem{
+			MenuItemID:         stringField(m, "menuItemId"),
+			BusinessID:         stringField(m, "businessId"),
+			RestaurantName:     stringField(m, "restaurantName"),
+			DishName:           stringField(m, "dishName"),
+			Description:        stringField(m, "description"),
+			HasFullIngredients: boolField(m, "hasFullIngredients"),
+			SourceURL:          stringField(m, "sourceUrl"),
+			City:               stringField(m, "city"),
+			State:              stringField(m, "state"),
+		})
+	}
+	return results, nil
+}
+
+func stringField(m map[string]interface{}, key string) string {
+	v, _ := m[key].(string)
+	return v
+}
+
+func boolField(m map[string]interface{}, key string) bool {
+	v, _ := m[key].(bool)
+	return v
 }

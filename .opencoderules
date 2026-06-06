@@ -1,0 +1,7 @@
+# Opencode Rules
+
+Project-level rules for this codebase.
+
+## AI Agent Rules
+
+- Always use a web search tool to confirm and fact-check findings or technical assumptions (e.g., model capabilities, version support, API limits) before finalizing recommendations or reporting back to the user. Do not rely solely on internal knowledge.
