@@ -81,6 +81,47 @@ type Extractor interface {
 
 ## Layered Fetch Strategy
 
+```mermaid
+flowchart TD
+    Start([Scrape URL]) --> Fetch[HTTP GET]
+    Fetch --> CT{"Content-Type"}
+    
+    %% PDF Flow
+    CT -- "application/pdf" --> PDFText["1. ledongthuc/pdf"]
+    PDFText --> |">= 200 chars"| Extract["LLM Text Extraction"]
+    PDFText --> |"< 200 chars"| PDFToText{"--pdftotext?"}
+    PDFToText -- "Yes" --> RunPDFToText["2. System pdftotext"]
+    RunPDFToText --> Extract
+    RunPDFToText --> |"Fails"| PDFVis
+    PDFToText -- "No" --> PDFVis{"--enable-vision?"}
+    PDFVis -- "Yes" --> PDFCPU["3. pdfcpu render to PNG"]
+    PDFCPU --> ExtractVision["Vision LLM Extraction"]
+    PDFVis -- "No" --> PDFErr(["Error"])
+    
+    %% HTML Flow
+    CT -- "text/html" --> T0["Tier 0: Parse JSON-LD"]
+    T0 --> |"Menu Found"| Store
+    T0 --> |"No Menu"| T1["Tier 1: HTML to Markdown"]
+    T1 --> Extract
+    
+    Extract --> T1Check{"Extracted < 3 items?"}
+    T1Check -- "No" --> Store
+    T1Check -- "Yes" --> Fallbacks{"Check Flags"}
+    
+    Fallbacks -- "--enable-js-render" --> T3["Tier 3: chromedp JS Render"]
+    T3 --> T1
+    
+    Fallbacks -- "--enable-api-inference" --> T2["Tier 2: API Endpoint Inference"]
+    T2 --> APIFetch["Fetch inferred JSON"]
+    APIFetch --> Extract
+    
+    Fallbacks -- "None" --> Store
+    
+    ExtractVision --> Store
+    
+    Store(["Embed & Upsert to MenuStore"])
+```
+
 Restaurant sites range from server-rendered HTML to JS-only SPAs. We use a tiered approach:
 
 | Tier | Strategy | When triggered | Implementation |

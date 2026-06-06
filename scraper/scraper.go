@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 
@@ -271,7 +272,7 @@ func trafilaturaFallback(rawHTML string) string {
 // isTooNoisy returns true when the Markdown output is dominated by navigation
 // links and boilerplate rather than content. Heuristic: more than 70% of
 // non-empty lines are very short (≤ 20 chars), typical of nav link labels.
-func isTooNoisy(md string) bool {
+func IsTooNoisy(md string) bool {
 	lines := strings.Split(md, "\n")
 	var total, short int
 	for _, l := range lines {
@@ -359,28 +360,19 @@ func ValidateAPIURL(rawURL, originalHost string) error {
 	return nil
 }
 
-// BusinessID returns a stable identifier for a restaurant derived from the
-// URL's host only (not the path). This prevents /menu/lunch and /menu/dinner
-// from being treated as separate restaurants.
+// businessNamespace is the UUID namespace for deterministic business IDs.
+var businessNamespace = uuid.MustParse("f0d6c8a0-e2b4-4d8a-9f1c-3b7a5d9e2c40")
+
+// BusinessID returns a stable, collision-resistant identifier for a restaurant
+// derived from the URL's host. This prevents /menu/lunch and /menu/dinner from
+// being treated as separate restaurants.
 func BusinessID(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
 	host := strings.ToLower(u.Hostname())
-	// Compute a short deterministic ID from the host.
-	h := fnv32a(host)
-	return fmt.Sprintf("%08x", h)
-}
-
-// fnv32a is a simple FNV-1a hash sufficient for stable IDs.
-func fnv32a(s string) uint32 {
-	var h uint32 = 2166136261
-	for _, c := range []byte(s) {
-		h ^= uint32(c)
-		h *= 16777619
-	}
-	return h
+	return uuid.NewSHA1(businessNamespace, []byte(host)).String()
 }
 
 // MenuSection derives a short section name from a URL path for use in the

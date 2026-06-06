@@ -876,6 +876,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 			RestaurantName:     stringField(m, "restaurantName"),
 			DishName:           stringField(m, "dishName"),
 			Description:        stringField(m, "description"),
+			StatedIngredients:  stringSliceField(m, "statedIngredients"),
 			HasFullIngredients: boolField(m, "hasFullIngredients"),
 			SourceURL:          stringField(m, "sourceUrl"),
 			City:               stringField(m, "city"),
@@ -888,6 +889,20 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 func stringField(m map[string]interface{}, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+func stringSliceField(m map[string]interface{}, key string) []string {
+	raw, ok := m[key].([]interface{})
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func boolField(m map[string]interface{}, key string) bool {

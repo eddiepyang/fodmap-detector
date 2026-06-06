@@ -49,7 +49,6 @@ func TestConvertHTMLToMarkdown_HeadingLevels(t *testing.T) {
 // --- isTooNoisy ---
 
 func TestIsTooNoisy_NoisyInput(t *testing.T) {
-	// Mostly short nav links
 	var lines []string
 	for i := 0; i < 30; i++ {
 		lines = append(lines, "Home")
@@ -58,7 +57,7 @@ func TestIsTooNoisy_NoisyInput(t *testing.T) {
 		lines = append(lines, "This is a longer menu description with many words")
 	}
 	md := strings.Join(lines, "\n")
-	assert.True(t, isTooNoisy(md))
+	assert.True(t, IsTooNoisy(md))
 }
 
 func TestIsTooNoisy_CleanInput(t *testing.T) {
@@ -71,7 +70,7 @@ func TestIsTooNoisy_CleanInput(t *testing.T) {
 		"Carbonara - spaghetti, guanciale, eggs, pecorino, black pepper",
 	}
 	md := strings.Join(lines, "\n")
-	assert.False(t, isTooNoisy(md))
+	assert.False(t, IsTooNoisy(md))
 }
 
 // --- truncateText ---
@@ -132,6 +131,7 @@ func TestBusinessID_SameHostDifferentPaths(t *testing.T) {
 	id1 := BusinessID("https://example.com/menu/lunch")
 	id2 := BusinessID("https://example.com/menu/dinner")
 	assert.Equal(t, id1, id2, "same host should produce same business ID")
+	assert.Len(t, id1, 36, "UUID format")
 }
 
 func TestBusinessID_DifferentHosts(t *testing.T) {

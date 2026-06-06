@@ -53,7 +53,6 @@ func init() {
 
 	// Fetch options
 	scrapeCmd.Flags().Bool("ignore-robots", false, "Skip robots.txt check")
-	scrapeCmd.Flags().Bool("enable-api-inference", false, "Tier 2: ask LLM to infer hidden API endpoints (experimental)")
 	scrapeCmd.Flags().Bool("enable-js-render", false, "Tier 3: render JS-only pages via chromedp (requires Chrome)")
 	scrapeCmd.Flags().Bool("enable-vision", false, "Send PDFs/images to the vision LLM instead of text extraction")
 	scrapeCmd.Flags().Bool("pdftotext", false, "Use system pdftotext (poppler) for PDF text extraction")
@@ -66,7 +65,6 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	ignoreRobots, _ := cmd.Flags().GetBool("ignore-robots")
 	enableVision, _ := cmd.Flags().GetBool("enable-vision")
 	usePdftotext, _ := cmd.Flags().GetBool("pdftotext")
-	enableAPIInference, _ := cmd.Flags().GetBool("enable-api-inference")
 
 	llmBackend := viper.GetString("llm-backend")
 	llmURL := viper.GetString("llm-url")
@@ -119,7 +117,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 
 	fetcher := scraper.NewHTTPFetcher(ignoreRobots)
 
-	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder, enableVision, usePdftotext, enableAPIInference)
+	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder, enableVision, usePdftotext)
 }
 
 // runScrapeWith is the testable core of the scrape command. All dependencies
@@ -133,7 +131,6 @@ func runScrapeWith(
 	embedder search.Embedder,
 	enableVision bool,
 	usePdftotext bool,
-	enableAPIInference bool,
 ) error {
 	slog.Info("scraping URL", "url", rawURL)
 
@@ -185,6 +182,14 @@ func runScrapeWith(
 			if err != nil {
 				return fmt.Errorf("HTML conversion: %w", err)
 			}
+			if scraper.IsTooNoisy(md) {
+				slog.Warn("HTML→Markdown output is noisy, falling back to trafilatura", "url", rawURL)
+				if fallback := scraper.TrafilaturaFallback(string(bodyBytes)); fallback != "" {
+					md = fallback
+				} else {
+					slog.Warn("trafilatura fallback produced no output, using original conversion", "url", rawURL)
+				}
+			}
 			pageText = md
 		}
 
@@ -205,13 +210,6 @@ func runScrapeWith(
 			result.RestaurantName = jsonldMeta.RestaurantName
 		}
 
-		// ── Tier 2: API inference (experimental, opt-in) ─────────────────────
-		if enableAPIInference && len(result.Items) < 3 {
-			slog.Warn("Tier 2: Tier 1 returned few items, attempting API inference (experimental)")
-			// Tier 2 implementation: send raw HTML to LLM asking for API endpoint.
-			// Gated behind flag; see scraper/api_inference.go for details.
-			_ = enableAPIInference // inference call would go here
-		}
 	}
 
 	if len(result.Items) == 0 {

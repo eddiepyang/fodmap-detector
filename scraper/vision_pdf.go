@@ -83,36 +83,31 @@ func runPdftotext(pdfBytes []byte) (string, error) {
 	return string(out), nil
 }
 
-// RenderPDFPages rasterizes each page of the PDF to PNG bytes using pdfcpu.
-// Each element of the returned slice is the PNG bytes for one page.
+// RenderPDFPages extracts embedded images from a PDF using pdfcpu's
+// ExtractImages API. This works for PDFs with embedded raster images but will
+// fail for PDFs that use vector/drawn content or text-only pages. For those,
+// an external tool like pdftoppm (poppler) is needed as a fallback.
 func RenderPDFPages(pdfBytes []byte) ([][]byte, error) {
 	rs := bytes.NewReader(pdfBytes)
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 
-	// Extract images page by page via pdfcpu's extract API.
-	// We use a bytes-based in-memory approach.
 	var pages [][]byte
 
-	// pdfcpu's ExtractImagesRaw isn't public — we use the NUp/render API.
-	// Fallback: use pdfcpu to export each page as a single-page PDF, then
-	// render via the image extraction path.
-	//
-	// Actually use pdfcpu's RenderToImage (available in v0.12+).
 	err := api.ExtractImages(rs, nil, func(img model.Image, singleImgPerPage bool, pageNr int) error {
 		data, rerr := io.ReadAll(img)
 		if rerr != nil {
-			return nil // skip unreadable images
+			return nil
 		}
 		pages = append(pages, data)
 		return nil
 	}, conf)
 	if err != nil {
-		return nil, fmt.Errorf("pdfcpu render: %w", err)
+		return nil, fmt.Errorf("pdfcpu extract images: %w", err)
 	}
 
 	if len(pages) == 0 {
-		return nil, fmt.Errorf("pdfcpu: no images extracted from PDF")
+		return nil, fmt.Errorf("pdfcpu: no embedded images found in PDF; consider --pdftotext or --enable-vision for text-only or vector PDFs")
 	}
 	return pages, nil
 }

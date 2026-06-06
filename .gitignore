@@ -23,3 +23,8 @@ coverage.*
 tmp/*
 saved_cities.txt
 models/
+
+# Diff files
+diff.txt
+*.diff
+*.patch

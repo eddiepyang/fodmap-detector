@@ -1,8 +1,3 @@
-// Package scraper — Tier 2 experimental: LLM-inferred API endpoint fallback.
-//
-// WARNING: This feature is EXPERIMENTAL. Modern sites frequently defeat it via
-// CSRF tokens, signed requests, GraphQL, and bot detection. Expect frequent
-// 401/403/429. Always gate behind --enable-api-inference.
 package scraper
 
 import (
@@ -16,42 +11,12 @@ import (
 	"time"
 )
 
-const apiInferencePrompt = `This page loads menu data from a backend API.
-Examine the embedded <script> tags and inline JavaScript to identify the API endpoint that returns menu data.
-Return ONLY a JSON object (no explanation):
-{"url": "https://example.com/api/menu", "method": "GET", "headers": {}}
-Return {} if you cannot confidently identify a menu API endpoint.`
-
-// InferAPIEndpoint asks the LLM to find a menu API endpoint in the raw HTML,
-// then fetches it and re-runs text extraction. It returns the fetched body text
-// or an error. The caller is responsible for re-running the Extractor on the
-// returned text.
-//
-// SSRF guard: the inferred URL must share the same host as originalURL and must
-// not be a private/loopback address.
-func InferAPIEndpoint(ctx context.Context, extractor Extractor, rawHTML, originalURL string) (string, error) {
-	// Ask the LLM to identify the API endpoint from the page HTML.
-	result, err := extractor.Extract(ctx, apiInferencePrompt+"\n\nPage HTML:\n"+truncateText(rawHTML, 30_000))
-	if err != nil {
-		return "", fmt.Errorf("api inference LLM call: %w", err)
-	}
-
-	// The LLM should return a minimal JSON — we re-parse the raw inference
-	// result from the restaurant name field as a workaround since our Extractor
-	// interface returns MenuExtractionResult. Instead we use a dedicated call.
-	_ = result
-	return "", fmt.Errorf("api inference: no endpoint identified")
-}
-
-// inferredEndpoint is parsed from the LLM's raw JSON output for Tier 2.
 type inferredEndpoint struct {
 	URL     string            `json:"url"`
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers"`
 }
 
-// FetchInferredEndpoint validates and fetches the inferred API endpoint,
-// returning the response body as text. It enforces the SSRF guard.
 func FetchInferredEndpoint(ctx context.Context, rawJSON, originalURL string) (string, error) {
 	var ep inferredEndpoint
 	if err := json.Unmarshal([]byte(rawJSON), &ep); err != nil || ep.URL == "" {
