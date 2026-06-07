@@ -443,3 +443,10 @@ func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
 		t.Errorf("Expected query error, got: %v", err)
 	}
 }
+
+func TestNewPostgresClient(t *testing.T) {
+	_, err := NewPostgresClient("postgres://invalid:invalid@localhost:0/invalid", nil)
+	if err == nil {
+		t.Error("expected error due to bad connection string")
+	}
+}

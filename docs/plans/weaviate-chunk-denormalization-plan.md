@@ -54,7 +54,7 @@ Two changes:
 
 Match tokenization/indexing of the equivalents currently on `YelpReview` (lines 157–173) so behavior is identical post-migration. Remove the `hasParent` cross-ref property — new schema doesn't have it.
 
-**1b. `FodmapIngredient`**: declare `substitutions` explicitly as `text[]` to replace the auto-generated `text` shape causing the startup warning flood. Other properties unchanged.
+**1b. `FodmapIngredient`**: no code change needed — `EnsureFodmapSchema` at [weaviate.go:750-772](search/weaviate.go#L750-L772) already declares `substitutions` as `text[]`. The runtime bug is that the existing Weaviate class was auto-created with `text` before this code was added, and `EnsureFodmapSchema` exits early when the class already exists. The wipe-and-rebuild in step 8 deletes the stale class so it gets re-created with the correct `text[]` type.
 
 Remove the `YelpReview` class declaration from `EnsureSchema` entirely — it's no longer created on fresh installs.
 
@@ -110,6 +110,8 @@ Operators unchanged. Both `GetBusinesses` and `GetReviews` call this helper, so 
 
 `GetBusinesses` ([weaviate.go:314-327](search/weaviate.go#L314-L327)) and `GetReviews` ([weaviate.go:397-405](search/weaviate.go#L397-L405)) currently select `hasParent { ... on YelpReview { ... } }`. Replace those sub-selections with flat field reads off the chunk: `reviewId, businessId, businessName, city, state, categories, stars`.
 
+`GetReviews` currently fetches `text` from the parent YelpReview to return full review text. After denormalization, `text` is **not** stored on the chunk — only `chunkText` (a partial excerpt) lives there. Rather than duplicating full review text across every chunk (3-5× storage overhead per review), `GetReviews` now calls `PostgresClient.GetReviewByID` for each distinct `reviewId` returned by Weaviate to retrieve the full `text`. This is a net performance win: a single PK lookup on an existing Postgres connection takes microseconds, compared to the current cross-ref expansion that resolves all 40k+ matching parents in Weaviate before even reaching the ranking step. The Weaviate query only returns top-K chunk hits (~10-20), so at most ~10-20 PG rows fetched — well within the existing connection pool.
+
 `extractParent` ([weaviate.go:1167-1188](search/weaviate.go#L1167-L1188)) becomes a flat field extractor — simplify or inline at call sites if it shrinks to one line.
 
 ### 7. Full-review retrieval helper — Postgres
@@ -122,7 +124,7 @@ FROM reviews
 WHERE review_id = $1;
 ```
 
-Single-row PK lookup. No caller yet — escape hatch for any future "show full review" UI, debugging, or reranking-with-full-text.
+Single-row PK lookup on an indexed primary key (~microsecond latency on an existing connection). Called by `GetReviews` after the Weaviate query returns top-K chunks to hydrate full review text. Also serves as an escape hatch for any future "show full review" UI, debugging, or reranking-with-full-text.
 
 ### 8. Wipe and rebuild — surgical
 
@@ -156,7 +158,7 @@ Single-row PK lookup. No caller yet — escape hatch for any future "show full r
 
 ## Files modified
 
-- `/Users/edwardyang/projects/fodmap-detector/search/weaviate.go` — drop `YelpReview` class declaration, drop `hasParent` cross-ref write in `BatchUpsert`, add 7 chunk props, declare `FodmapIngredient.substitutions` as `text[]`, `buildWhereFilter` direct paths, `GetBusinesses`/`GetReviews` field selection, `extractParent` simplification.
+- `/Users/edwardyang/projects/fodmap-detector/search/weaviate.go` — drop `YelpReview` class declaration, drop `hasParent` cross-ref write in `BatchUpsert`, add 7 chunk props, `buildWhereFilter` direct paths, `GetBusinesses`/`GetReviews` field selection (flat reads off chunk + PG `GetReviewByID` call for `text` in `GetReviews`), `extractParent` simplification.
 - `/Users/edwardyang/projects/fodmap-detector/search/postgres.go` — extract `UpsertReviews` method satisfying `ReviewStore`, add `GetReviewByID`, set pool sizing.
 - `/Users/edwardyang/projects/fodmap-detector/search/review_store.go` (new) — `ReviewStore` interface + no-op impl.
 - `/Users/edwardyang/projects/fodmap-detector/search/sql/get_review_by_id.sql` (new).

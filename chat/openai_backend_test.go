@@ -31,7 +31,7 @@ func TestOpenAICompatBackend_Generate(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	ts := httptest.NewServer(mux)
@@ -83,9 +83,9 @@ func TestOpenAICompatBackend_Generate_Stream(t *testing.T) {
 		
 		for _, chunk := range chunks {
 			if chunk == "[DONE]" {
-				w.Write([]byte("data: [DONE]\n\n"))
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
 			} else {
-				w.Write([]byte("data: " + chunk + "\n\n"))
+				_, _ = w.Write([]byte("data: " + chunk + "\n\n"))
 			}
 		}
 	})
@@ -129,7 +129,7 @@ func TestOpenAICompatBackend_Generate_Error(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		_, _ = w.Write([]byte("internal server error"))
 	})
 
 	ts := httptest.NewServer(mux)
