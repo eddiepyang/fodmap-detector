@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"fodmap/data"
@@ -350,3 +352,95 @@ func TestPgxStringArray_Scan(t *testing.T) {
 		t.Errorf("Expected nil, got %v", arr)
 	}
 }
+
+func TestPostgresClient_BatchUpsert_BeginError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer db.Close()
+	client := &PostgresClient{db: db}
+
+	items := []IndexItem{
+		{
+			Review: schemas.Review{
+				ReviewID:   "rev1",
+				BusinessID: "bus1",
+				Stars:      4.5,
+				Text:       "Great food!",
+			},
+		},
+	}
+
+	mock.ExpectBegin().WillReturnError(fmt.Errorf("tx begin error"))
+
+	err = client.BatchUpsert(context.Background(), items)
+	if err == nil || !strings.Contains(err.Error(), "begin tx") {
+		t.Errorf("Expected begin tx error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_BatchUpsert_ExecError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer db.Close()
+	client := &PostgresClient{db: db}
+
+	items := []IndexItem{
+		{
+			Review: schemas.Review{
+				ReviewID:   "rev1",
+				BusinessID: "bus1",
+				Stars:      4.5,
+				Text:       "Great food!",
+			},
+		},
+	}
+
+	mock.ExpectBegin()
+	prepRev := mock.ExpectPrepare("INSERT INTO reviews")
+	mock.ExpectPrepare("DELETE FROM review_chunks")
+	mock.ExpectPrepare("INSERT INTO review_chunks")
+
+	prepRev.ExpectExec().WillReturnError(fmt.Errorf("insert review error"))
+
+	err = client.BatchUpsert(context.Background(), items)
+	if err == nil || !strings.Contains(err.Error(), "insert review") {
+		t.Errorf("Expected insert review error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_GetBusinesses_QueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer db.Close()
+	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
+
+	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
+
+	_, err = client.GetBusinesses(context.Background(), "pizza", 10, SearchFilter{})
+	if err == nil || !strings.Contains(err.Error(), "query error") {
+		t.Errorf("Expected query error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer db.Close()
+	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
+
+	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
+
+	_, err = client.GetReviews(context.Background(), "pizza", 10, SearchFilter{})
+	if err == nil || !strings.Contains(err.Error(), "query error") {
+		t.Errorf("Expected query error, got: %v", err)
+	}
+}
+
