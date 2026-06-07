@@ -391,3 +391,55 @@ func TestStubExtractor_ReturnsResult(t *testing.T) {
 	assert.Len(t, got.Items, 1)
 	assert.True(t, got.Items[0].HasFullIngredients)
 }
+
+func TestMenuSection(t *testing.T) {
+	if s := MenuSection("http://example.com/menu/lunch"); s != "lunch" {
+		t.Errorf("expected lunch, got %s", s)
+	}
+	if s := MenuSection("http://example.com/menu/dinner-menu/"); s != "dinner menu" {
+		t.Errorf("expected dinner menu, got %s", s)
+	}
+	if s := MenuSection("http://example.com"); s != "" {
+		t.Errorf("expected empty string, got %s", s)
+	}
+}
+
+func TestRawHTMLBody(t *testing.T) {
+	b, err := RawHTMLBody(strings.NewReader("test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(b) != "test" {
+		t.Errorf("expected test, got %s", string(b))
+	}
+}
+
+func TestTrafilaturaFallback(t *testing.T) {
+	html := `<html><body><p>Main content</p><nav>Nav content</nav></body></html>`
+	res := TrafilaturaFallback(html)
+	if !strings.Contains(res, "Main content") {
+		t.Errorf("expected Main content, got %s", res)
+	}
+}
+
+func TestValidateAPIURL(t *testing.T) {
+	t.Run("Valid", func(t *testing.T) {
+		err := ValidateAPIURL("http://example.com/api", "example.com")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("MismatchHost", func(t *testing.T) {
+		err := ValidateAPIURL("http://other.com/api", "example.com")
+		if err == nil {
+			t.Errorf("expected error")
+		}
+	})
+	t.Run("PrivateHost", func(t *testing.T) {
+		err := ValidateAPIURL("http://localhost/api", "localhost")
+		if err == nil {
+			t.Errorf("expected error")
+		}
+	})
+}
+
