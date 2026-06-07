@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	_ "embed"
@@ -52,11 +54,18 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
+// chatRequest represents the OpenAI-compatible /v1/chat/completions payload.
+//
+// NOTE ON max_tokens: We intentionally omit the `max_tokens` field. In the standard
+// OpenAI API, `max_tokens` limits generation output. However, some versions of Ollama
+// have a bug where they misinterpret `max_tokens` as a hard limit on the *total context
+// window* (prompt + generation). If we pass `max_tokens: 4096`, Ollama instantly drops
+// large HTML prompts (e.g. 6000 tokens) and returns an empty string, completely ignoring
+// any OLLAMA_NUM_CTX server limits.
 type chatRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
-	MaxTokens      int           `json:"max_tokens,omitempty"`
 }
 
 type respFormat struct {
@@ -68,6 +77,7 @@ type chatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
@@ -98,13 +108,16 @@ func (e *OpenAICompatExtractor) chatJSON(ctx context.Context, prompt string, ima
 		content = []contentPart{{Type: "text", Text: prompt}}
 	}
 
+	// NOTE ON response_format: We intentionally omit `ResponseFormat: {"type":"json_object"}`.
+	// When using reasoning models (like Qwen3.6 or DeepSeek R1) in Ollama, the model often
+	// emits `<think>` tags before the JSON. Ollama's strict JSON grammar engine sees the
+	// `<think>` tag, instantly flags it as invalid JSON, and aborts the generation, returning
+	// an empty string. Instead, we let the model format naturally and use cleanJSON() to extract it.
 	req := chatRequest{
 		Model: e.Model,
 		Messages: []chatMessage{
 			{Role: "user", Content: content},
 		},
-		ResponseFormat: &respFormat{Type: "json_object"},
-		MaxTokens:      4096,
 	}
 
 	body, err := json.Marshal(req)
@@ -142,9 +155,39 @@ func (e *OpenAICompatExtractor) chatJSON(ctx context.Context, prompt string, ima
 	}
 
 	raw := chatResp.Choices[0].Message.Content
+	slog.Debug("LLM extracted payload", "bytes", len(raw), "finish_reason", chatResp.Choices[0].FinishReason)
+
+	if strings.TrimSpace(raw) == "" {
+		return MenuExtractionResult{}, fmt.Errorf(
+			"LLM returned an empty response (finish_reason: %q). This usually happens when the restaurant menu is too large and exceeds the model's context window.\n\n"+
+				"If you are using Ollama locally, you can fix this by increasing its context window memory. Stop your current Ollama server and restart it with:\n"+
+				"  OLLAMA_NUM_CTX=16384 ollama serve",
+			chatResp.Choices[0].FinishReason,
+		)
+	}
+	cleaned := cleanJSON(raw)
 	var result MenuExtractionResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return MenuExtractionResult{}, fmt.Errorf("parse LLM JSON output: %w (raw: %.200s)", err, raw)
 	}
 	return result, nil
+}
+
+// cleanJSON strips markdown formatting blocks (e.g. ```json ... ```) from the LLM output.
+func cleanJSON(s string) string {
+	start := strings.Index(s, "```json")
+	if start != -1 {
+		s = s[start+7:]
+		end := strings.LastIndex(s, "```")
+		if end != -1 {
+			s = s[:end]
+		}
+	} else if start := strings.Index(s, "```"); start != -1 {
+		s = s[start+3:]
+		end := strings.LastIndex(s, "```")
+		if end != -1 {
+			s = s[:end]
+		}
+	}
+	return strings.TrimSpace(s)
 }

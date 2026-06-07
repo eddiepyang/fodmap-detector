@@ -21,6 +21,7 @@ coverage.*
 .vscode
 
 tmp/*
+temp/*
 saved_cities.txt
 models/
 
