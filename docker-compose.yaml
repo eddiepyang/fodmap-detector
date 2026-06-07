@@ -1,4 +1,14 @@
 services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: fodmap
+      POSTGRES_PASSWORD: fodmap
+      POSTGRES_DB: fodmap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
   weaviate:
     image: semitechnologies/weaviate:1.25.4
     ports:
@@ -17,4 +27,5 @@ services:
       - weaviate_data:/var/lib/weaviate
 
 volumes:
+  postgres_data:
   weaviate_data:

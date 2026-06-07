@@ -63,10 +63,8 @@ func TestChatHandler_Streaming(t *testing.T) {
 	}
 	s.genaiClient = client
 
-	// geminiFactory is used to check if chat is enabled
-	s.geminiFactory = func(ctx context.Context, prompt string) (*genai.Client, *genai.Chat, error) {
-		return client, nil, nil
-	}
+	// chatBackend is used to check if chat is enabled
+	s.chatBackend = chat.NewGeminiBackend(client, "test-model")
 
 	appServer := httptest.NewServer(s.Handler())
 	defer appServer.Close()
@@ -175,24 +173,24 @@ func (m *chatMockSearcher) BatchUpsert(ctx context.Context, items []search.Index
 
 // ---- messagesToContent ----
 
-func TestMessagesToContent_TextMessages(t *testing.T) {
+func TestMessagesToHistory_TextMessages(t *testing.T) {
 	msgs := []*auth.Message{
 		{ID: "1", Role: "user", Content: "Hello"},
 		{ID: "2", Role: "model", Content: "Hi there"},
 	}
-	result := messagesToContent(msgs)
+	result := messagesToHistory(msgs)
 	if len(result) != 2 {
 		t.Fatalf("got %d contents, want 2", len(result))
 	}
-	if result[0].Role != "user" || result[0].Parts[0].Text != "Hello" {
+	if result[0].Role != "user" || result[0].Text != "Hello" {
 		t.Errorf("first content = %+v", result[0])
 	}
-	if result[1].Role != "model" || result[1].Parts[0].Text != "Hi there" {
+	if result[1].Role != "model" || result[1].Text != "Hi there" {
 		t.Errorf("second content = %+v", result[1])
 	}
 }
 
-func TestMessagesToContent_ReconstructsToolTurns(t *testing.T) {
+func TestMessagesToHistory_ReconstructsToolTurns(t *testing.T) {
 	calls := []chat.ToolCallEntry{{Name: "lookup_fodmap", Args: map[string]any{"ingredient": "garlic"}}}
 	responses := []chat.ToolResponseEntry{{Name: "lookup_fodmap", Result: map[string]any{"found": true}}}
 	callsJSON, _ := json.Marshal(calls)
@@ -204,7 +202,7 @@ func TestMessagesToContent_ReconstructsToolTurns(t *testing.T) {
 		{ID: "3", Role: "tool_response", Content: string(responsesJSON)},
 		{ID: "4", Role: "model", Content: "Garlic is high FODMAP"},
 	}
-	result := messagesToContent(msgs)
+	result := messagesToHistory(msgs)
 	if len(result) != 4 {
 		t.Fatalf("got %d contents, want 4", len(result))
 	}
@@ -215,29 +213,27 @@ func TestMessagesToContent_ReconstructsToolTurns(t *testing.T) {
 	if result[1].Role != "model" {
 		t.Errorf("result[1].Role = %q, want %q", result[1].Role, "model")
 	}
-	if len(result[1].Parts) != 1 || result[1].Parts[0].FunctionCall == nil {
-		t.Errorf("result[1] should have a FunctionCall part, got %+v", result[1].Parts)
-	}
-	if result[1].Parts[0].FunctionCall.Name != "lookup_fodmap" {
-		t.Errorf("FunctionCall.Name = %q, want %q", result[1].Parts[0].FunctionCall.Name, "lookup_fodmap")
+	if len(result[1].FunctionCalls) != 1 {
+		t.Errorf("result[1] should have 1 FunctionCall, got %+v", result[1].FunctionCalls)
+	} else if result[1].FunctionCalls[0].Name != "lookup_fodmap" {
+		t.Errorf("FunctionCall.Name = %q, want %q", result[1].FunctionCalls[0].Name, "lookup_fodmap")
 	}
 	// tool_response → user turn with FunctionResponse part
 	if result[2].Role != "user" {
 		t.Errorf("result[2].Role = %q, want %q", result[2].Role, "user")
 	}
-	if len(result[2].Parts) != 1 || result[2].Parts[0].FunctionResponse == nil {
-		t.Errorf("result[2] should have a FunctionResponse part, got %+v", result[2].Parts)
-	}
-	if result[2].Parts[0].FunctionResponse.Name != "lookup_fodmap" {
-		t.Errorf("FunctionResponse.Name = %q, want %q", result[2].Parts[0].FunctionResponse.Name, "lookup_fodmap")
+	if len(result[2].FunctionResults) != 1 {
+		t.Errorf("result[2] should have 1 FunctionResult, got %+v", result[2].FunctionResults)
+	} else if result[2].FunctionResults[0].Name != "lookup_fodmap" {
+		t.Errorf("FunctionResponse.Name = %q, want %q", result[2].FunctionResults[0].Name, "lookup_fodmap")
 	}
 	if result[3].Role != "model" {
 		t.Errorf("result[3].Role = %q, want %q", result[3].Role, "model")
 	}
 }
 
-func TestMessagesToContent_Empty(t *testing.T) {
-	result := messagesToContent(nil)
+func TestMessagesToHistory_Empty(t *testing.T) {
+	result := messagesToHistory(nil)
 	if result != nil {
 		t.Errorf("expected nil for empty input, got %v", result)
 	}
@@ -310,7 +306,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	req := httptest.NewRequest("POST", "/chat/test", strings.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 
-	s.chatHandler(client).ServeHTTP(rec, req)
+	s.chatHandler(chat.NewGeminiBackend(client, "test")).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -345,19 +341,21 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 
 const testChatAPIKey = "test-secret-key"
 
-// noopGeminiFactory returns an error — used for tests that never reach the Gemini call.
-var noopGeminiFactory GeminiChatFactory = func(_ context.Context, _ string) (*genai.Client, *genai.Chat, error) {
-	return nil, nil, fmt.Errorf("noop: should not be called")
+// noopBackend returns an error — used for tests that never reach the generation call.
+type noopBackend struct{}
+
+func (b *noopBackend) Generate(ctx context.Context, opts chat.GenerateOpts) (chat.Message, error) {
+	return chat.Message{}, fmt.Errorf("noop: should not be called")
 }
 
 // newChatMux wires up the full server mux with chat support for integration-style tests.
-func newChatMux(t *testing.T, searcher Searcher, factory GeminiChatFactory) http.Handler {
+func newChatMux(t *testing.T, searcher Searcher, backend chat.ChatBackend) http.Handler {
 	t.Helper()
-	if factory == nil {
-		factory = noopGeminiFactory
+	if backend == nil {
+		backend = &noopBackend{}
 	}
 	srv := NewServerWithChat(searcher, 0, ChatConfig{
-		GeminiFactory: factory,
+		Backend:       backend,
 		ChatAPIKey:    testChatAPIKey,
 		RateLimit:     rate.Limit(100),
 		RateBurst:     100,
@@ -446,7 +444,7 @@ func TestChatHandler_NoBusinesses(t *testing.T) {
 
 func TestChatHandler_RateLimitEnforced(t *testing.T) {
 	srv := NewServerWithChat(&chatMockSearcher{}, 0, ChatConfig{
-		GeminiFactory: noopGeminiFactory,
+		Backend:       &noopBackend{},
 		ChatAPIKey:    testChatAPIKey,
 		RateLimit:     rate.Limit(0.001),
 		RateBurst:     1,

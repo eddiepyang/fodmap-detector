@@ -126,37 +126,47 @@ func TestIsFoodRelated_FollowUp(t *testing.T) {
 
 // ---- SendWithToolCalls ----
 
-func TestSession_SendWithToolCalls(t *testing.T) {
-	var turn int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		turn++
-		if turn == 1 {
-			// First turn: model returns a tool call
-			body := "data: " + `{"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup_fodmap", "args": {"ingredient": "garlic"}}}]}}]}` + "\n\n"
-			_, _ = w.Write([]byte(body))
-		} else {
-			// Second turn: model returns text after seeing tool response
-			body := "data: " + `{"candidates": [{"content": {"parts": [{"text": "Garlic is high FODMAP."}]}}]}` + "\n\n"
-			_, _ = w.Write([]byte(body))
+type stubBackend struct {
+	messages []Message
+	calls    int
+}
+
+func (s *stubBackend) Generate(ctx context.Context, opts GenerateOpts) (Message, error) {
+	if s.calls >= len(s.messages) {
+		return Message{Role: "model", Text: "end"}, nil
+	}
+	msg := s.messages[s.calls]
+	s.calls++
+	if opts.OnText != nil && msg.Text != "" {
+		opts.OnText(msg.Text)
+	}
+	if opts.OnToolCall != nil && len(msg.FunctionCalls) > 0 {
+		var names []string
+		for _, call := range msg.FunctionCalls {
+			names = append(names, call.Name)
 		}
-	}))
-	defer srv.Close()
+		opts.OnToolCall(names)
+	}
+	return msg, nil
+}
 
-	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey:      "test",
-		HTTPOptions: genai.HTTPOptions{BaseURL: srv.URL + "/"},
-	})
-
+func TestSession_SendWithToolCalls(t *testing.T) {
 	mockFodmap := &mockFodmapClient{}
+	backend := &stubBackend{
+		messages: []Message{
+			{Role: "model", FunctionCalls: []FunctionCall{{Name: "lookup_fodmap", Args: map[string]any{"ingredient": "garlic"}}}},
+			{Role: "model", Text: "Garlic is high FODMAP."},
+		},
+	}
+
 	s := &Session{
 		FodmapClient: mockFodmap,
-		Model:        "test-model",
+		Backend:      backend,
 	}
 
 	var chunks []string
-	res, err := s.SendWithToolCalls(context.Background(), client, "hello", func(s string) {
-		chunks = append(chunks, s)
+	res, err := s.SendWithToolCalls(context.Background(), "hello", func(text string) {
+		chunks = append(chunks, text)
 	}, nil)
 
 	if err != nil {
@@ -632,12 +642,12 @@ func TestToMap_Nil(t *testing.T) {
 // ---- FodmapAllergenTools ----
 
 func TestFodmapAllergenTools_HasBothDeclarations(t *testing.T) {
-	tool := FodmapAllergenTools()
-	if len(tool.FunctionDeclarations) != 2 {
-		t.Fatalf("expected 2 declarations, got %d", len(tool.FunctionDeclarations))
+	tools := FodmapAllergenTools()
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 declarations, got %d", len(tools))
 	}
 	names := map[string]bool{}
-	for _, decl := range tool.FunctionDeclarations {
+	for _, decl := range tools {
 		names[decl.Name] = true
 	}
 	if !names["lookup_fodmap"] || !names["lookup_allergens"] {

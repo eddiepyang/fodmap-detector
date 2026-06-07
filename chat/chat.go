@@ -150,15 +150,17 @@ func IsFoodRelated(ctx context.Context, client *genai.Client, model, input strin
 type Session struct {
 	FodmapClient   FodmapSessionClient
 	AllergenClient AllergenClient
-	Model          string
-	Config         *genai.GenerateContentConfig
-	History        []*genai.Content
+	Backend        ChatBackend
+	SystemPrompt   string
+	Tools          []ToolDeclaration
+	History        []Message
 }
 
 // ToolCallEntry records a single function call made during a chat turn.
 type ToolCallEntry struct {
-	Name string         `json:"name"`
-	Args map[string]any `json:"args"`
+	Name             string         `json:"name"`
+	Args             map[string]any `json:"args"`
+	ThoughtSignature string         `json:"thought_signature,omitempty"`
 }
 
 // ToolResponseEntry records the result of a single function call.
@@ -185,11 +187,11 @@ type SendResult struct {
 // plain-text response, dispatching any function calls in between.
 // The optional onText callback is invoked for each streamed text chunk.
 // The optional onToolCall callback is invoked when the model requests tool calls.
-func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, input string, onText func(string), onToolCall func([]string)) (SendResult, error) {
+func (s *Session) SendWithToolCalls(ctx context.Context, input string, onText func(string), onToolCall func([]string)) (SendResult, error) {
 	if input != "" {
-		s.History = append(s.History, &genai.Content{
-			Role:  "user",
-			Parts: []*genai.Part{{Text: input}},
+		s.History = append(s.History, Message{
+			Role: "user",
+			Text: input,
 		})
 	}
 
@@ -197,82 +199,49 @@ func (s *Session) SendWithToolCalls(ctx context.Context, client *genai.Client, i
 	var fullText strings.Builder
 
 	for {
-		// Prepare a single Content for this model turn.
-		modelTurn := &genai.Content{Role: "model"}
-
-		// 1. Initial/Streaming Turn
-		for resp, err := range client.Models.GenerateContentStream(ctx, s.Model, s.History, s.Config) {
-			if err != nil {
-				return SendResult{}, fmt.Errorf("stream error: %w", err)
-			}
-			if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-				continue
-			}
-			// Merge parts from this chunk into our single model turn.
-			for _, part := range resp.Candidates[0].Content.Parts {
-				// Skip empty parts that stream chunks sometimes include.
-				if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil &&
-					part.InlineData == nil && part.FileData == nil &&
-					part.ExecutableCode == nil && part.CodeExecutionResult == nil {
-					continue
-				}
-
-				// Record for history
-				modelTurn.Parts = append(modelTurn.Parts, part)
-
-				// Handle display/result
-				if part.Text != "" {
-					fullText.WriteString(part.Text)
-					if onText != nil {
-						onText(part.Text)
-					}
-				}
-				if part.FunctionCall != nil {
-					if onToolCall != nil {
-						onToolCall([]string{part.FunctionCall.Name})
-					} else if onText != nil {
-						onText(fmt.Sprintf("\n[Tool Call] %s\n", part.FunctionCall.Name))
-					}
-				}
-			}
+		opts := GenerateOpts{
+			SystemPrompt: s.SystemPrompt,
+			History:      s.History,
+			Tools:        s.Tools,
+			OnText:       onText,
+			OnToolCall:   onToolCall,
 		}
 
-		// Record the complete model turn (all chunks merged) into history.
-		s.History = append(s.History, modelTurn)
+		// 1. Generate model response
+		modelMsg, err := s.Backend.Generate(ctx, opts)
+		if err != nil {
+			return SendResult{}, fmt.Errorf("model generation error: %w", err)
+		}
+
+		// Record the complete model turn into history.
+		s.History = append(s.History, modelMsg)
+		fullText.WriteString(modelMsg.Text)
 
 		// 2. Scan model turn for tool calls
-		var pendingCalls []struct {
-			Name string
-			Args map[string]any
-		}
-		for _, p := range modelTurn.Parts {
-			if p.FunctionCall != nil {
-				pendingCalls = append(pendingCalls, struct {
-					Name string
-					Args map[string]any
-				}{Name: p.FunctionCall.Name, Args: p.FunctionCall.Args})
-			}
-		}
-
-		if len(pendingCalls) == 0 {
+		if len(modelMsg.FunctionCalls) == 0 {
 			break
 		}
 
 		// 3. Dispatch tool calls and add response turn
-		responseTurn := &genai.Content{Role: "user"}
+		responseMsg := Message{Role: "user"}
 		turn := ToolTurn{}
-		for _, call := range pendingCalls {
+		
+		for _, call := range modelMsg.FunctionCalls {
 			toolResult := s.DispatchTool(ctx, call.Name, call.Args)
 			resultMap := ToMap(toolResult)
-			responseTurn.Parts = append(responseTurn.Parts,
-				genai.NewPartFromFunctionResponse(call.Name, resultMap),
-			)
+			
+			responseMsg.FunctionResults = append(responseMsg.FunctionResults, FunctionResult{
+				Name:   call.Name,
+				Result: resultMap,
+			})
+			
 			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
-			turn.Calls = append(turn.Calls, ToolCallEntry{Name: call.Name, Args: call.Args})
+			turn.Calls = append(turn.Calls, ToolCallEntry(call))
 			turn.Responses = append(turn.Responses, ToolResponseEntry{Name: call.Name, Result: resultMap})
 		}
+		
 		result.ToolTurns = append(result.ToolTurns, turn)
-		s.History = append(s.History, responseTurn)
+		s.History = append(s.History, responseMsg)
 
 		// Loop back to get the model's reaction to the tool responses.
 	}
@@ -312,29 +281,17 @@ func ToMap(v any) map[string]any {
 
 // ---- tool declarations ----
 
-func FodmapAllergenTools() *genai.Tool {
-	ingredientParam := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"ingredient": {
-				Type:        genai.TypeString,
-				Description: "The food ingredient name to look up (e.g. \"garlic\", \"wheat\", \"milk\")",
-			},
+func FodmapAllergenTools() []ToolDeclaration {
+	return []ToolDeclaration{
+		{
+			Name:        "lookup_fodmap",
+			Description: "Look up the FODMAP classification for a food ingredient. Returns FODMAP groups present and whether the ingredient is high, moderate, or low FODMAP.",
+			Parameters:  json.RawMessage(`{"type":"OBJECT","properties":{"ingredient":{"type":"STRING","description":"The food ingredient name to look up (e.g. \"garlic\", \"wheat\", \"milk\")"}},"required":["ingredient"]}`),
 		},
-		Required: []string{"ingredient"},
-	}
-	return &genai.Tool{
-		FunctionDeclarations: []*genai.FunctionDeclaration{
-			{
-				Name:        "lookup_fodmap",
-				Description: "Look up the FODMAP classification for a food ingredient. Returns FODMAP groups present and whether the ingredient is high, moderate, or low FODMAP.",
-				Parameters:  ingredientParam,
-			},
-			{
-				Name:        "lookup_allergens",
-				Description: "Look up common allergens for a food ingredient using the Open Food Facts database.",
-				Parameters:  ingredientParam,
-			},
+		{
+			Name:        "lookup_allergens",
+			Description: "Look up common allergens for a food ingredient using the Open Food Facts database.",
+			Parameters:  json.RawMessage(`{"type":"OBJECT","properties":{"ingredient":{"type":"STRING","description":"The food ingredient name to look up (e.g. \"garlic\", \"wheat\", \"milk\")"}},"required":["ingredient"]}`),
 		},
 	}
 }

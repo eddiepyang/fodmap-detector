@@ -25,9 +25,10 @@ import (
 )
 
 const (
-	collectionName       = "YelpReview"
-	chunkCollectionName  = "YelpReviewChunk"
-	fodmapCollectionName = "FodmapIngredient"
+	collectionName             = "YelpReview"
+	chunkCollectionName        = "YelpReviewChunk"
+	fodmapCollectionName       = "FodmapIngredient"
+	regulatoryCollectionName   = "RegulatoryUpdate"
 	topKReviews          = 5
 )
 
@@ -1051,6 +1052,97 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 func stringField(m map[string]interface{}, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+// RegulatoryUpdate is a single regulatory update stored in the
+// RegulatoryUpdate Weaviate collection for semantic search.
+type RegulatoryUpdate struct {
+	ID            string
+	SourceID      string
+	SourceURL     string
+	CASNumber     string
+	SubstanceName string
+	ChangeType    string
+	Description   string
+	EffectiveDate string
+	Vector        []float32
+}
+
+// EnsureRegulatorySchema creates the RegulatoryUpdate Weaviate collection if
+// absent. It follows the same one-function-per-collection pattern as
+// EnsureFodmapSchema and EnsureMenuSchema.
+func (c *Client) EnsureRegulatorySchema(ctx context.Context) error {
+	_, err := c.wv.Schema().ClassGetter().WithClassName(regulatoryCollectionName).Do(ctx)
+	if err == nil {
+		return nil
+	}
+	class := &models.Class{
+		Class:      regulatoryCollectionName,
+		Vectorizer: "none",
+		Properties: []*models.Property{
+			{Name: "sourceId", DataType: []string{"text"}},
+			{Name: "sourceUrl", DataType: []string{"text"}},
+			{Name: "casNumber", DataType: []string{"text"}},
+			{Name: "substanceName", DataType: []string{"text"}},
+			{Name: "changeType", DataType: []string{"text"}},
+			{Name: "description", DataType: []string{"text"}},
+			{Name: "effectiveDate", DataType: []string{"text"}},
+		},
+	}
+	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+		return fmt.Errorf("creating regulatory update schema: %w", err)
+	}
+	return nil
+}
+
+// BatchUpsertRegulatory inserts or updates regulatory updates in Weaviate.
+// Each item carries a pre-computed Vector and a deterministic ID for idempotent
+// upserts, matching the BatchUpsertFodmap pattern.
+func (c *Client) BatchUpsertRegulatory(ctx context.Context, items []RegulatoryUpdate) error {
+	if c.embedder == nil {
+		return errors.New("embedder is not configured (required for regulatory update upsert)")
+	}
+	var regUpdateNS = uuid.MustParse("a3c8e6d0-7f2b-4b1a-9c5d-3e8f1a2b4c6d")
+	batcher := c.wv.Batch().ObjectsBatcher()
+	for _, item := range items {
+		vec := item.Vector
+		if len(vec) == 0 {
+			var err error
+			vec, err = c.embedder.EmbedSingle(ctx, "search_document: "+item.SubstanceName)
+			if err != nil {
+				return fmt.Errorf("embedding regulatory update %q: %w", item.SubstanceName, err)
+			}
+		}
+		id := uuid.NewSHA1(regUpdateNS, []byte(item.ID)).String()
+		batcher = batcher.WithObjects(&models.Object{
+			Class:  regulatoryCollectionName,
+			ID:     strfmt.UUID(id),
+			Vector: models.C11yVector(vec),
+			Properties: map[string]any{
+				"sourceId":      item.SourceID,
+				"sourceUrl":     item.SourceURL,
+				"casNumber":     item.CASNumber,
+				"substanceName": item.SubstanceName,
+				"changeType":    item.ChangeType,
+				"description":   item.Description,
+				"effectiveDate":  item.EffectiveDate,
+			},
+		})
+	}
+	responses, err := batcher.Do(ctx)
+	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("batch upsert regulatory: %w", wErr.DerivedFromError)
+		}
+		return fmt.Errorf("batch upsert regulatory: %w", err)
+	}
+	for _, resp := range responses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("batch upsert regulatory update error", "errors", resp.Result.Errors)
+		}
+	}
+	return nil
 }
 
 func stringSliceField(m map[string]interface{}, key string) []string {

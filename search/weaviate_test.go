@@ -952,3 +952,147 @@ func TestFormatGraphQLErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestClient_EnsureMenuSchema(t *testing.T) {
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, menuCollectionName) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	if err := client.EnsureMenuSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureMenuSchema failed: %v", err)
+	}
+	if !created {
+		t.Error("expected menu schema to be created")
+	}
+}
+
+func TestClient_BatchUpsertMenu(t *testing.T) {
+	var count int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/batch/objects" {
+			var body struct {
+				Objects []any `json:"objects"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			count = len(body.Objects)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	items := []MenuItem{
+		{MenuItemID: "m1", BusinessID: "biz1", DishName: "Pizza", StatedIngredients: []string{"dough", "tomato", "cheese"}, MenuSection: "Main"},
+	}
+	if err := client.BatchUpsertMenu(context.Background(), items); err != nil {
+		t.Fatalf("BatchUpsertMenu failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 item, got %d", count)
+	}
+}
+
+func TestClient_SearchMenu(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
+			data := map[string]any{
+				"Get": map[string]any{
+					menuCollectionName: []any{
+						map[string]any{
+							"businessId":        "biz1",
+							"dishName":          "Pizza",
+							"statedIngredients": []any{"cheese"},
+							"menuSection":       "Main",
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	res, err := client.SearchMenu(context.Background(), "pizza", 1)
+	if err != nil {
+		t.Fatalf("SearchMenu failed: %v", err)
+	}
+	if len(res) != 1 || res[0].DishName != "Pizza" {
+		t.Errorf("got %+v", res)
+	}
+}
+
+func TestClient_EnsureRegulatorySchema(t *testing.T) {
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, regulatoryCollectionName) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	if err := client.EnsureRegulatorySchema(context.Background()); err != nil {
+		t.Fatalf("EnsureRegulatorySchema failed: %v", err)
+	}
+	if !created {
+		t.Error("expected regulatory schema to be created")
+	}
+}
+
+func TestClient_BatchUpsertRegulatory(t *testing.T) {
+	var count int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/v1/batch/objects" {
+			var body struct {
+				Objects []any `json:"objects"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			count = len(body.Objects)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	items := []RegulatoryUpdate{
+		{ID: "r1", Description: "Contains Nuts"},
+	}
+	if err := client.BatchUpsertRegulatory(context.Background(), items); err != nil {
+		t.Fatalf("BatchUpsertRegulatory failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 item, got %d", count)
+	}
+}

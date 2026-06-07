@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"fodmap/auth"
@@ -13,7 +14,6 @@ import (
 	"fodmap/search"
 
 	"github.com/google/uuid"
-	"google.golang.org/genai"
 )
 
 const (
@@ -46,11 +46,7 @@ type chatBusinessResponse struct {
 	State string `json:"state"`
 }
 
-// GeminiChatFactory creates a Gemini chat session given a system prompt.
-// Extracted as a function type so tests can inject stubs.
-type GeminiChatFactory func(ctx context.Context, systemPrompt string) (*genai.Client, *genai.Chat, error)
-
-func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
+func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		convID := r.PathValue("id")
 		query := r.PathValue("query")
@@ -99,7 +95,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 
 		// Load existing conversation or create a new one.
 		var conv *auth.Conversation
-		var history []*genai.Content
+		var history []chat.Message
 		userID, _ := r.Context().Value(userContextKey).(string)
 
 		dietaryProfile := ""
@@ -129,7 +125,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				respondError(w, "failed to load history", http.StatusInternalServerError)
 				return
 			}
-			history = messagesToContent(dbMessages)
+			history = messagesToHistory(dbMessages)
 		}
 
 		var biz chatBusinessResponse
@@ -239,37 +235,33 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 		}
 
-		chatModel := s.chatModel
-		if chatModel == "" {
-			chatModel = "gemini-3-flash-lite-preview"
-		}
-
-		if client == nil {
+		if backend == nil {
 			respondError(w, "chat service not configured", http.StatusServiceUnavailable)
 			return
 		}
 
-		// Topic pre-screen.
-		isFollowUp := len(history) > 0
-		if foodRelated, err := chat.IsFoodRelated(ctx, client, s.filterModel, req.Message, isFollowUp); err != nil {
-			slog.Warn("chat: topic screen error", "error", err)
-		} else if !foodRelated {
-			respondError(w, "I can only help with food, ingredients, FODMAP, and allergen questions", http.StatusBadRequest)
-			return
+		// Pre-screen the prompt for dietary relevance (only if not an existing conversation).
+		// Uses s.genaiClient since it's a single-turn call, not the tool loop backend.
+		if conv.ID == "" || strings.HasPrefix(conv.ID, "legacy-") {
+			isFollowUp := len(history) > 0
+			if s.genaiClient != nil {
+				if foodRelated, err := chat.IsFoodRelated(ctx, s.genaiClient, s.filterModel, req.Message, isFollowUp); err != nil {
+					slog.Warn("chat: topic screen error", "error", err)
+				} else if !foodRelated {
+					respondError(w, "I can only help with food, ingredients, FODMAP, and allergen questions", http.StatusBadRequest)
+					return
+				}
+			}
 		}
-
-		// Build a session using the server's own searcher for FODMAP lookups.
-		fodmapClient := NewDirectFodmapClient(s)
-		allergenClient := chat.NewOpenFoodFactsClient("")
 
 		// Legacy fallback: generate review context for conversations created
 		// before summary generation was moved to createConversationHandler.
 		var contextMsg *auth.Message
 		if len(history) == 0 && len(reviews) > 0 {
 			contextContent := chat.FormatReviewsContext(biz.Name, reviews)
-			history = append(history, &genai.Content{
-				Role:  "model",
-				Parts: []*genai.Part{{Text: contextContent}},
+			history = append(history, chat.Message{
+				Role: "model",
+				Text: contextContent,
 			})
 
 			contextMsg = &auth.Message{
@@ -285,17 +277,16 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			}
 		}
 
+		fodmapClient := NewDirectFodmapClient(s)
+		allergenClient := chat.NewOpenFoodFactsClient("")
+
 		session := &chat.Session{
 			FodmapClient:   fodmapClient,
 			AllergenClient: allergenClient,
-			Model:          chatModel,
+			Backend:        backend,
+			SystemPrompt:   systemPrompt,
+			Tools:          chat.FodmapAllergenTools(),
 			History:        history,
-			Config: &genai.GenerateContentConfig{
-				SystemInstruction: &genai.Content{
-					Parts: []*genai.Part{{Text: systemPrompt}},
-				},
-				Tools: []*genai.Tool{chat.FodmapAllergenTools()},
-			},
 		}
 
 		// Save user message to history.
@@ -345,7 +336,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 				flusher.Flush()
 			}
 
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, onText, onToolCall)
+			result, err := session.SendWithToolCalls(ctx, req.Message, onText, onToolCall)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				sseEvent := map[string]string{"type": "error", "text": "chat processing failed"}
@@ -370,7 +361,7 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 			flusher.Flush()
 
 		} else {
-			result, err := session.SendWithToolCalls(ctx, client, req.Message, nil, nil)
+			result, err := session.SendWithToolCalls(ctx, req.Message, nil, nil)
 			if err != nil {
 				slog.Error("chat: send message", "error", err)
 				respondError(w, "chat processing failed", http.StatusInternalServerError)
@@ -395,8 +386,8 @@ func (s *Server) chatHandler(client *genai.Client) http.HandlerFunc {
 	}
 }
 
-func messagesToContent(msgs []*auth.Message) []*genai.Content {
-	var history []*genai.Content
+func messagesToHistory(msgs []*auth.Message) []chat.Message {
+	var history []chat.Message
 	for _, m := range msgs {
 		switch m.Role {
 		case "tool_call":
@@ -405,26 +396,26 @@ func messagesToContent(msgs []*auth.Message) []*genai.Content {
 				slog.Warn("chat: failed to parse tool_call message", "id", m.ID, "error", err)
 				continue
 			}
-			c := &genai.Content{Role: "model"}
+			msg := chat.Message{Role: "model"}
 			for _, call := range calls {
-				c.Parts = append(c.Parts, genai.NewPartFromFunctionCall(call.Name, call.Args))
+				msg.FunctionCalls = append(msg.FunctionCalls, chat.FunctionCall(call))
 			}
-			history = append(history, c)
+			history = append(history, msg)
 		case "tool_response":
 			var responses []chat.ToolResponseEntry
 			if err := json.Unmarshal([]byte(m.Content), &responses); err != nil {
 				slog.Warn("chat: failed to parse tool_response message", "id", m.ID, "error", err)
 				continue
 			}
-			c := &genai.Content{Role: "user"}
+			msg := chat.Message{Role: "user"}
 			for _, resp := range responses {
-				c.Parts = append(c.Parts, genai.NewPartFromFunctionResponse(resp.Name, resp.Result))
+				msg.FunctionResults = append(msg.FunctionResults, chat.FunctionResult(resp))
 			}
-			history = append(history, c)
+			history = append(history, msg)
 		default:
-			history = append(history, &genai.Content{
-				Role:  m.Role,
-				Parts: []*genai.Part{{Text: m.Content}},
+			history = append(history, chat.Message{
+				Role: m.Role,
+				Text: m.Content,
 			})
 		}
 	}
@@ -487,26 +478,3 @@ func saveModelResponse(ctx context.Context, store auth.Store, convID string, res
 	return msg
 }
 
-// newGeminiChatFactory returns the production GeminiChatFactory that creates
-// real Gemini API sessions.
-func newGeminiChatFactory(apiKey, model string) GeminiChatFactory {
-	return func(ctx context.Context, systemPrompt string) (*genai.Client, *genai.Chat, error) {
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:  apiKey,
-			Backend: genai.BackendGeminiAPI,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		chatSession, err := client.Chats.Create(ctx, model, &genai.GenerateContentConfig{
-			SystemInstruction: &genai.Content{
-				Parts: []*genai.Part{{Text: systemPrompt}},
-			},
-			Tools: []*genai.Tool{chat.FodmapAllergenTools()},
-		}, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		return client, chatSession, nil
-	}
-}

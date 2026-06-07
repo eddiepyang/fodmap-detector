@@ -1,0 +1,3 @@
+- Never inline SQL queries in Go code. Put all SQL in `.sql` files under a `sql/` subdirectory of the package (e.g. `menutracking/store/sql/`, `search/sql/`) and embed them with `//go:embed sql/*.sql` as exported `var` constants (e.g. `var ListSourcesSQL string`).
+- Parameterized queries use `$1`, `$2`, etc. in the `.sql` files — never interpolate values with `fmt.Sprintf` or string concatenation.
+- DDL (CREATE TABLE, ALTER TABLE) goes in `schema.sql` and is executed at migration time, not embedded as query constants.
