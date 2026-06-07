@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"fodmap/auth"
+	"fodmap/chat"
 	"fodmap/data"
 	"fodmap/search"
 
@@ -39,7 +40,7 @@ type MenuStore interface {
 type Server struct {
 	searcher           Searcher // nil when Weaviate is not configured
 	port               int
-	geminiFactory      GeminiChatFactory // nil when chat is not configured
+	chatBackend        chat.ChatBackend  // nil when chat is not configured
 	geminiApiKey       string            // for manual session creation
 	chatModel          string            // for manual session creation
 	filterModel        string            // for topic screening
@@ -50,6 +51,7 @@ type Server struct {
 	genaiClient        *genai.Client
 	userStore          auth.Store
 	jwtSecret          string
+	menutrackingAdmin    http.Handler // nil when menutracking is not configured
 }
 
 type Config struct {
@@ -77,6 +79,7 @@ type Config struct {
 	CORSAllowedOrigins []string
 	UserStore          auth.Store
 	JWTSecret          string
+	MenutrackingAdmin   http.Handler // nil when menutracking is not configured
 }
 
 // New initialises the server and Searcher client.
@@ -86,6 +89,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		corsAllowedOrigins: cfg.CORSAllowedOrigins,
 		userStore:          cfg.UserStore,
 		jwtSecret:          cfg.JWTSecret,
+		menutrackingAdmin:    cfg.MenutrackingAdmin,
 	}
 
 	if cfg.PostgresSearch && cfg.PostgresDSN != "" {
@@ -145,7 +149,6 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if filterModel == "" {
 			filterModel = "gemini-3.1-flash-lite-preview"
 		}
-		s.geminiFactory = newGeminiChatFactory(cfg.GeminiAPIKey, chatModel)
 		s.geminiApiKey = cfg.GeminiAPIKey
 		s.chatModel = chatModel
 		s.filterModel = filterModel
@@ -159,6 +162,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("creating gemini client: %w", err)
 		}
 		s.genaiClient = client
+		s.chatBackend = chat.NewGeminiBackend(client, chatModel)
 		slog.Info("chat endpoint enabled", "model", chatModel)
 	}
 
@@ -181,7 +185,7 @@ func NewServer(searcher Searcher, port int) *Server {
 
 // ChatConfig holds optional chat-related overrides for NewServerWithChat.
 type ChatConfig struct {
-	GeminiFactory GeminiChatFactory
+	Backend       chat.ChatBackend
 	ChatAPIKey    string
 	RateLimit     rate.Limit
 	RateBurst     int
@@ -205,11 +209,11 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 	return &Server{
 		searcher:          searcher,
 		port:              port,
-		geminiFactory:     cfg.GeminiFactory,
+		chatBackend:       cfg.Backend,
 		chatAPIKey:        cfg.ChatAPIKey,
 		chatRateLimiter:   newIPRateLimiter(rl, burst),
 		chatMaxConcurrent: maxConc,
-		genaiClient:       nil, // tests inject their own geminiFactory or mock
+		genaiClient:       nil, // tests inject their own backend or mock
 		userStore:         newMockStore(),
 	}
 }
@@ -255,19 +259,50 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/profile", profileMid)
 	mux.Handle("GET /api/v1/profile", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.getProfileHandler)))
 
-	// Chat message stream (protected by JWT/API Key, rate limited)
-	postChatMid := chain(
-		s.chatHandler(s.genaiClient),
-		combinedAuth(s.jwtSecret, s.chatAPIKey),
-		rateLimitMiddleware(s.chatRateLimiter),
-		concurrencyLimiter(s.chatMaxConcurrent),
-	)
-	mux.Handle("POST /api/v1/conversations/{id}/messages", postChatMid)
+	// Chat endpoint (protected by JWT, rate limited)
+	if s.chatBackend != nil {
+		chatMid := chain(
+			s.chatHandler(s.chatBackend),
+			combinedAuth(s.jwtSecret, s.chatAPIKey),
+			rateLimitMiddleware(s.chatRateLimiter),
+			concurrencyLimiter(s.chatMaxConcurrent),
+		)
+		mux.Handle("POST /chat/{query...}", chatMid)
+		mux.Handle("POST /api/v1/chat/{query...}", chatMid)
+		mux.Handle("POST /api/v1/conversations/{id}/messages", chatMid)
+	}
 
-	// Legacy Chat endpoint
-	mux.Handle("POST /chat/{query...}", postChatMid)
-
+	// Menutracking admin endpoints (protected by JWT or ChatAPIKey).
+	if s.menutrackingAdmin != nil {
+		adminMid := chain(
+			s.menutrackingAdmin,
+			combinedAuth(s.jwtSecret, s.chatAPIKey),
+		)
+		mux.Handle("GET /menutracking/sources", adminMid)
+		mux.Handle("GET /menutracking/jobs", adminMid)
+		mux.Handle("POST /menutracking/reload", adminMid)
+	}
 	return corsMiddleware(s.corsAllowedOrigins)(mux)
+}
+
+// ChatBackend returns the chat backend configured for this server, or nil if
+// chat is not enabled. Exported so the CLI can pass it to other subsystems
+// (e.g. the menutracking pipeline).
+func (s *Server) ChatBackend() chat.ChatBackend {
+	return s.chatBackend
+}
+
+// SetMenutrackingAdmin sets the menutracking admin handler. Called after pipeline
+// startup to wire the admin endpoints.
+func (s *Server) SetMenutrackingAdmin(h http.Handler) {
+	s.menutrackingAdmin = h
+}
+
+// Searcher returns the underlying search client, or nil if search is not
+// enabled. The return type is the concrete interface so callers can type-assert
+// to access additional methods.
+func (s *Server) Searcher() Searcher {
+	return s.searcher
 }
 
 // Start registers routes and begins serving HTTP requests.

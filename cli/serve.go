@@ -7,6 +7,9 @@ import (
 	"os"
 
 	"fodmap/auth"
+	"fodmap/chat"
+	"fodmap/menutracking"
+	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
 
@@ -50,8 +53,8 @@ var serveCmd = &cobra.Command{
 		ollamaURL := viper.GetString("ollama-url")
 		ollamaModel := viper.GetString("ollama-model")
 		postgresSearch := viper.GetBool("postgres-search")
+		enablePipeline := viper.GetBool("enable-pipeline")
 
-		// Create embedder: prefer Ollama, fall back to HTTP vectorizer.
 		var embedder search.Embedder
 		if ollamaURL != "" && ollamaModel != "" {
 			embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
@@ -112,9 +115,63 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("initializing server: %w", err)
 		}
+
+		// Start the menutracking pipeline if enabled. The pipeline shares the
+		// server's lifecycle: when srv.Start() returns (on SIGTERM or error),
+		// we drain the pipeline before exiting.
+		var pipelineResult *PipelineResult
+		if enablePipeline {
+			if postgresDSN == "" {
+				return fmt.Errorf("postgres-dsn is required when --enable-pipeline is set")
+			}
+			fetcher := scraper.NewHTTPFetcher(true) // ignore robots for regulatory sources
+
+			// Build a VectorSink from the server's Searcher if available.
+			var vectorSink menutracking.VectorSink
+			if vs, ok := srv.Searcher().(menutracking.VectorSink); ok {
+				vectorSink = vs
+			}
+
+			// Build a ChatBackend from the server's backend if available.
+			var chatBackend chat.ChatBackend
+			if cb := srv.ChatBackend(); cb != nil {
+				chatBackend = cb
+			}
+
+			var pipelineErr error
+			pipelineResult, pipelineErr = StartMenutrackingPipeline(context.Background(), PipelineConfig{
+				DSN:         postgresDSN,
+				Fetcher:     fetcher,
+				VectorSink:  vectorSink,
+				ChatBackend: chatBackend,
+			})
+			if pipelineErr != nil {
+				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
+			}
+
+			// Wire menutracking admin endpoints using the pipeline's pool.
+			srv.SetMenutrackingAdmin(&menutracking.MenutrackingAdminHandler{Pool: pipelineResult.Pool})
+		}
+
+		// Start the HTTP server (blocks until SIGTERM or error).
 		if err := srv.Start(); err != nil {
+			if pipelineResult != nil {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 30)
+				defer cancel()
+				_ = pipelineResult.Stop(stopCtx)
+			}
 			return fmt.Errorf("server error: %w", err)
 		}
+
+		// Drain the pipeline on server shutdown.
+		if pipelineResult != nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 30)
+			defer cancel()
+			if err := pipelineResult.Stop(stopCtx); err != nil {
+				slog.Error("menutracking pipeline shutdown error", "err", err)
+			}
+		}
+
 		return nil
 	},
 }
@@ -139,6 +196,7 @@ func init() {
 	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy")
 	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
+	serveCmd.Flags().Bool("enable-pipeline", false, "Enable the menutracking regulatory tracking pipeline (requires postgres-dsn)")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 }

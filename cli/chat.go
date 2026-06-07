@@ -59,17 +59,33 @@ func runChat(cmd *cobra.Command, args []string) error {
 	fodmapClient := chat.NewHTTPFodmapServerClient(serverURL)
 	allergenClient := chat.NewOpenFoodFactsClient("")
 
-	biz, err := fodmapClient.FetchTopBusiness(ctx, query, category, city, state)
-	if err != nil {
-		return fmt.Errorf("searching businesses: %w", err)
-	}
-	fmt.Printf("Found: %s (%s, %s)\n", biz.Name, biz.City, biz.State)
+	var biz *chat.Business
+	var reviews []chat.Review
 
-	reviews, err := fodmapClient.FetchChatReviews(ctx, biz.ID, query, limit)
-	if err != nil {
-		return fmt.Errorf("fetching reviews: %w", err)
+	if query != "" {
+		var err error
+		biz, err = fodmapClient.FetchTopBusiness(ctx, query, category, city, state)
+		if err != nil {
+			fmt.Printf("Warning: searching businesses failed: %v\n", err)
+		} else {
+			fmt.Printf("Found: %s (%s, %s)\n", biz.Name, biz.City, biz.State)
+			reviews, err = fodmapClient.FetchChatReviews(ctx, biz.ID, query, limit)
+			if err != nil {
+				fmt.Printf("Warning: fetching reviews failed: %v\n", err)
+			} else {
+				fmt.Printf("Fetched %d reviews.\n", len(reviews))
+			}
+		}
 	}
-	fmt.Printf("Fetched %d reviews. Starting chat (type 'exit' to quit)...\n", len(reviews))
+
+	if biz == nil {
+		fmt.Printf("Starting General Assistant mode (type 'exit' to quit)...\n")
+		biz = &chat.Business{Name: "General Assistant", City: "Anywhere"}
+	} else {
+		fmt.Printf("Starting chat (type 'exit' to quit)...\n")
+	}
+
+
 
 	tmplStr := chat.DefaultChatInstruction
 	if instructionPath != "" {
@@ -85,12 +101,12 @@ func runChat(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("rendering system prompt: %w", err)
 	}
 
-	var history []*genai.Content
+	var history []chat.Message
 	if len(reviews) > 0 {
 		contextContent := chat.FormatReviewsContext(biz.Name, reviews)
-		history = append(history, &genai.Content{
-			Role:  "model",
-			Parts: []*genai.Part{{Text: contextContent}},
+		history = append(history, chat.Message{
+			Role: "model",
+			Text: contextContent,
 		})
 	}
 
@@ -106,19 +122,15 @@ func runChat(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating Gemini client: %w", err)
 	}
 
-	config := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{
-			Parts: []*genai.Part{{Text: systemPrompt}},
-		},
-		Tools: []*genai.Tool{chat.FodmapAllergenTools()},
-	}
+	backend := chat.NewGeminiBackend(geminiClient, chatModel)
 
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
-		Model:          chatModel,
+		Backend:        backend,
+		SystemPrompt:   systemPrompt,
+		Tools:          chat.FodmapAllergenTools(),
 		History:        history,
-		Config:         config,
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -146,7 +158,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		result, err := session.SendWithToolCalls(ctx, geminiClient, input, func(text string) {
+		result, err := session.SendWithToolCalls(ctx, input, func(text string) {
 			fmt.Print(text)
 		}, nil)
 		if err != nil {

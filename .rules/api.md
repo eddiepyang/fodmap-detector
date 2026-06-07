@@ -1,0 +1,3 @@
+- Show a plan and get approval before changing any HTTP route pattern or query parameter contract
+- Route patterns use Go 1.22+ method+path syntax: `"GET /path/{param}"` or `"GET /path/{wildcard...}"`
+- Query strings are for optional filters; required inputs belong in the path

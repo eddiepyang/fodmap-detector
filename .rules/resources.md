@@ -1,0 +1,2 @@
+- Functions that open files for streaming (e.g. `GetArchive`) return `(result, io.Closer, error)` — the caller owns the lifecycle and must `defer closer.Close()`
+- Accept interfaces, return structs: constructor parameters should use interface types (`io.WriteCloser`, `io.Reader`) so callers can pass any implementation

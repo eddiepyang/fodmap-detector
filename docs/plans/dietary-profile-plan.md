@@ -1,5 +1,6 @@
 # Implementation Plan: Personal Dietary Profile Interviewer
 
+**Status:** Completed
 ## Objective
 Enhance the personalization of the `fodmap-detector` by creating an onboarding agent workflow that captures a user's specific dietary sensitivities. This profile will be stored in PostgreSQL and injected into the main chat agent's system prompt, enabling the agent to provide highly individualized dish recommendations rather than relying on generic FODMAP rules.
 

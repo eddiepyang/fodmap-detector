@@ -1,0 +1,3 @@
+- Use `for range chan` to consume channels; do not use `select` with a separate done channel
+- Closing a channel signals completion — ranging over it drains all buffered items automatically
+- Prefer buffered channels in producer/consumer pipelines: `make(chan T, N)`
