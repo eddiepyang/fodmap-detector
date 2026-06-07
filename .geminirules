@@ -63,3 +63,8 @@ Project-level rules for this codebase.
 
 - Always keep the `start.sh` script in working condition. If you make architectural changes, add new services, or change startup flags, you must update `start.sh` to reflect those changes.
 - Ensure `README.md` and any relevant files in the `docs/` folder are kept up-to-date with your changes. Always verify instructions and CLI flags remain accurate.
+
+## AI Agent Rules
+
+- Always use the `search_web` tool to confirm and fact-check findings or technical assumptions (e.g., model capabilities, version support, API limits) before finalizing recommendations or reporting back to the user.
+- Always review implementation plans for risks, edge cases, and gaps after the first iteration to ensure robustness.
