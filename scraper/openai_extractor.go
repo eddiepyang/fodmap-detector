@@ -81,10 +81,10 @@ type respFormat struct {
 // max_tokens as a hard limit on the total context window (prompt + generation),
 // instantly dropping large prompts and returning empty strings.
 type chatRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	ResponseFormat *respFormat   `json:"response_format,omitempty"`
-	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
+	Model           string        `json:"model"`
+	Messages        []chatMessage `json:"messages"`
+	ResponseFormat  *respFormat   `json:"response_format,omitempty"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 }
 
 type chatResponse struct {

@@ -35,17 +35,17 @@ func GenerateDietaryProfile(ctx context.Context, client *genai.Client, model str
 	if err != nil {
 		return nil, fmt.Errorf("generate dietary profile: %w", err)
 	}
-	
+
 	if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
 		return nil, fmt.Errorf("empty response from model")
 	}
 
-    var out strings.Builder
-    for _, part := range resp.Candidates[0].Content.Parts {
-        if part.Text != "" {
-            out.WriteString(part.Text)
-        }
-    }
+	var out strings.Builder
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if part.Text != "" {
+			out.WriteString(part.Text)
+		}
+	}
 	text := strings.TrimSpace(out.String())
 
 	// Strip potential markdown code blocks

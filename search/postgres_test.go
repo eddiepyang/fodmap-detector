@@ -140,15 +140,15 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 			"Great food!",
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-		
+
 	prepDel.ExpectExec().
 		WithArgs("rev1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-		
+
 	prepChunk.ExpectExec().
 		WithArgs("rev1", "Great food!", pgvector.NewVector([]float32{0.1, 0.2, 0.3})).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-		
+
 	mock.ExpectCommit()
 
 	err = client.BatchUpsert(context.Background(), items)
@@ -443,4 +443,3 @@ func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
 		t.Errorf("Expected query error, got: %v", err)
 	}
 }
-

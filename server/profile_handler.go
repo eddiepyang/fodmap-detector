@@ -2,9 +2,9 @@ package server
 
 import (
 	"encoding/json"
-	"net/http"
 	"fodmap/chat"
 	"log/slog"
+	"net/http"
 )
 
 type profileRequest struct {

@@ -208,8 +208,8 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	for _, item := range items {
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
 		parentBatcher = parentBatcher.WithObjects(&models.Object{
-			Class:  collectionName,
-			ID:     strfmt.UUID(id),
+			Class: collectionName,
+			ID:    strfmt.UUID(id),
 			// Parents don't need vectors, vectors live on chunks
 			Properties: map[string]any{
 				"reviewId":     item.Review.ReviewID,
@@ -244,7 +244,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 
 	for _, item := range items {
 		parentUUID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
-		
+
 		chunksToProcess := item.Chunks
 		if len(chunksToProcess) == 0 && item.Vector != nil {
 			// Legacy fallback
@@ -254,7 +254,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 		for i, chunk := range chunksToProcess {
 			// Deterministic chunk ID based on review ID and index
 			chunkUUID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s_chunk_%d", item.Review.ReviewID, i))).String()
-			
+
 			chunkBatcher = chunkBatcher.WithObjects(&models.Object{
 				Class:  chunkCollectionName,
 				ID:     strfmt.UUID(chunkUUID),
@@ -263,7 +263,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 					"chunkText": chunk.Text,
 				},
 			})
-			
+
 			refs = append(refs, refInfo{from: strfmt.UUID(chunkUUID), to: strfmt.UUID(parentUUID)})
 		}
 	}
@@ -288,7 +288,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 			},
 		)
 	}
-	
+
 	refResponses, err := refBatcher.Do(ctx)
 	if err != nil {
 		return fmt.Errorf("ref batch upsert: %w", err)
@@ -550,13 +550,13 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	// Collect certainty scores and name per business.
 	// deduplicate by review ID to take only the best chunk per review.
 	type bizEntry struct {
-		name         string
-		city         string
-		state        string
-		categories   string
-		scores       []float64
-		stars        []float64
-		seenReviews  map[string]bool
+		name        string
+		city        string
+		state       string
+		categories  string
+		scores      []float64
+		stars       []float64
+		seenReviews map[string]bool
 	}
 	entries := make(map[string]*bizEntry)
 
@@ -565,7 +565,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		if !ok {
 			continue
 		}
-		
+
 		// Extract parent object
 		parentObj, parentExists := extractParent(obj)
 		if !parentExists {
@@ -599,7 +599,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 		if !e.seenReviews[reviewID] {
 			e.seenReviews[reviewID] = true
 			e.scores = append(e.scores, certainty)
-			
+
 			stars, _ := parentObj["stars"].(float64)
 			if stars > 0 {
 				e.stars = append(e.stars, stars)
@@ -690,7 +690,7 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 		if !ok {
 			continue
 		}
-		
+
 		parentObj, parentExists := extractParent(obj)
 		if !parentExists {
 			continue

@@ -155,11 +155,11 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 
 		text, _ := m.Metadata["text"].(string)
 		chunkText, _ := m.Metadata["chunk_text"].(string)
-		
+
 		// blendScore uses the full text for BM25
 		score := blendScore(query, text, m.Score, filter.Alpha)
 		reviews = append(reviews, RankedReview{
-			Score: score,
+			Score:        score,
 			MatchedChunk: chunkText,
 			Review: IndexItem{
 				BusinessName: m.Metadata["business_name"].(string),

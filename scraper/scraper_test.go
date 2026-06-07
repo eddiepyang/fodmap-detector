@@ -442,4 +442,3 @@ func TestValidateAPIURL(t *testing.T) {
 		}
 	})
 }
-

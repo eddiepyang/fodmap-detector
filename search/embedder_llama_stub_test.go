@@ -12,7 +12,7 @@ func TestLlamaEmbedderStub_Errors(t *testing.T) {
 	}
 
 	stub := &LlamaEmbedderStub{}
-	
+
 	_, err = stub.EmbedSingle(context.Background(), "test")
 	if err == nil || err.Error() != "llama embedder not available" {
 		t.Errorf("unexpected error: %v", err)

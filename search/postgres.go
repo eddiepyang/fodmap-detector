@@ -91,7 +91,7 @@ func (c *PostgresClient) EnsureSchema(ctx context.Context) error {
 
 	for _, query := range queries {
 		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			// ALTER TABLE DROP COLUMN might fail if table didn't exist before CREATE TABLE ran, 
+			// ALTER TABLE DROP COLUMN might fail if table didn't exist before CREATE TABLE ran,
 			// but we created it first.
 			if !strings.Contains(err.Error(), "does not exist") {
 				return fmt.Errorf("failed to execute schema query %q: %w", query, err)

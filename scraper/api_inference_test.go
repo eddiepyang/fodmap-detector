@@ -37,7 +37,7 @@ func TestFetchInferredEndpoint(t *testing.T) {
 			t.Errorf("expected error")
 		}
 	})
-	
+
 	t.Run("404", func(t *testing.T) {
 		jsonPayload := `{"url": "` + srv.URL + `/missing", "method": "GET"}`
 		_, err := FetchInferredEndpoint(context.Background(), jsonPayload, srv.URL)

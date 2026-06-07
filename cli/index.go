@@ -49,7 +49,6 @@ func init() {
 	indexCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
 }
 
-
 func runIndex(cmd *cobra.Command, _ []string) error {
 	host := viper.GetString("weaviate")
 	scheme := viper.GetString("weaviate-scheme")
@@ -183,13 +182,13 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 					continue
 				}
 				item := search.IndexItem{Review: r}
-				
+
 				// Apply recursive chunking. Using 800 chars (~150 words) with 100 overlap.
 				chunkTexts := search.ChunkText(r.Text, 800, 100)
 				for _, ct := range chunkTexts {
 					item.Chunks = append(item.Chunks, search.Chunk{Text: ct})
 				}
-				
+
 				if biz, ok := businessMap[r.BusinessID]; ok {
 					item.BusinessName = biz.Name
 					item.City = biz.City

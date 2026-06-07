@@ -251,7 +251,7 @@ func TestPostgresStore_AddMessage(t *testing.T) {
 	mock.ExpectExec("INSERT INTO messages").
 		WithArgs(msg.ID, msg.ConversationID, msg.Role, msg.Content, msg.Sequence, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	
+
 	mock.ExpectExec("UPDATE conversations SET updated_at = \\$1 WHERE id = \\$2").
 		WithArgs(sqlmock.AnyArg(), msg.ConversationID).
 		WillReturnResult(sqlmock.NewResult(1, 1))

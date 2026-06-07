@@ -110,7 +110,7 @@ func TestVectorizerClient_Errors(t *testing.T) {
 			t.Errorf("expected nil res, got %v", res)
 		}
 	})
-	
+
 	t.Run("Batch Wrong Row Count", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := make([]byte, 8)
