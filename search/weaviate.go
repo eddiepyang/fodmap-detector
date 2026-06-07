@@ -281,7 +281,7 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	// 3. Add Cross-References
 	refBatcher := c.wv.Batch().ReferencesBatcher()
 	for _, r := range refs {
-		refBatcher = refBatcher.WithReference(
+		refBatcher = refBatcher.WithReferences(
 			&models.BatchReference{
 				From: strfmt.URI(fmt.Sprintf("weaviate://localhost/%s/%s/hasParent", chunkCollectionName, r.from)),
 				To:   strfmt.URI(fmt.Sprintf("weaviate://localhost/%s/%s", collectionName, r.to)),
