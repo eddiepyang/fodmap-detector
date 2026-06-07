@@ -1,5 +1,6 @@
 # Scraper Pipeline Plan
 
+**Status:** Completed
 ## Context
 Add a `fodmap scrape <url>` CLI command that fetches a restaurant menu page (HTML or PDF), converts it to a Markdown/text representation, calls a configurable OpenAI-compatible LLM endpoint (Ollama, vLLM, OpenAI, Gemini's `/v1beta/openai` wrapper, or any compatible server) to extract structured menu items (dish + ingredients), embeds the items, and upserts them into a **new dedicated `RestaurantMenu` collection** in the existing search backend so they are immediately searchable by the FODMAP chat without polluting the `YelpReview` collection.
 

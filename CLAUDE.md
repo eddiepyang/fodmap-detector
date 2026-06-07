@@ -78,6 +78,12 @@ Project-level rules for this codebase.
 
 - Always use `//go:embed` for static text files, prompts, and templates instead of reading from disk with `os.ReadFile`. This bundles assets directly into the Go binary and guarantees they are present at deployment.
 
+## SQL
+
+- Never inline SQL queries in Go code. Put all SQL in `.sql` files under a `sql/` subdirectory of the package (e.g. `menutracking/store/sql/`, `search/sql/`) and embed them with `//go:embed sql/*.sql` as exported `var` constants (e.g. `var ListSourcesSQL string`).
+- Parameterized queries use `$1`, `$2`, etc. in the `.sql` files — never interpolate values with `fmt.Sprintf` or string concatenation.
+- DDL (CREATE TABLE, ALTER TABLE) goes in `schema.sql` and is executed at migration time, not embedded as query constants.
+
 ## Documentation & Scripts
 
 - Always keep the `start.sh` script in working condition. If you make architectural changes, add new services, or change startup flags, you must update `start.sh` to reflect those changes.

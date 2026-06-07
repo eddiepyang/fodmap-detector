@@ -1,0 +1,2 @@
+- Use `slog` throughout — not `log` or `fmt.Println`
+- Structured key/value pairs: `slog.Error("msg", "key", value)` — never bare string concatenation

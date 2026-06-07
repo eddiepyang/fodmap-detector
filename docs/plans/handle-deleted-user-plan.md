@@ -1,5 +1,6 @@
 # Handle Deleted Users Plan
 
+**Status:** Completed
 ## Objective
 Add backend support for user status updates and an API endpoint for users to delete their accounts.
 

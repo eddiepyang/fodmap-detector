@@ -66,6 +66,16 @@ type Fetcher interface {
 	Fetch(ctx context.Context, rawURL string) (FetchResult, error)
 }
 
+// RenderedFetcher retrieves a URL that may require JavaScript rendering and
+// returns its body and content-type. Implementations will use a headless
+// browser (e.g. chromedp) behind the existing --enable-js-render flag. This
+// interface is defined now so menutracking can reference it; actual
+// implementations will be added in a later phase.
+type RenderedFetcher interface {
+	Fetcher
+	FetchRendered(ctx context.Context, rawURL string) (FetchResult, error)
+}
+
 // Extractor converts page text (or images via the vision path) into a
 // MenuExtractionResult. Multiple implementations are provided (OpenAI-compat,
 // Gemini). Tests stub this interface directly.
