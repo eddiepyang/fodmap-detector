@@ -110,13 +110,21 @@ We have split our documentation into separate guides and plans for easier readin
 - [LLM Serving](docs/guides/llm-serving.md) - LLM serving architectures.
 
 ### Plans & Roadmaps
+
+**Completed:**
 - [Scraper Pipeline Plan](docs/plans/scraper-pipeline-plan.md)
 - [Dietary Profile Plan](docs/plans/dietary-profile-plan.md)
-- [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md)
 - [Indexing Improvements](docs/plans/indexing-improvements.md)
-- [Feature Recommendations](docs/plans/feature-recommendations.md)
 - [Deleted User Plan](docs/plans/handle-deleted-user-plan.md)
-- [Waiter Script Plan](docs/plans/waiter-script-plan.md)
 - [Frontend Plan](docs/plans/frontend-plan.md)
-- [Weaviate Chunk Denormalization Plan](docs/plans/weaviate-chunk-denormalization-plan.md)
-- [Regulatory Tracking Pipeline Plan](docs/plans/regtrack-pipeline-plan.md)
+
+**In Progress:**
+- [Feature Recommendations](docs/plans/feature-recommendations.md) — partially implemented
+- [Regulatory Tracking Pipeline Plan](docs/plans/regtrack-pipeline-plan.md) — implemented as `menutracking` package
+- [Weaviate Chunk Denormalization Plan](docs/plans/weaviate-chunk-denormalization-plan.md) — not yet started
+
+**Not Started:**
+- [Waiter Script Plan](docs/plans/waiter-script-plan.md)
+
+**Archived:**
+- [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md) — replaced by pure-Go OpenAI-compatible extractor
