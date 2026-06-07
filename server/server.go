@@ -26,6 +26,16 @@ type Searcher interface {
 	BatchUpsert(ctx context.Context, items []search.IndexItem) error
 }
 
+// MenuStore manages the RestaurantMenu collection. It is defined separately
+// from Searcher so the same Weaviate/Postgres/Pinecone backend types can
+// satisfy both interfaces independently. DeleteStaleMenu is deferred to a
+// follow-up PR (YAGNI — no --purge-stale flag yet).
+type MenuStore interface {
+	EnsureMenuSchema(ctx context.Context) error
+	BatchUpsertMenu(ctx context.Context, items []search.MenuItem) error
+	SearchMenu(ctx context.Context, query string, limit int) ([]search.MenuItem, error)
+}
+
 type Server struct {
 	searcher           Searcher // nil when Weaviate is not configured
 	port               int

@@ -26,9 +26,28 @@ import (
 
 const (
 	collectionName       = "YelpReview"
+	chunkCollectionName  = "YelpReviewChunk"
 	fodmapCollectionName = "FodmapIngredient"
 	topKReviews          = 5
 )
+
+// MenuItem is a single scraped menu item stored in the RestaurantMenu
+// collection. IDs are deterministic so re-scraping the same URL is idempotent.
+type MenuItem struct {
+	MenuItemID         string
+	BusinessID         string
+	MenuSection        string
+	RestaurantName     string
+	City               string
+	State              string
+	DishName           string
+	Description        string
+	StatedIngredients  []string
+	HasFullIngredients bool
+	SourceURL          string
+	ScrapedAtUTC       string
+	Vector             []float32
+}
 
 // Client wraps the Weaviate client with domain-specific operations.
 type Client struct {
@@ -76,22 +95,32 @@ type SearchFilter struct {
 	Alpha      float32  // hybrid search balance: 0 = pure vector (nearText), >0 enables hybrid (0=pure BM25, 1=pure vector)
 }
 
+// Chunk holds a single text chunk and its embedding vector.
+type Chunk struct {
+	Text   string
+	Vector []float32
+}
+
 // IndexItem pairs a review with its associated business metadata for indexing.
-// If Vector is non-nil it is sent directly to Weaviate, bypassing the
-// transformer sidecar's per-object sequential vectorization.
+// Vector is the legacy single-vector field (used when Chunks is empty).
+// Chunks holds the chunked text and per-chunk vectors for parent-child indexing.
 type IndexItem struct {
 	Review       schemas.Review
 	BusinessName string
 	City         string
 	State        string
 	Categories   string
-	Vector       []float32
+	Vector       []float32 // legacy: used when Chunks is empty
+	Chunks       []Chunk   // chunked text with per-chunk vectors
 }
 
-// RankedReview pairs a review with its average certainty score across the top K matches for its business.
+// RankedReview pairs a review with its certainty score.
+// MatchedChunk contains the specific chunk text that matched the query,
+// while Review.Review.Text always contains the full parent review text.
 type RankedReview struct {
-	Review IndexItem
-	Score  float64
+	Review       IndexItem
+	Score        float64
+	MatchedChunk string // the specific chunk text that matched the query (may be empty)
 }
 
 // NewClient creates a Weaviate client connected to the given host (e.g. "localhost:8090").
@@ -116,46 +145,72 @@ func NewClient(host, scheme, apiKey string, embedder Embedder) (*Client, error) 
 	return &Client{wv: wv, embedder: embedder}, nil
 }
 
-// EnsureSchema creates the YelpReview collection if it does not already exist.
-// It is idempotent — safe to call on every startup or before indexing.
+// EnsureSchema creates the YelpReview and YelpReviewChunk collections if they do not exist.
 func (c *Client) EnsureSchema(ctx context.Context) error {
-	_, err := c.wv.Schema().ClassGetter().WithClassName(collectionName).Do(ctx)
-	if err == nil {
-		// class already exists
-		return nil
+	parentExists := false
+	if _, err := c.wv.Schema().ClassGetter().WithClassName(collectionName).Do(ctx); err == nil {
+		parentExists = true
 	}
 
-	class := &models.Class{
-		Class:      collectionName,
-		Vectorizer: "none",
-		Properties: []*models.Property{
-			{Name: "reviewId", DataType: []string{"text"}},
-			{Name: "businessId", DataType: []string{"text"}},
-			{Name: "stars", DataType: []string{"number"}},
-			{Name: "city", DataType: []string{"text"}},
-			{Name: "state", DataType: []string{"text"}},
-			{Name: "categories", DataType: []string{"text"}},
-			{Name: "businessName", DataType: []string{"text"}},
-			{Name: "text", DataType: []string{"text"}},
-		},
+	if !parentExists {
+		class := &models.Class{
+			Class:      collectionName,
+			Vectorizer: "none",
+			Properties: []*models.Property{
+				{Name: "reviewId", DataType: []string{"text"}},
+				{Name: "businessId", DataType: []string{"text"}},
+				{Name: "stars", DataType: []string{"number"}},
+				{Name: "city", DataType: []string{"text"}},
+				{Name: "state", DataType: []string{"text"}},
+				{Name: "categories", DataType: []string{"text"}},
+				{Name: "businessName", DataType: []string{"text"}},
+				{Name: "text", DataType: []string{"text"}},
+			},
+		}
+		if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+			return fmt.Errorf("creating parent schema: %w", err)
+		}
 	}
 
-	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
-		return fmt.Errorf("creating schema: %w", err)
+	chunkExists := false
+	if _, err := c.wv.Schema().ClassGetter().WithClassName(chunkCollectionName).Do(ctx); err == nil {
+		chunkExists = true
 	}
+
+	if !chunkExists {
+		chunkClass := &models.Class{
+			Class:      chunkCollectionName,
+			Vectorizer: "none",
+			Properties: []*models.Property{
+				{Name: "chunkText", DataType: []string{"text"}},
+				{
+					Name:     "hasParent",
+					DataType: []string{collectionName},
+				},
+			},
+		}
+		if err := c.wv.Schema().ClassCreator().WithClass(chunkClass).Do(ctx); err != nil {
+			return fmt.Errorf("creating chunk schema: %w", err)
+		}
+	}
+
 	return nil
 }
 
-// BatchUpsert inserts or updates a batch of reviews in Weaviate.
-// Each item is assigned a deterministic UUID from its review_id, making the operation idempotent.
+// BatchUpsert inserts or updates a batch of reviews and their chunks in Weaviate.
 func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
-	batcher := c.wv.Batch().ObjectsBatcher()
+	if len(items) == 0 {
+		return nil
+	}
+
+	// 1. Insert Parents
+	parentBatcher := c.wv.Batch().ObjectsBatcher()
 	for _, item := range items {
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
-		batcher = batcher.WithObjects(&models.Object{
-			Class:  collectionName,
-			ID:     strfmt.UUID(id),
-			Vector: models.C11yVector(item.Vector),
+		parentBatcher = parentBatcher.WithObjects(&models.Object{
+			Class: collectionName,
+			ID:    strfmt.UUID(id),
+			// Parents don't need vectors, vectors live on chunks
 			Properties: map[string]any{
 				"reviewId":     item.Review.ReviewID,
 				"businessId":   item.Review.BusinessID,
@@ -169,19 +224,81 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 		})
 	}
 
-	responses, err := batcher.Do(ctx)
+	parentResponses, err := parentBatcher.Do(ctx)
 	if err != nil {
-		var wErr *fault.WeaviateClientError
-		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
-			return fmt.Errorf("batch upsert: %w", wErr.DerivedFromError)
-		}
-		return fmt.Errorf("batch upsert: %w", err)
+		return fmt.Errorf("parent batch upsert: %w", err)
 	}
-	for _, resp := range responses {
+	for _, resp := range parentResponses {
 		if resp.Result != nil && resp.Result.Errors != nil {
-			slog.Warn("batch upsert item error", "errors", resp.Result.Errors)
+			slog.Warn("parent upsert error", "errors", resp.Result.Errors)
 		}
 	}
+
+	// 2. Insert Chunks
+	chunkBatcher := c.wv.Batch().ObjectsBatcher()
+	type refInfo struct {
+		from strfmt.UUID
+		to   strfmt.UUID
+	}
+	var refs []refInfo
+
+	for _, item := range items {
+		parentUUID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(item.Review.ReviewID)).String()
+
+		chunksToProcess := item.Chunks
+		if len(chunksToProcess) == 0 && item.Vector != nil {
+			// Legacy fallback
+			chunksToProcess = []Chunk{{Text: item.Review.Text, Vector: item.Vector}}
+		}
+
+		for i, chunk := range chunksToProcess {
+			// Deterministic chunk ID based on review ID and index
+			chunkUUID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s_chunk_%d", item.Review.ReviewID, i))).String()
+
+			chunkBatcher = chunkBatcher.WithObjects(&models.Object{
+				Class:  chunkCollectionName,
+				ID:     strfmt.UUID(chunkUUID),
+				Vector: models.C11yVector(chunk.Vector),
+				Properties: map[string]any{
+					"chunkText": chunk.Text,
+				},
+			})
+
+			refs = append(refs, refInfo{from: strfmt.UUID(chunkUUID), to: strfmt.UUID(parentUUID)})
+		}
+	}
+
+	chunkResponses, err := chunkBatcher.Do(ctx)
+	if err != nil {
+		return fmt.Errorf("chunk batch upsert: %w", err)
+	}
+	for _, resp := range chunkResponses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("chunk upsert error", "errors", resp.Result.Errors)
+		}
+	}
+
+	// 3. Add Cross-References
+	refBatcher := c.wv.Batch().ReferencesBatcher()
+	for _, r := range refs {
+		refBatcher = refBatcher.WithReferences(
+			&models.BatchReference{
+				From: strfmt.URI(fmt.Sprintf("weaviate://localhost/%s/%s/hasParent", chunkCollectionName, r.from)),
+				To:   strfmt.URI(fmt.Sprintf("weaviate://localhost/%s/%s", collectionName, r.to)),
+			},
+		)
+	}
+
+	refResponses, err := refBatcher.Do(ctx)
+	if err != nil {
+		return fmt.Errorf("ref batch upsert: %w", err)
+	}
+	for _, resp := range refResponses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("ref upsert error", "errors", resp.Result.Errors)
+		}
+	}
+
 	return nil
 }
 
@@ -190,17 +307,29 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 // by category (substring), city (exact), and state (exact).
 func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	fields := []graphql.Field{
-		{Name: "businessId"},
-		{Name: "businessName"},
-		{Name: "city"},
-		{Name: "state"},
-		{Name: "categories"},
-		{Name: "stars"},
+		{Name: "chunkText"},
+		{
+			Name: "hasParent",
+			Fields: []graphql.Field{
+				{
+					Name: "... on " + collectionName,
+					Fields: []graphql.Field{
+						{Name: "reviewId"},
+						{Name: "businessId"},
+						{Name: "businessName"},
+						{Name: "city"},
+						{Name: "state"},
+						{Name: "categories"},
+						{Name: "stars"},
+					},
+				},
+			},
+		},
 		{Name: "_additional { certainty score }"},
 	}
 
 	getter := c.wv.GraphQL().Get().
-		WithClassName(collectionName).
+		WithClassName(chunkCollectionName).
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
@@ -257,17 +386,28 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 // GetReviews returns the top reviews from a nearText vector query, sorted by certainty score (descending).
 func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
 	fields := []graphql.Field{
-		{Name: "reviewId"},
-		{Name: "businessId"},
-		{Name: "businessName"},
-		{Name: "city"},
-		{Name: "state"},
-		{Name: "text"},
+		{Name: "chunkText"},
+		{
+			Name: "hasParent",
+			Fields: []graphql.Field{
+				{
+					Name: "... on " + collectionName,
+					Fields: []graphql.Field{
+						{Name: "reviewId"},
+						{Name: "businessId"},
+						{Name: "businessName"},
+						{Name: "city"},
+						{Name: "state"},
+						{Name: "text"},
+					},
+				},
+			},
+		},
 		{Name: "_additional { certainty score }"},
 	}
 
 	getter := c.wv.GraphQL().Get().
-		WithClassName(collectionName).
+		WithClassName(chunkCollectionName).
 		WithFields(fields...)
 
 	if query != "" && filter.Alpha > 0 {
@@ -323,28 +463,28 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 	if f.Category != "" {
 		operands = append(operands,
 			filters.Where().
-				WithPath([]string{"categories"}).
+				WithPath([]string{"hasParent", collectionName, "categories"}).
 				WithOperator(filters.Like).
 				WithValueText("*"+f.Category+"*"))
 	}
 	if f.City != "" {
 		operands = append(operands,
 			filters.Where().
-				WithPath([]string{"city"}).
+				WithPath([]string{"hasParent", collectionName, "city"}).
 				WithOperator(filters.Like).
 				WithValueText("*"+f.City+"*"))
 	}
 	if f.State != "" {
 		operands = append(operands,
 			filters.Where().
-				WithPath([]string{"state"}).
+				WithPath([]string{"hasParent", collectionName, "state"}).
 				WithOperator(filters.Like).
 				WithValueText("*"+f.State+"*"))
 	}
 	if f.BusinessID != "" {
 		operands = append(operands,
 			filters.Where().
-				WithPath([]string{"businessId"}).
+				WithPath([]string{"hasParent", collectionName, "businessId"}).
 				WithOperator(filters.Equal).
 				WithValueText(f.BusinessID))
 	}
@@ -353,7 +493,7 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 		for _, id := range f.ReviewIDs {
 			idOperands = append(idOperands,
 				filters.Where().
-					WithPath([]string{"reviewId"}).
+					WithPath([]string{"hasParent", collectionName, "reviewId"}).
 					WithOperator(filters.Equal).
 					WithValueText(id))
 		}
@@ -398,7 +538,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	if !ok {
 		return SearchResult{Businesses: []BusinessResult{}}
 	}
-	rawItems, ok := getMap[collectionName]
+	rawItems, ok := getMap[chunkCollectionName]
 	if !ok {
 		return SearchResult{Businesses: []BusinessResult{}}
 	}
@@ -408,41 +548,62 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 	}
 
 	// Collect certainty scores and name per business.
+	// deduplicate by review ID to take only the best chunk per review.
 	type bizEntry struct {
-		name       string
-		city       string
-		state      string
-		categories string
-		scores     []float64
-		stars      []float64
+		name        string
+		city        string
+		state       string
+		categories  string
+		scores      []float64
+		stars       []float64
+		seenReviews map[string]bool
 	}
 	entries := make(map[string]*bizEntry)
+
 	for _, raw := range items {
 		obj, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		businessID, _ := obj["businessId"].(string)
-		if businessID == "" {
+
+		// Extract parent object
+		parentObj, parentExists := extractParent(obj)
+		if !parentExists {
 			continue
 		}
+
+		businessID, _ := parentObj["businessId"].(string)
+		reviewID, _ := parentObj["reviewId"].(string)
+		if businessID == "" || reviewID == "" {
+			continue
+		}
+
 		additional, _ := obj["_additional"].(map[string]any)
 		certainty := extractScore(additional)
 
-		stars, _ := obj["stars"].(float64)
-
 		e := entries[businessID]
 		if e == nil {
-			name, _ := obj["businessName"].(string)
-			city, _ := obj["city"].(string)
-			state, _ := obj["state"].(string)
-			categories, _ := obj["categories"].(string)
-			e = &bizEntry{name: name, city: city, state: state, categories: categories}
+			name, _ := parentObj["businessName"].(string)
+			city, _ := parentObj["city"].(string)
+			state, _ := parentObj["state"].(string)
+			categories, _ := parentObj["categories"].(string)
+			e = &bizEntry{
+				name: name, city: city, state: state, categories: categories,
+				seenReviews: make(map[string]bool),
+			}
 			entries[businessID] = e
 		}
-		e.scores = append(e.scores, certainty)
-		if stars > 0 {
-			e.stars = append(e.stars, stars)
+
+		// Keep only the best chunk per review. The GraphQL query returns results
+		// sorted by vector distance, so the first time we see a reviewID it's the best chunk.
+		if !e.seenReviews[reviewID] {
+			e.seenReviews[reviewID] = true
+			e.scores = append(e.scores, certainty)
+
+			stars, _ := parentObj["stars"].(float64)
+			if stars > 0 {
+				e.stars = append(e.stars, stars)
+			}
 		}
 	}
 
@@ -512,7 +673,7 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 	if !ok {
 		return SearchReviews{BusinessReviews: []RankedReview{}}
 	}
-	rawItems, ok := getMap[collectionName]
+	rawItems, ok := getMap[chunkCollectionName]
 	if !ok {
 		return SearchReviews{BusinessReviews: []RankedReview{}}
 	}
@@ -522,23 +683,41 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 	}
 
 	results := make([]RankedReview, 0, len(items))
+	seenReviews := make(map[string]bool)
+
 	for _, raw := range items {
 		obj, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		businessID, _ := obj["businessId"].(string)
-		reviewID, _ := obj["reviewId"].(string)
+
+		parentObj, parentExists := extractParent(obj)
+		if !parentExists {
+			continue
+		}
+
+		businessID, _ := parentObj["businessId"].(string)
+		reviewID, _ := parentObj["reviewId"].(string)
 		if businessID == "" || reviewID == "" {
 			continue
 		}
+
+		// Deduplicate: keep only the best chunk per review
+		if seenReviews[reviewID] {
+			continue
+		}
+		seenReviews[reviewID] = true
+
+		chunkText, _ := obj["chunkText"].(string)
+
 		additional, _ := obj["_additional"].(map[string]any)
 		certainty := extractScore(additional)
 
-		name, _ := obj["businessName"].(string)
-		city, _ := obj["city"].(string)
-		state, _ := obj["state"].(string)
-		text, _ := obj["text"].(string)
+		name, _ := parentObj["businessName"].(string)
+		city, _ := parentObj["city"].(string)
+		state, _ := parentObj["state"].(string)
+		text, _ := parentObj["text"].(string)
+
 		results = append(results, RankedReview{
 			Review: IndexItem{
 				Review:       schemas.Review{BusinessID: businessID, ReviewID: reviewID, Text: text},
@@ -546,7 +725,8 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 				City:         city,
 				State:        state,
 			},
-			Score: certainty,
+			Score:        certainty,
+			MatchedChunk: chunkText,
 		})
 	}
 
@@ -733,4 +913,184 @@ func formatGraphQLErrors(errs []*models.GraphQLError) string {
 		msgs[i] = e.Message
 	}
 	return strings.Join(msgs, "; ")
+}
+
+// ─── RestaurantMenu collection ────────────────────────────────────────────────
+
+const menuCollectionName = "RestaurantMenu"
+
+// EnsureMenuSchema creates the RestaurantMenu Weaviate collection if absent.
+// It is idempotent — safe to call on every scrape-command startup.
+func (c *Client) EnsureMenuSchema(ctx context.Context) error {
+	_, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
+	if err == nil {
+		return nil
+	}
+	class := &models.Class{
+		Class:      menuCollectionName,
+		Vectorizer: "none",
+		Properties: []*models.Property{
+			{Name: "menuItemId", DataType: []string{"text"}},
+			{Name: "businessId", DataType: []string{"text"}},
+			{Name: "menuSection", DataType: []string{"text"}},
+			{Name: "restaurantName", DataType: []string{"text"}},
+			{Name: "city", DataType: []string{"text"}},
+			{Name: "state", DataType: []string{"text"}},
+			{Name: "dishName", DataType: []string{"text"}},
+			{Name: "description", DataType: []string{"text"}},
+			{Name: "statedIngredients", DataType: []string{"text[]"}},
+			{Name: "hasFullIngredients", DataType: []string{"boolean"}},
+			{Name: "sourceUrl", DataType: []string{"text"}},
+			{Name: "scrapedAtUtc", DataType: []string{"text"}},
+		},
+	}
+	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+		return fmt.Errorf("creating menu schema: %w", err)
+	}
+	return nil
+}
+
+// BatchUpsertMenu inserts or updates scraped menu items. Each item carries a
+// pre-computed Vector and a deterministic MenuItemID for idempotent upserts.
+func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
+	batcher := c.wv.Batch().ObjectsBatcher()
+	for _, item := range items {
+		batcher = batcher.WithObjects(&models.Object{
+			Class:  menuCollectionName,
+			ID:     strfmt.UUID(item.MenuItemID),
+			Vector: models.C11yVector(item.Vector),
+			Properties: map[string]any{
+				"menuItemId":         item.MenuItemID,
+				"businessId":         item.BusinessID,
+				"menuSection":        item.MenuSection,
+				"restaurantName":     item.RestaurantName,
+				"city":               item.City,
+				"state":              item.State,
+				"dishName":           item.DishName,
+				"description":        item.Description,
+				"statedIngredients":  item.StatedIngredients,
+				"hasFullIngredients": item.HasFullIngredients,
+				"sourceUrl":          item.SourceURL,
+				"scrapedAtUtc":       item.ScrapedAtUTC,
+			},
+		})
+	}
+	responses, err := batcher.Do(ctx)
+	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("batch upsert menu: %w", wErr.DerivedFromError)
+		}
+		return fmt.Errorf("batch upsert menu: %w", err)
+	}
+	for _, resp := range responses {
+		if resp.Result != nil && resp.Result.Errors != nil {
+			slog.Warn("batch upsert menu item error", "errors", resp.Result.Errors)
+		}
+	}
+	return nil
+}
+
+// SearchMenu performs a nearVector semantic search over the RestaurantMenu collection.
+func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]MenuItem, error) {
+	if c.embedder == nil {
+		return nil, errors.New("embedder is not configured (required for menu search)")
+	}
+	vec, err := c.embedder.EmbedSingle(ctx, "search_query: "+query)
+	if err != nil {
+		return nil, fmt.Errorf("embedding query: %w", err)
+	}
+	fields := []graphql.Field{
+		{Name: "menuItemId"}, {Name: "businessId"}, {Name: "restaurantName"},
+		{Name: "dishName"}, {Name: "description"}, {Name: "statedIngredients"},
+		{Name: "hasFullIngredients"}, {Name: "sourceUrl"}, {Name: "city"}, {Name: "state"},
+		{Name: "_additional { certainty }"},
+	}
+	resp, err := c.wv.GraphQL().Get().
+		WithClassName(menuCollectionName).
+		WithFields(fields...).
+		WithNearVector(c.wv.GraphQL().NearVectorArgBuilder().WithVector(vec)).
+		WithLimit(limit).
+		Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("menu search: %w", err)
+	}
+	if resp.Errors != nil {
+		return nil, fmt.Errorf("menu search graphql: %s", formatGraphQLErrors(resp.Errors))
+	}
+	raw, ok := resp.Data["Get"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+	rawItems, ok := raw[menuCollectionName].([]interface{})
+	if !ok {
+		return nil, nil
+	}
+	var results []MenuItem
+	for _, ri := range rawItems {
+		m, ok := ri.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		results = append(results, MenuItem{
+			MenuItemID:         stringField(m, "menuItemId"),
+			BusinessID:         stringField(m, "businessId"),
+			RestaurantName:     stringField(m, "restaurantName"),
+			DishName:           stringField(m, "dishName"),
+			Description:        stringField(m, "description"),
+			StatedIngredients:  stringSliceField(m, "statedIngredients"),
+			HasFullIngredients: boolField(m, "hasFullIngredients"),
+			SourceURL:          stringField(m, "sourceUrl"),
+			City:               stringField(m, "city"),
+			State:              stringField(m, "state"),
+		})
+	}
+	return results, nil
+}
+
+func stringField(m map[string]interface{}, key string) string {
+	v, _ := m[key].(string)
+	return v
+}
+
+func stringSliceField(m map[string]interface{}, key string) []string {
+	raw, ok := m[key].([]interface{})
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func boolField(m map[string]interface{}, key string) bool {
+	v, _ := m[key].(bool)
+	return v
+}
+
+// extractParent is a helper to pull the parent YelpReview object out of the hasParent reference
+func extractParent(obj map[string]any) (map[string]any, bool) {
+	hasParentRaw, ok := obj["hasParent"]
+	if !ok || hasParentRaw == nil {
+		return nil, false
+	}
+	hasParentArr, ok := hasParentRaw.([]any)
+	if !ok || len(hasParentArr) == 0 {
+		return nil, false
+	}
+	parentWrapper, ok := hasParentArr[0].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	// Weaviate returns refs grouped by type, e.g., "... on YelpReview": {...}
+	parentRaw, ok := parentWrapper["... on "+collectionName]
+	if !ok {
+		return nil, false
+	}
+	parentObj, ok := parentRaw.(map[string]any)
+	return parentObj, ok
 }

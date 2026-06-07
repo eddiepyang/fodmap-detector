@@ -8,6 +8,15 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	var level slog.Level
+	if os.Getenv("LOG_LEVEL") == "debug" {
+		level = slog.LevelDebug
+	} else {
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, opts)))
+
 	cli.Execute()
 }

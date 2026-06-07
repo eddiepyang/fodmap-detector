@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"fodmap/data"
@@ -53,7 +55,9 @@ func TestPostgresClient_EnsureSchema(t *testing.T) {
 
 	mock.ExpectExec("CREATE EXTENSION IF NOT EXISTS vector").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS reviews").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_reviews_embedding").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE reviews DROP COLUMN IF EXISTS embedding").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS review_chunks").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_review_chunks_embedding").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err = client.EnsureSchema(context.Background())
 	if err != nil {
@@ -120,7 +124,11 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectPrepare("INSERT INTO reviews").ExpectExec().
+	prepRev := mock.ExpectPrepare("INSERT INTO reviews")
+	prepDel := mock.ExpectPrepare("DELETE FROM review_chunks")
+	prepChunk := mock.ExpectPrepare("INSERT INTO review_chunks")
+
+	prepRev.ExpectExec().
 		WithArgs(
 			"rev1",
 			"bus1",
@@ -130,9 +138,17 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 			"Restaurant, Food",
 			4.5,
 			"Great food!",
-			pgvector.NewVector([]float32{0.1, 0.2, 0.3}),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	prepDel.ExpectExec().
+		WithArgs("rev1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	prepChunk.ExpectExec().
+		WithArgs("rev1", "Great food!", pgvector.NewVector([]float32{0.1, 0.2, 0.3})).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
 	mock.ExpectCommit()
 
 	err = client.BatchUpsert(context.Background(), items)
@@ -244,7 +260,7 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 		embedder: mockEmb,
 	}
 
-	mock.ExpectQuery("WITH top_reviews AS \\(").
+	mock.ExpectQuery("WITH chunk_scores AS \\(").
 		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), "%Pizza%", "%New York%", "NY", 10).
 		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "categories", "avg_stars", "avg_certainty"}).
 			AddRow("bus1", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
@@ -281,10 +297,10 @@ func TestPostgresClient_GetReviews(t *testing.T) {
 		embedder: mockEmb,
 	}
 
-	mock.ExpectQuery("SELECT review_id, business_id, business_name, city, state, text, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM reviews").
+	mock.ExpectQuery("WITH best_chunks AS \\(").
 		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), "bus1", pq.Array([]string{"rev1"}), 5).
-		WillReturnRows(sqlmock.NewRows([]string{"review_id", "business_id", "business_name", "city", "state", "text", "certainty"}).
-			AddRow("rev1", "bus1", "Joe's Pizza", "New York", "NY", "Great pizza!", 0.95))
+		WillReturnRows(sqlmock.NewRows([]string{"review_id", "business_id", "business_name", "city", "state", "text", "chunk_text", "certainty"}).
+			AddRow("rev1", "bus1", "Joe's Pizza", "New York", "NY", "Great pizza!", "Great pizza chunk", 0.95))
 
 	res, err := client.GetReviews(context.Background(), "good pizza", 5, SearchFilter{
 		BusinessID: "bus1",
@@ -334,5 +350,96 @@ func TestPgxStringArray_Scan(t *testing.T) {
 	}
 	if arr != nil {
 		t.Errorf("Expected nil, got %v", arr)
+	}
+}
+
+func TestPostgresClient_BatchUpsert_BeginError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := &PostgresClient{db: db}
+
+	items := []IndexItem{
+		{
+			Review: schemas.Review{
+				ReviewID:   "rev1",
+				BusinessID: "bus1",
+				Stars:      4.5,
+				Text:       "Great food!",
+			},
+		},
+	}
+
+	mock.ExpectBegin().WillReturnError(fmt.Errorf("tx begin error"))
+
+	err = client.BatchUpsert(context.Background(), items)
+	if err == nil || !strings.Contains(err.Error(), "begin tx") {
+		t.Errorf("Expected begin tx error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_BatchUpsert_ExecError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := &PostgresClient{db: db}
+
+	items := []IndexItem{
+		{
+			Review: schemas.Review{
+				ReviewID:   "rev1",
+				BusinessID: "bus1",
+				Stars:      4.5,
+				Text:       "Great food!",
+			},
+		},
+	}
+
+	mock.ExpectBegin()
+	prepRev := mock.ExpectPrepare("INSERT INTO reviews")
+	mock.ExpectPrepare("DELETE FROM review_chunks")
+	mock.ExpectPrepare("INSERT INTO review_chunks")
+
+	prepRev.ExpectExec().WillReturnError(fmt.Errorf("insert review error"))
+
+	err = client.BatchUpsert(context.Background(), items)
+	if err == nil || !strings.Contains(err.Error(), "insert review") {
+		t.Errorf("Expected insert review error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_GetBusinesses_QueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
+
+	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
+
+	_, err = client.GetBusinesses(context.Background(), "pizza", 10, SearchFilter{})
+	if err == nil || !strings.Contains(err.Error(), "query error") {
+		t.Errorf("Expected query error, got: %v", err)
+	}
+}
+
+func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
+
+	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
+
+	_, err = client.GetReviews(context.Background(), "pizza", 10, SearchFilter{})
+	if err == nil || !strings.Contains(err.Error(), "query error") {
+		t.Errorf("Expected query error, got: %v", err)
 	}
 }

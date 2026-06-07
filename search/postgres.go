@@ -1,10 +1,13 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"strings"
+	"text/template"
 
 	"fodmap/data"
 
@@ -12,6 +15,26 @@ import (
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
 )
+
+//go:embed sql
+var sqlFS embed.FS
+
+var sqlTemplates = template.Must(template.ParseFS(sqlFS, "sql/*.sql"))
+
+// sqlParams holds the dynamic portions injected into query templates.
+type sqlParams struct {
+	Where    string // complete WHERE clause, e.g. "WHERE r.city ILIKE $2"
+	LimitArg string // positional placeholder for the LIMIT value, e.g. "$3"
+}
+
+// renderSQL executes a named SQL template and returns the resulting query string.
+func renderSQL(name string, p sqlParams) (string, error) {
+	var buf bytes.Buffer
+	if err := sqlTemplates.ExecuteTemplate(&buf, name, p); err != nil {
+		return "", fmt.Errorf("render sql %s: %w", name, err)
+	}
+	return buf.String(), nil
+}
 
 // PostgresClient implements Searcher for PostgreSQL with pgvector.
 type PostgresClient struct {
@@ -50,23 +73,35 @@ func (c *PostgresClient) EnsureSchema(ctx context.Context) error {
 			state TEXT,
 			categories TEXT,
 			stars FLOAT,
-			text TEXT,
+			text TEXT
+		);`,
+		// Migration for existing tables: remove old embedding column if it exists.
+		// Ignore errors if it doesn't exist. This handles the breaking schema change.
+		`ALTER TABLE reviews DROP COLUMN IF EXISTS embedding;`,
+		`CREATE TABLE IF NOT EXISTS review_chunks (
+			chunk_id SERIAL PRIMARY KEY,
+			review_id TEXT REFERENCES reviews(review_id) ON DELETE CASCADE,
+			chunk_text TEXT,
 			embedding vector(768)
 		);`,
 		// We use half-precision (if supported) or regular hnsw.
 		// `vector_cosine_ops` creates an index optimized for <=> cosine distance.
-		`CREATE INDEX IF NOT EXISTS idx_reviews_embedding ON reviews USING hnsw (embedding vector_cosine_ops);`,
+		`CREATE INDEX IF NOT EXISTS idx_review_chunks_embedding ON review_chunks USING hnsw (embedding vector_cosine_ops);`,
 	}
 
 	for _, query := range queries {
 		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			return fmt.Errorf("failed to execute schema query %q: %w", query, err)
+			// ALTER TABLE DROP COLUMN might fail if table didn't exist before CREATE TABLE ran,
+			// but we created it first.
+			if !strings.Contains(err.Error(), "does not exist") {
+				return fmt.Errorf("failed to execute schema query %q: %w", query, err)
+			}
 		}
 	}
 	return nil
 }
 
-// BatchUpsert inserts or updates a batch of reviews in PostgreSQL.
+// BatchUpsert inserts or updates a batch of reviews and their chunks in PostgreSQL.
 func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	if len(items) == 0 {
 		return nil
@@ -80,9 +115,9 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 		_ = tx.Rollback()
 	}()
 
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO reviews (review_id, business_id, business_name, city, state, categories, stars, text, embedding) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+	stmtReview, err := tx.PrepareContext(ctx, `
+		INSERT INTO reviews (review_id, business_id, business_name, city, state, categories, stars, text) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
 		ON CONFLICT (review_id) DO UPDATE SET 
 			business_id = EXCLUDED.business_id,
 			business_name = EXCLUDED.business_name,
@@ -90,16 +125,30 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 			state = EXCLUDED.state,
 			categories = EXCLUDED.categories,
 			stars = EXCLUDED.stars,
-			text = EXCLUDED.text,
-			embedding = EXCLUDED.embedding
+			text = EXCLUDED.text
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare stmt: %w", err)
+		return fmt.Errorf("prepare review stmt: %w", err)
 	}
-	defer func() { _ = stmt.Close() }()
+	defer func() { _ = stmtReview.Close() }()
+
+	stmtDelChunks, err := tx.PrepareContext(ctx, `DELETE FROM review_chunks WHERE review_id = $1`)
+	if err != nil {
+		return fmt.Errorf("prepare delete chunks stmt: %w", err)
+	}
+	defer func() { _ = stmtDelChunks.Close() }()
+
+	stmtChunk, err := tx.PrepareContext(ctx, `
+		INSERT INTO review_chunks (review_id, chunk_text, embedding) 
+		VALUES ($1, $2, $3)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare chunk stmt: %w", err)
+	}
+	defer func() { _ = stmtChunk.Close() }()
 
 	for _, item := range items {
-		if _, err := stmt.ExecContext(ctx,
+		if _, err := stmtReview.ExecContext(ctx,
 			item.Review.ReviewID,
 			item.Review.BusinessID,
 			item.BusinessName,
@@ -108,9 +157,25 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 			item.Categories,
 			item.Review.Stars,
 			item.Review.Text,
-			pgvector.NewVector(item.Vector),
 		); err != nil {
 			return fmt.Errorf("insert review %q: %w", item.Review.ReviewID, err)
+		}
+
+		if _, err := stmtDelChunks.ExecContext(ctx, item.Review.ReviewID); err != nil {
+			return fmt.Errorf("delete old chunks %q: %w", item.Review.ReviewID, err)
+		}
+
+		if len(item.Chunks) > 0 {
+			for _, chunk := range item.Chunks {
+				if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, chunk.Text, pgvector.NewVector(chunk.Vector)); err != nil {
+					return fmt.Errorf("insert chunk for %q: %w", item.Review.ReviewID, err)
+				}
+			}
+		} else if item.Vector != nil {
+			// Fallback for legacy indexing paths that don't chunk yet
+			if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, item.Review.Text, pgvector.NewVector(item.Vector)); err != nil {
+				return fmt.Errorf("insert legacy chunk for %q: %w", item.Review.ReviewID, err)
+			}
 		}
 	}
 
@@ -256,17 +321,17 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 	argID := 2
 
 	if filter.Category != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("categories ILIKE $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.categories ILIKE $%d", argID))
 		args = append(args, "%"+filter.Category+"%")
 		argID++
 	}
 	if filter.City != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("city ILIKE $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.city ILIKE $%d", argID))
 		args = append(args, "%"+filter.City+"%")
 		argID++
 	}
 	if filter.State != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("state ILIKE $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.state ILIKE $%d", argID))
 		args = append(args, filter.State)
 		argID++
 	}
@@ -276,29 +341,10 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// This is a simplified version of Top-K aggregation.
-	// In Postgres, we find the closest reviews, then group by business_id,
-	// averaging the top scores. To do this efficiently:
-	sqlQuery := fmt.Sprintf(`
-		WITH top_reviews AS (
-			SELECT business_id, business_name, city, state, categories, stars,
-			       (1 - (embedding <=> $1)) AS certainty,
-				   ROW_NUMBER() OVER(PARTITION BY business_id ORDER BY embedding <=> $1) as rn
-			FROM reviews
-			%s
-		),
-		avg_scores AS (
-			SELECT business_id, MAX(business_name) as name, MAX(city) as city, MAX(state) as state,
-			       MAX(categories) as categories, AVG(stars) as avg_stars, AVG(certainty) as avg_certainty
-			FROM top_reviews
-			WHERE rn <= 5
-			GROUP BY business_id
-		)
-		SELECT business_id, name, city, state, categories, avg_stars, avg_certainty
-		FROM avg_scores
-		ORDER BY avg_certainty DESC
-		LIMIT $%d
-	`, whereSQL, argID)
+	sqlQuery, err := renderSQL("get_businesses.sql", sqlParams{Where: whereSQL, LimitArg: fmt.Sprintf("$%d", argID)})
+	if err != nil {
+		return SearchResult{}, err
+	}
 
 	args = append(args, limit)
 
@@ -339,23 +385,23 @@ func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int
 	argID := 2
 
 	if filter.BusinessID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("business_id = $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.business_id = $%d", argID))
 		args = append(args, filter.BusinessID)
 		argID++
 	}
 	if filter.City != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("city ILIKE $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.city ILIKE $%d", argID))
 		args = append(args, "%"+filter.City+"%")
 		argID++
 	}
 	if filter.State != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("state ILIKE $%d", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.state ILIKE $%d", argID))
 		args = append(args, filter.State)
 		argID++
 	}
 	if len(filter.ReviewIDs) > 0 {
 		// Use ANY for array check
-		whereClauses = append(whereClauses, fmt.Sprintf("review_id = ANY($%d)", argID))
+		whereClauses = append(whereClauses, fmt.Sprintf("r.review_id = ANY($%d)", argID))
 		// pq/pgx allows passing []string to ANY
 		args = append(args, pq.Array(filter.ReviewIDs))
 		argID++
@@ -366,13 +412,10 @@ func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT review_id, business_id, business_name, city, state, text, (1 - (embedding <=> $1)) AS certainty
-		FROM reviews
-		%s
-		ORDER BY embedding <=> $1
-		LIMIT $%d
-	`, whereSQL, argID)
+	sqlQuery, err := renderSQL("get_reviews.sql", sqlParams{Where: whereSQL, LimitArg: fmt.Sprintf("$%d", argID)})
+	if err != nil {
+		return SearchReviews{}, err
+	}
 
 	args = append(args, limit)
 
@@ -386,7 +429,16 @@ func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int
 	for rows.Next() {
 		var r RankedReview
 		var city, state sql.NullString
-		if err := rows.Scan(&r.Review.Review.ReviewID, &r.Review.Review.BusinessID, &r.Review.BusinessName, &city, &state, &r.Review.Review.Text, &r.Score); err != nil {
+		if err := rows.Scan(
+			&r.Review.Review.ReviewID,
+			&r.Review.Review.BusinessID,
+			&r.Review.BusinessName,
+			&city,
+			&state,
+			&r.Review.Review.Text,
+			&r.MatchedChunk,
+			&r.Score,
+		); err != nil {
 			return SearchReviews{}, fmt.Errorf("scan review: %w", err)
 		}
 		if city.Valid {
