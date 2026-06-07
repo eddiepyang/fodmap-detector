@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,8 +26,15 @@ func makeData(items []struct {
 	rawItems := make([]any, len(items))
 	for i, item := range items {
 		rawItems[i] = map[string]any{
-			"businessId":   item.businessID,
-			"businessName": item.businessName,
+			"hasParent": []any{
+				map[string]any{
+					"... on " + collectionName: map[string]any{
+						"businessId":   item.businessID,
+						"businessName": item.businessName,
+						"reviewId":     fmt.Sprintf("%s_rev_%d", item.businessID, i), // Unique review ID for chunk deduplication
+					},
+				},
+			},
 			"_additional": map[string]any{
 				"certainty": item.certainty,
 			},
@@ -34,7 +42,7 @@ func makeData(items []struct {
 	}
 	return map[string]models.JSONObject{
 		"Get": map[string]any{
-			collectionName: rawItems,
+			chunkCollectionName: rawItems,
 		},
 	}
 }
@@ -285,12 +293,18 @@ func makeReviewData(items []struct {
 	rawItems := make([]any, len(items))
 	for i, item := range items {
 		rawItems[i] = map[string]any{
-			"businessId":   item.businessID,
-			"reviewId":     item.reviewID,
-			"businessName": item.businessName,
-			"city":         item.city,
-			"state":        item.state,
-			"text":         item.text,
+			"hasParent": []any{
+				map[string]any{
+					"... on " + collectionName: map[string]any{
+						"businessId":   item.businessID,
+						"reviewId":     item.reviewID,
+						"businessName": item.businessName,
+						"city":         item.city,
+						"state":        item.state,
+						"text":         item.text,
+					},
+				},
+			},
 			"_additional": map[string]any{
 				"certainty": item.certainty,
 			},
@@ -298,7 +312,7 @@ func makeReviewData(items []struct {
 	}
 	return map[string]models.JSONObject{
 		"Get": map[string]any{
-			collectionName: rawItems,
+			chunkCollectionName: rawItems,
 		},
 	}
 }
@@ -391,23 +405,35 @@ func TestGetReviews_MissingGetKey(t *testing.T) {
 func TestGetReviews_SkipsEmptyBusinessID(t *testing.T) {
 	rawItems := []any{
 		map[string]any{
-			"businessId":   "",
-			"reviewId":     "r1",
-			"businessName": "NoID",
-			"text":         "should be skipped",
-			"_additional":  map[string]any{"certainty": 0.9},
+			"hasParent": []any{
+				map[string]any{
+					"... on " + collectionName: map[string]any{
+						"businessId":   "",
+						"reviewId":     "r1",
+						"businessName": "NoID",
+						"text":         "should be skipped",
+					},
+				},
+			},
+			"_additional": map[string]any{"certainty": 0.9},
 		},
 		map[string]any{
-			"businessId":   "biz1",
-			"reviewId":     "r2",
-			"businessName": "HasID",
-			"text":         "included",
-			"_additional":  map[string]any{"certainty": 0.8},
+			"hasParent": []any{
+				map[string]any{
+					"... on " + collectionName: map[string]any{
+						"businessId":   "biz1",
+						"reviewId":     "r2",
+						"businessName": "HasID",
+						"text":         "included",
+					},
+				},
+			},
+			"_additional": map[string]any{"certainty": 0.8},
 		},
 	}
 	data := map[string]models.JSONObject{
 		"Get": map[string]any{
-			collectionName: rawItems,
+			chunkCollectionName: rawItems,
 		},
 	}
 	result := getReviews(data, 10)
@@ -446,14 +472,21 @@ func TestClient_EnsureSchema(t *testing.T) {
 }
 
 func TestClient_BatchUpsert(t *testing.T) {
-	var count int
+	var objectsCount int
+	var refsCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/batch/objects" {
 			var body struct {
 				Objects []any `json:"objects"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			count = len(body.Objects)
+			objectsCount += len(body.Objects)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]any{})
+		} else if r.Method == "POST" && r.URL.Path == "/v1/batch/references" {
+			var body []any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			refsCount += len(body)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode([]any{})
 		}
@@ -464,14 +497,17 @@ func TestClient_BatchUpsert(t *testing.T) {
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
 	items := []IndexItem{
-		{Review: schemas.Review{ReviewID: "r1"}},
-		{Review: schemas.Review{ReviewID: "r2"}},
+		{Review: schemas.Review{ReviewID: "r1"}, Chunks: []Chunk{{Text: "t1", Vector: []float32{1, 2, 3}}}},
+		{Review: schemas.Review{ReviewID: "r2"}, Chunks: []Chunk{{Text: "t2", Vector: []float32{1, 2, 3}}}},
 	}
 	if err := client.BatchUpsert(context.Background(), items); err != nil {
 		t.Fatalf("BatchUpsert failed: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("expected 2 items, got %d", count)
+	if objectsCount != 4 {
+		t.Errorf("expected 4 objects (2 parents, 2 chunks), got %d", objectsCount)
+	}
+	if refsCount != 2 {
+		t.Errorf("expected 2 refs, got %d", refsCount)
 	}
 }
 

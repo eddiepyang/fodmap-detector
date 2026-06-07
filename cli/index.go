@@ -183,6 +183,13 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 					continue
 				}
 				item := search.IndexItem{Review: r}
+				
+				// Apply recursive chunking. Using 800 chars (~150 words) with 100 overlap.
+				chunkTexts := search.ChunkText(r.Text, 800, 100)
+				for _, ct := range chunkTexts {
+					item.Chunks = append(item.Chunks, search.Chunk{Text: ct})
+				}
+				
 				if biz, ok := businessMap[r.BusinessID]; ok {
 					item.BusinessName = biz.Name
 					item.City = biz.City
@@ -229,18 +236,57 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 				if vectorizerHost != "" || (ollamaURL != "" && ollamaModel != "") {
 					var err error
 					for attempt := 0; attempt < 5; attempt++ {
-						texts := make([]string, len(batch))
-						for i, item := range batch {
-							texts[i] = item.Review.Text
-						}
-						var vecs [][]float32
-						vecs, err = embedder.EmbedBatch(ctx, texts)
-						if err == nil {
-							for i, vec := range vecs {
-								batch[i].Vector = vec
+						// Collect all texts across all chunks in the batch
+						var allTexts []string
+						for _, item := range batch {
+							if len(item.Chunks) > 0 {
+								for _, chunk := range item.Chunks {
+									allTexts = append(allTexts, chunk.Text)
+								}
+							} else {
+								allTexts = append(allTexts, item.Review.Text)
 							}
+						}
+
+						// Vectorize in smaller sub-batches (e.g., max 100 texts) to avoid
+						// timeouts or exceeding payload limits in the vectorizer backend.
+						const subBatchLimit = 100
+						var allVecs [][]float32
+						var subBatchErr error
+
+						for i := 0; i < len(allTexts); i += subBatchLimit {
+							end := i + subBatchLimit
+							if end > len(allTexts) {
+								end = len(allTexts)
+							}
+							subVecs, e := embedder.EmbedBatch(ctx, allTexts[i:end])
+							if e != nil {
+								subBatchErr = e
+								break
+							}
+							allVecs = append(allVecs, subVecs...)
+						}
+
+						if subBatchErr == nil {
+							// Re-assign vectors to items/chunks
+							vecIndex := 0
+							for i, item := range batch {
+								if len(item.Chunks) > 0 {
+									for j := range item.Chunks {
+										batch[i].Chunks[j].Vector = allVecs[vecIndex]
+										vecIndex++
+									}
+									// Set parent vector to the first chunk's vector for compatibility
+									batch[i].Vector = allVecs[vecIndex-len(item.Chunks)]
+								} else {
+									batch[i].Vector = allVecs[vecIndex]
+									vecIndex++
+								}
+							}
+							err = nil
 							break
 						}
+						err = subBatchErr
 						slog.Warn("embed batch failed, retrying", "attempt", attempt+1, "error", err)
 						time.Sleep(time.Duration(1<<attempt) * time.Second)
 					}

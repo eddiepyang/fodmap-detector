@@ -144,17 +144,29 @@ func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int
 	}
 
 	var reviews []RankedReview
+	seen := make(map[string]bool)
+
 	for _, m := range res.Matches {
+		reviewID, _ := m.Metadata["review_id"].(string)
+		if reviewID == "" || seen[reviewID] {
+			continue
+		}
+		seen[reviewID] = true
+
 		text, _ := m.Metadata["text"].(string)
+		chunkText, _ := m.Metadata["chunk_text"].(string)
+		
+		// blendScore uses the full text for BM25
 		score := blendScore(query, text, m.Score, filter.Alpha)
 		reviews = append(reviews, RankedReview{
 			Score: score,
+			MatchedChunk: chunkText,
 			Review: IndexItem{
 				BusinessName: m.Metadata["business_name"].(string),
 				City:         m.Metadata["city"].(string),
 				State:        m.Metadata["state"].(string),
 				Review: schemas.Review{
-					ReviewID: m.Metadata["review_id"].(string),
+					ReviewID: reviewID,
 					Text:     text,
 					Stars:    metadataFloat32(m.Metadata, "stars"),
 				},
@@ -223,26 +235,36 @@ func (c *PineconeClient) SearchFodmap(ctx context.Context, ingredient string) (F
 	}, m.Score, nil
 }
 
-// BatchUpsertFodmap vectorizes and uploads FODMAP data to Pinecone.
+// BatchUpsert vectorizes and uploads reviews and their chunks to Pinecone.
 func (c *PineconeClient) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 	var pineconeVectors []map[string]any
 	for _, item := range items {
-		pineconeVectors = append(pineconeVectors, map[string]any{
-			"id":     item.Review.ReviewID,
-			"values": item.Vector,
-			"metadata": map[string]any{
-				"business_id":   item.Review.BusinessID,
-				"business_name": item.BusinessName,
-				"city":          item.City,
-				"state":         item.State,
-				"categories":    item.Categories,
-				"stars":         item.Review.Stars,
-				"text":          item.Review.Text,
-			},
-		})
+		chunksToProcess := item.Chunks
+		if len(chunksToProcess) == 0 && item.Vector != nil {
+			chunksToProcess = []Chunk{{Text: item.Review.Text, Vector: item.Vector}}
+		}
+
+		for i, chunk := range chunksToProcess {
+			vectorID := fmt.Sprintf("%s_chunk_%d", item.Review.ReviewID, i)
+			pineconeVectors = append(pineconeVectors, map[string]any{
+				"id":     vectorID,
+				"values": chunk.Vector,
+				"metadata": map[string]any{
+					"review_id":     item.Review.ReviewID,
+					"business_id":   item.Review.BusinessID,
+					"business_name": item.BusinessName,
+					"city":          item.City,
+					"state":         item.State,
+					"categories":    item.Categories,
+					"stars":         item.Review.Stars,
+					"text":          item.Review.Text,
+					"chunk_text":    chunk.Text,
+				},
+			})
+		}
 	}
 	return c.doUpsert(ctx, pineconeVectors, pineconeReviewNamespace)
 }
