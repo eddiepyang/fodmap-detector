@@ -1,6 +1,6 @@
 # API Reference
 
-### 3. Start the HTTP server
+### Start the HTTP server
 
 ```sh
 # With search enabled (Weaviate local)
@@ -11,6 +11,9 @@ go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --ollama-url ht
 
 # With search enabled (PostgreSQL/pgvector)
 go run . serve --postgres-search --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
+
+# With PostgreSQL for auth + Weaviate for search
+go run . serve --store-type postgres --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" --weaviate localhost:8090
 
 # Without search (search endpoint returns 503)
 go run . serve
@@ -35,11 +38,15 @@ Default port is `8081`.
 | `POST` | `/api/v1/conversations` | JWT | Create a new conversation |
 | `GET` | `/api/v1/conversations/{id}` | JWT | Get a conversation |
 | `DELETE` | `/api/v1/conversations/{id}` | JWT | Delete a conversation |
-| `POST` | `/api/v1/conversations/{id}/messages` | JWT | Send a chat message (streaming) |
+| `POST` | `/api/v1/conversations/{id}/messages` | Auth | Send a chat message (SSE streaming) |
 | `GET` | `/api/v1/conversations/{id}/export` | JWT | Export a conversation (JSON or Markdown) |
 | `GET` | `/api/v1/profile` | JWT | Get dietary profile |
-| `POST` | `/api/v1/profile` | JWT | Update dietary profile |
-| `POST` | `/chat/{query...}` | JWT/API Key | Legacy chat endpoint (streaming) |
+| `POST` | `/api/v1/profile` | Auth | Update dietary profile |
+| `POST` | `/api/v1/chat/{query...}` | Auth | Chat endpoint (SSE streaming) |
+| `POST` | `/chat/{query...}` | Auth | Legacy chat endpoint (SSE streaming) |
+| `GET` | `/menutracking/sources` | Auth | List menu tracking sources |
+| `GET` | `/menutracking/jobs` | Auth | List menu tracking jobs |
+| `POST` | `/menutracking/reload` | Auth | Reload menu tracking sources |
 
 **Conversation export** — the `GET /api/v1/conversations/{id}/export` endpoint supports a `format` query parameter:
 
@@ -69,8 +76,9 @@ curl -H 'Authorization: Bearer <access_token>' "localhost:8081/api/v1/conversati
 |-----------|---------|-------------|
 | `limit` | `10` | Max results to return |
 | `category` | — | Filter by cuisine/category substring |
-| `city` | — | Filter by city (exact match) |
+| `city` | — | Filter by city (substring match) |
 | `state` | — | Filter by state (exact match) |
+| `business_id` | — | Filter reviews by business ID (reviews endpoint only) |
 | `alpha` | `0` | Hybrid search weight: `0`=pure vector, `0.75`=balanced, `1`=pure vector |
 
 #### Authentication
@@ -87,7 +95,7 @@ curl -X POST localhost:8081/api/v1/auth/register \
 curl -X POST localhost:8081/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email": "user@example.com", "password": "mypassword"}'
-# → {"access_token": "...", "refresh_token": "...", "user": {...}}
+# -> {"access_token": "...", "refresh_token": "...", "user": {...}}
 
 # Use the access token for protected endpoints
 curl -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/conversations
@@ -99,12 +107,12 @@ curl -X POST localhost:8081/api/v1/auth/refresh \
 
 # Delete account (soft delete — the user is marked as deleted and cannot log in again)
 curl -X DELETE -H 'Authorization: Bearer <access_token>' localhost:8081/api/v1/auth/user
-# → {"message": "account deleted"}
+# -> {"message": "account deleted"}
 ```
 
 > **Note:** Account deletion is a soft delete — the user's status is set to `"deleted"` and they are
-> blocked from logging in or refreshing tokens. Existing access tokens remain valid until they expire
-> (up to 2 hours). User data (conversations, messages) is retained for potential recovery.
+blocked from logging in or refreshing tokens. Existing access tokens remain valid until they expire
+(up to 2 hours). User data (conversations, messages) is retained for potential recovery.
 
 #### Search endpoints
 
@@ -116,6 +124,12 @@ curl "localhost:8081/api/v1/search/businesses/cozy%20Italian%20with%20great%20pa
 
 # Filter by category, city, state
 curl "localhost:8081/api/v1/search/businesses/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
+
+# Review search scoped to a business
+curl "localhost:8081/api/v1/search/reviews/gluten%20free?business_id=abc123"
+
+# FODMAP ingredient lookup
+curl "localhost:8081/api/v1/search/fodmap/garlic"
 ```
 
 ##### Hybrid search (`?alpha=`)
@@ -136,8 +150,6 @@ curl "localhost:8081/api/v1/search/businesses/gluten%20free%20pizza?alpha=0.75"
 curl "localhost:8081/api/v1/search/reviews/pad%20thai?alpha=0.2"
 ```
 
-On Weaviate, hybrid search uses the native `hybrid` operator with `relativeScoreFusion`. On Pinecone, BM25 re-ranking is applied in-process against the review `text` metadata field and blended with the dense vector score.
+On Weaviate, hybrid search uses the native `hybrid` operator with `relativeScoreFusion`. On Pinecone, BM25 re-ranking is applied in-process against the review `text` metadata field and blended with the dense vector score. On PostgreSQL/pgvector, BM25 scoring is applied in-process and blended similarly.
 
-See [search.md](search.md) for full API reference and design decisions.
-
-
+See [search.md](search.md) for full design decisions.

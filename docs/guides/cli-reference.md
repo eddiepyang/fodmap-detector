@@ -30,26 +30,43 @@ go run . index --weaviate localhost:8090
 Scrape a restaurant menu page (HTML or PDF), extract the dishes and ingredients using an LLM, and index them into Weaviate for the chat agent to use.
 
 ```sh
-# Basic scrape (HTML to Markdown via LLM)
-go run . scrape "https://example-restaurant.com/menu" --weaviate localhost:8090
-
-# Scrape an image-based menu or PDF using a local Vision LLM (e.g. Qwen3.6 via Ollama)
-go run . scrape "https://example-restaurant.com/menu.pdf" \
+# Basic scrape with Ollama (Mac)
+go run . scrape "https://example-restaurant.com/menu" \
   --weaviate localhost:8090 \
-  --llm-backend openai-compat \
-  --llm-url http://localhost:11434 \
+  --llm-url http://localhost:11434/v1 \
   --llm-model qwen3.6:35b-mlx \
   --enable-vision
+
+# Scrape with vLLM (Linux 5080)
+go run . scrape "https://example-restaurant.com/menu.pdf" \
+  --weaviate localhost:8090 \
+  --llm-url http://localhost:8000/v1 \
+  --llm-model Qwen/Qwen3-VL-8B-Instruct-AWQ \
+  --enable-vision
+
+# Scrape with OpenAI (cloud)
+go run . scrape "https://example-restaurant.com/menu" \
+  --weaviate localhost:8090 \
+  --llm-url https://api.openai.com/v1 \
+  --llm-model gpt-4o-mini \
+  --llm-api-key "$OPENAI_API_KEY"
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--llm-backend` | `openai-compat` | `openai-compat` or `gemini` |
-| `--llm-url` | `http://localhost:11434` | Base URL for openai-compat backend |
-| `--llm-model` | `qwen3.6:35b-mlx` | LLM model to use |
+| `--llm-url` | `http://localhost:11434/v1` | Base URL for OpenAI-compatible LLM endpoint (must include `/v1`) |
+| `--llm-model` | `qwen3.6:35b-mlx` | LLM model name |
+| `--llm-api-key` | — | API key for cloud backends (OpenAI, Gemini) |
+| `--llm-reasoning-effort` | `none` | Reasoning effort: `none` \| `low` \| `medium` \| `high` |
 | `--enable-vision` | `false` | Send PDFs/images to the vision LLM instead of text extraction |
 | `--pdftotext` | `false` | Fall back to system `pdftotext` (poppler) for PDF text extraction |
+| `--ignore-robots` | `false` | Skip robots.txt check |
+| `--enable-js-render` | `false` | Render JS-only pages via chromedp (requires Chrome) |
+| `--store` | `weaviate` | Storage backend: `weaviate` \| `postgres` \| `pinecone` |
+| `--embed-backend` | `ollama` | Embedding backend: `ollama` \| `vectorizer` |
+
+See [LLM Serving](llm-serving.md) for full backend setup instructions and the quick-reference table.
 
 ##### Chat (interactive FODMAP/allergen agent)
 

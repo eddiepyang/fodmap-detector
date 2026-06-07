@@ -9,39 +9,43 @@ well their reviews match the query — optionally filtered by category, city, an
 ## Architecture Overview
 
 ```
-                          ┌─────────────────────────────┐
-  GET /search/...    ───► │     Go HTTP Server           │
-                          │  searchHandler               │
-                          └──────────┬──────────────────┘
-                                     │
-                  ┌──────────────────┴──────────────────┐
-                  │                                     │
-        (Local Path)                           (Cloud Path)
-                  │                                     │
-      ┌──────────▼──────────┐               ┌──────────▼──────────┐
-      │  Weaviate Client    │               │  Pinecone Client    │
-      └──────────┬──────────┘               └──────────┬──────────┘
-                 │ GraphQL                             │ REST
-      ┌──────────▼──────────┐               ┌──────────▼──────────┐
-      │  Weaviate           │               │  Pinecone (Cloud)   │
-      │  Collection: Yelp   │               │  Namespace: yelp    │
-      └─────────────────────┘               └─────────────────────┘
-                                            (Uses Ollama for Embeddings)
+                           ┌─────────────────────────────┐
+  GET /api/v1/search/... ──► │     Go HTTP Server       │
+                           │  searchHandler             │
+                           └──────────┬──────────────────┘
+                                      │
+                   ┌──────────────────┼──────────────────┐
+                   │                  │                   │
+         (Weaviate)          (Pinecone)         (PostgreSQL)
+                   │                  │                   │
+       ┌──────────▼──────────┐ ┌─────▼──────────┐ ┌─────▼──────────┐
+       │  Weaviate Client    │ │ Pinecone Client│ │  PG Client      │
+       └──────────┬──────────┘ └─────┬──────────┘ └─────┬──────────┘
+                  │ GraphQL           │ REST+gRPC          │ SQL
+       ┌──────────▼──────────┐ ┌─────▼──────────┐ ┌─────▼──────────┐
+       │  Weaviate           │ │  Pinecone Cloud │ │  PostgreSQL +   │
+       │  Collection: Yelp   │ │  Namespace: yelp │ │  pgvector       │
+       └─────────────────────┘ └─────────────────┘ └────────────────┘
+                   │                  │                   │
+                   └──────────────────┼──────────────────┘
+                                      │
+                           (Ollama for Embeddings)
 ```
 
 **Data flow at index time:**
-1. `index` CLI command reads `archive.tar.gz` (reviews + business metadata)
-2. For each review, business metadata (`city`, `state`, `categories`) is joined in-memory
-3. Reviews are sent to Weaviate in batches of 100
-4. Weaviate calls the transformer sidecar to generate a vector for the `text` field
-5. Both the vector and metadata are stored in Weaviate
+1. `index` CLI command reads the Yelp archive (reviews + business metadata)
+2. For each review, business metadata (`city`, `state`, `categories`, `businessName`) is joined in-memory
+3. Review text is chunked (800 chars, 100 overlap) and each chunk is embedded via Ollama
+4. Reviews are upserted to Postgres (structured data) and chunks to the vector store (Weaviate/Pinecone/pgvector) in batches of 512
+5. The vector store stores each chunk with its embedding and denormalized metadata; Postgres stores the full review text
 
 **Data flow at query time:**
-1. `GET /search/<description>` arrives at the server
-2. Server calls Weaviate `nearText` with the query string (Weaviate embeds the query too)
-3. Top matching reviews are returned with `certainty` scores
-4. Server aggregates scores by `businessId` using Top-K average (see below)
-5. Top `limit` restaurant IDs are returned, ranked by aggregated score
+1. `GET /api/v1/search/businesses/{query}` arrives at the server
+2. Server calls the search backend with the query string (embedded locally via Ollama)
+3. Top matching chunks are returned with certainty/similarity scores
+4. For Weaviate/Pinecone: business metadata comes from denormalized chunk properties; full review text from Postgres
+5. Server aggregates scores by `businessId` using Top-K average (see below)
+6. Top `limit` restaurant IDs are returned, ranked by aggregated score
 
 ---
 
@@ -62,11 +66,15 @@ Pinecone requires an external vectorizer. You must run `ollama serve` and pass `
 
 ## Indexing
 
-Populate Weaviate from the Yelp archive. The command reads `./data/archive.tar.gz`, joins review
-and business data, and upserts to Weaviate in batches:
+Populate the vector store from the Yelp archive. The command joins review
+and business data, chunks and embeds each review, and upserts to the search backend:
 
 ```bash
+# Weaviate (default)
 go run . index --weaviate localhost:8090
+
+# PostgreSQL/pgvector
+go run . index --postgres-search --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable"
 ```
 
 Flags:
@@ -74,17 +82,22 @@ Flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `100` | Reviews per Weaviate batch upsert |
+| `--batch-size` | `512` | Reviews per batch upsert |
+| `--workers` | `4` | Concurrent batch upload goroutines |
+| `--ollama-url` | `http://localhost:11434` | Ollama server URL |
+| `--ollama-model` | `nomic-embed-text` | Ollama embedding model |
+| `--archive` | `../data/yelp_dataset.tar` | Path to the Yelp dataset TAR archive |
+| `--checkpoint` | `index.checkpoint` | Checkpoint file path (empty string to disable) |
+| `--start-offset` | `0` | Start offset for resuming indexing |
+| `--filter-city` | `""` | Only index reviews for this city |
 
-The command is **idempotent** — each review is assigned a deterministic UUID from its `review_id`,
-so re-running `index` updates existing records rather than creating duplicates.
+The command is **idempotent** — each review and chunk is assigned a deterministic UUID, so re-running `index` updates existing records rather than creating duplicates.
 
-The Yelp dataset has ~7 million reviews. Progress is logged every batch:
+Progress is logged every batch:
 ```
-INFO indexed batch total=100
-INFO indexed batch total=200
+INFO indexed batch total=512
+INFO indexed batch total=1024
 ...
-INFO indexing complete total_reviews=6990280
 ```
 
 ---
@@ -94,18 +107,22 @@ INFO indexing complete total_reviews=6990280
 ### Endpoint
 
 ```
-GET /search/<description>[?category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
+GET /api/v1/search/businesses/{query}[?category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
+GET /api/v1/search/reviews/{query}[?business_id=<id>][&limit=<n>]
+GET /api/v1/search/fodmap/{ingredient}
 ```
 
 ### Parameters
 
 | Parameter | Where | Required | Default | Description |
 |---|---|---|---|---|
-| `<description>` | path | Yes | — | Natural-language description of the restaurant |
+| `<query>` | path | Yes | — | Natural-language description of the restaurant or review text |
 | `category` | query | No | — | Substring match against Yelp categories (e.g. `Italian`, `Tacos`) |
-| `city` | query | No | — | Exact city name match (e.g. `Phoenix`) |
+| `city` | query | No | — | Substring match against city (e.g. `Phoenix`) |
 | `state` | query | No | — | Exact state abbreviation match (e.g. `AZ`) |
-| `limit` | query | No | `10` | Maximum number of restaurant IDs to return |
+| `business_id` | query | No | — | Filter reviews by business ID |
+| `limit` | query | No | `10` | Maximum number of results to return |
+| `alpha` | query | No | `0` | Hybrid search weight: `0`=pure vector, `0.75`=balanced, `1`=pure keyword |
 
 ### Response
 
@@ -118,14 +135,20 @@ GET /search/<description>[?category=<cat>][&city=<city>][&state=<state>][&limit=
 ### Examples
 
 ```bash
-# Basic semantic search
-curl "localhost:8080/search/cozy Italian with great pasta"
+# Basic semantic business search
+curl "localhost:8081/api/v1/search/businesses/cozy%20Italian%20with%20great%20pasta"
 
 # Filter by category and location
-curl "localhost:8080/search/great tacos?category=Mexican&city=Phoenix&state=AZ&limit=5"
+curl "localhost:8081/api/v1/search/businesses/best%20tacos?category=Mexican&city=Las%20Vegas&state=NV&limit=5"
 
 # Find romantic dinner spots in Las Vegas
-curl "localhost:8080/search/romantic dinner candlelit?city=Las Vegas&state=NV"
+curl "localhost:8081/api/v1/search/businesses/romantic%20dinner%20candlelit?city=Las%20Vegas&state=NV"
+
+# Search reviews for a specific business
+curl "localhost:8081/api/v1/search/reviews/gluten%20free?business_id=abc123"
+
+# FODMAP ingredient lookup
+curl "localhost:8081/api/v1/search/fodmap/garlic"
 ```
 
 ### Server startup with search enabled
@@ -144,18 +167,33 @@ If `--weaviate` is omitted, the server starts normally but `GET /search/<query>`
 
 | Flag | Default | Description |
 |---|---|---|
-| `--weaviate` | `""` | Weaviate host:port |
+| `--weaviate` | `""` | Weaviate host:port (empty disables Weaviate search) |
+| `--weaviate-scheme` | `http` | Weaviate scheme (http or https) |
+| `--weaviate-api-key` | `""` | Weaviate API key |
 | `--pinecone-api-key` | `""` | Pinecone API key |
 | `--pinecone-index-host` | `""` | Pinecone host URL |
-| `--ollama-url` | `""` | Ollama server URL (e.g. `http://localhost:11434`) |
-| `--ollama-model` | `""` | Ollama embedding model (e.g. `nomic-embed-text`) |
+| `--postgres-search` | `false` | Enable PostgreSQL/pgvector search backend |
+| `--postgres-dsn` | `""` | PostgreSQL DSN (required if `--postgres-search`) |
+| `--ollama-url` | `http://localhost:11434` | Ollama server URL |
+| `--ollama-model` | `nomic-embed-text` | Ollama embedding model |
+| `--chat-model` | `gemini-3-flash-preview` | Gemini model for chat |
+| `--filter-model` | `gemini-3.1-flash-lite-preview` | Gemini model for topic screening |
+| `--store-type` | `sqlite` | Auth store type: `sqlite` or `postgres` |
+| `--port` | `8081` | HTTP server port |
 
 ### `index` flags
 
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `100` | Reviews per batch |
+| `--batch-size` | `512` | Reviews per batch |
+| `--workers` | `4` | Concurrent upload goroutines |
+| `--archive` | `../data/yelp_dataset.tar` | Path to Yelp dataset TAR archive |
+| `--ollama-url` | `http://localhost:11434` | Ollama server URL |
+| `--ollama-model` | `nomic-embed-text` | Ollama embedding model |
+| `--filter-city` | `""` | Only index reviews matching this city |
+| `--checkpoint` | `index.checkpoint` | Checkpoint file (empty string to disable) |
+| `--start-offset` | `0` | Resume from a known offset |
 
 ---
 

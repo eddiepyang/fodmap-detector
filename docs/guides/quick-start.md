@@ -194,6 +194,7 @@ This means the Weaviate schema was created by a previous run with a different co
 ```sh
 # 1. Delete the stale Weaviate classes
 curl -X DELETE http://localhost:8090/v1/schema/YelpReview
+curl -X DELETE http://localhost:8090/v1/schema/YelpReviewChunk
 curl -X DELETE http://localhost:8090/v1/schema/FodmapIngredient
 
 # 2. Re-index (Ollama flags default automatically)

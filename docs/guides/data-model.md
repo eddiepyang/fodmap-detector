@@ -49,17 +49,19 @@ The Avro streaming schema (`EventSchema`) mirrors the `Review` struct and carrie
 ## Data Pipeline
 
 ```
-data/archive.tar.gz  (Yelp JSON lines, gzip-compressed)
+data/yelp_dataset.tar  (Yelp JSON lines, TAR archive)
         |
         v
-   GetArchive(path, "review")  ->  *bufio.Scanner
+   GetArchive(path, "review")  ->  *bufio.Scanner + io.Closer
         |
-   |
-Avro path (event cmd)
-   |
-EventWriter.Write()
-   |
-*.avro
+        v
+   GetArchive(path, "business")  ->  *bufio.Scanner + io.Closer
+        |
+        v
+   Join review + business metadata in-memory
+        |
+        v
+   Index (chunk text, embed, upsert to Weaviate/Pinecone/pgvector)
 ```
 
 ---
@@ -69,12 +71,12 @@ EventWriter.Write()
 Place the Yelp dataset archive at:
 
 ```
-./data/archive.tar.gz
+./data/yelp_dataset.tar
 ```
 
 The archive must contain files whose names include `"review"` and `"business"`:
 - `yelp_academic_dataset_review.json` — review text and ratings (required for all features)
 - `yelp_academic_dataset_business.json` — business name, city, state, categories (required for search filters)
 
-Both files must be formatted as newline-delimited JSON (JSONL).
+Both files must be formatted as newline-delimited JSON (JSONL). The default archive path is `../data/yelp_dataset.tar` (configurable via `--archive` flag on the `index` command).
 

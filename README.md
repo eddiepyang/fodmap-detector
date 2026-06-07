@@ -6,8 +6,8 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 ## Purpose
 
-1. Read Yelp review data from a compressed archive (`.tar.gz` of JSON lines)
-2. Serialize reviews to Apache Avro (streaming) format
+1. Read Yelp review data from a TAR archive of JSON lines
+2. Index reviews into a vector search backend (Weaviate, Pinecone, or PostgreSQL/pgvector) for semantic search
 3. Provide an interactive semantic search and chat agent for FODMAP/allergen queries
 
 ---
@@ -18,11 +18,12 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 |-----------|-----------|
 | Language | Go 1.26+ |
 | CLI | [Cobra](https://github.com/spf13/cobra) |
-| Streaming format | Apache Avro (OCF) via [hamba/avro](https://github.com/hamba/avro) |
-| Input | TAR.GZ compressed JSON lines (Yelp dataset) |
+| Input | TAR archive of JSON lines (Yelp dataset) |
 | Concurrency | Go channels + goroutines |
-| Vector search | [Weaviate](https://weaviate.io) (Local), [Pinecone](https://pinecone.io) (Cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
-| Embeddings | Ollama |
+| Vector search | [Weaviate](https://weaviate.io) (local), [Pinecone](https://pinecone.io) (cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
+| LLM (chat) | Google Gemini (`gemini-3-flash-preview`) |
+| LLM (scraping) | Any OpenAI-compatible endpoint (Ollama, vLLM, OpenAI, Gemini) |
+| Embeddings | Ollama (`nomic-embed-text`) |
 
 ---
 
@@ -33,10 +34,11 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 ├── main.go                  # Server entry point
 ├── cli/
 │   ├── root.go              # Root Cobra command
-│   ├── event.go             # Avro subcommand (event write / event read)
 │   ├── serve.go             # Serve subcommand (starts the HTTP server)
-│   ├── index.go             # Index subcommand (populates Weaviate for search)
-│   └── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
+│   ├── index.go             # Index subcommand (populates vector store for search)
+│   ├── scrape.go            # Scrape subcommand (menu extraction and indexing)
+│   ├── chat.go              # Chat subcommand (interactive FODMAP/allergen agent)
+│   └── event.go             # Avro subcommand (event write / event read)
 │
 ├── chat/
 │   ├── chat.go              # Chat session logic, tool dispatch, system prompt rendering
@@ -57,7 +59,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   └── mock_store.go         # In-memory test store
 │
 ├── data/
-│   ├── data.go              # Archive reading, Parquet write/read
+│   ├── data.go              # Archive reading (TAR + JSON lines)
 │   ├── fodmap.go            # Static FODMAP ingredient database (100+ entries)
 │   │
 │   ├── io/
@@ -108,7 +110,6 @@ We have split our documentation into separate guides and plans for easier readin
 - [LLM Serving](docs/guides/llm-serving.md) - LLM serving architectures.
 
 ### Plans & Roadmaps
-- [Frontend Implementation Plan](docs/plans/FRONTEND_IMPLEMENTATION_PLAN.md)
 - [Scraper Pipeline Plan](docs/plans/scraper-pipeline-plan.md)
 - [Dietary Profile Plan](docs/plans/dietary-profile-plan.md)
 - [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md)
@@ -116,3 +117,6 @@ We have split our documentation into separate guides and plans for easier readin
 - [Feature Recommendations](docs/plans/feature-recommendations.md)
 - [Deleted User Plan](docs/plans/handle-deleted-user-plan.md)
 - [Waiter Script Plan](docs/plans/waiter-script-plan.md)
+- [Frontend Plan](docs/plans/frontend-plan.md)
+- [Weaviate Chunk Denormalization Plan](docs/plans/weaviate-chunk-denormalization-plan.md)
+- [Regulatory Tracking Pipeline Plan](docs/plans/regtrack-pipeline-plan.md)

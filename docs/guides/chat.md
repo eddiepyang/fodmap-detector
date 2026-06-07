@@ -114,24 +114,17 @@ known limitation flagged in the `source` field of the tool response.
 
 ---
 
-### 4. Model Selection: `gemini-3.1-flash` vs `gemini-3.1-pro`
+### 4. Model Selection: `gemini-3-flash-preview` vs `gemini-3.1-flash-lite-preview`
 
-The plan originally proposed `gemini-3.1-pro` for the main chat and `gemini-3.1-flash-lite` for the
-topic pre-screen.
-
-| Model | Reasoning quality | Speed | Cost | Verdict |
+| Model | Use | Reasoning quality | Speed | Cost | 
 |---|---|---|---|---|
-| `gemini-3.1-pro` | Best | Slower | Higher | Plan's original choice |
-| **`gemini-3.1-flash`** *(chosen)* | Good | Fast | Lower | **Chosen** as default (configurable via `--model`) |
-| `gemini-3.1-flash-lite` | Adequate for yes/no | Fastest | Lowest | Used for topic pre-screen only |
+| **`gemini-3-flash-preview`** *(chosen, main chat)* | Main chat model | Good | Fast | Lower |
+| `gemini-3.1-flash-lite-preview` | Topic pre-screen only | Adequate for yes/no | Fastest | Lowest |
 
-**Decision:** Default to `gemini-3.1-flash` — fast enough for interactive chat, good tool-calling
-support, and significantly cheaper than Pro for a feature where users may send many turns. Users who
-need stronger reasoning can pass `--model gemini-3.1-pro`. The plan's choice of `gemini-3.1-pro` was
-adjusted because an interactive REPL benefits more from speed than peak reasoning quality.
-
-The pre-screen model (`gemini-3.1-flash-lite`) is a hardcoded constant since it only answers
-"yes"/"no" and doesn't need to be configurable.
+**Decision:** Default to `gemini-3-flash-preview` — fast enough for interactive chat, good tool-calling
+support, and significantly cheaper than Pro for a feature where users may send many turns. Configurable
+via `--chat-model`. The pre-screen model (`gemini-3.1-flash-lite-preview`) is hardcoded since it only
+answers "yes"/"no" and doesn't need to be configurable.
 
 ---
 
@@ -197,9 +190,9 @@ from that plan and the reasoning behind each:
 | Plan | Implementation | Reason |
 |---|---|---|
 | Use `fodmap-diet/go-sdk` for FODMAP data | Embedded static `map[string]fodmapEntry` | SDK requires App Engine, deprecated `ioutil`, unmaintained since 2019 |
-| Default model `gemini-3.1-pro` | Default model `gemini-3.1-flash` | Interactive REPL benefits from speed over peak reasoning; configurable via `--model` |
+| Default model `gemini-3.1-pro` | Default model `gemini-3-flash-preview` | Interactive REPL benefits from speed over peak reasoning; configurable via `--chat-model` |
 | Add `github.com/fodmap-diet/go-sdk` to `go.mod` | No new dependencies | Static map eliminated the external dependency entirely |
-| Separate `--screen-model` flag | Hardcoded `gemini-3.1-flash-lite` constant | Pre-screen only answers yes/no; not worth a flag |
+| Separate `--screen-model` flag | Hardcoded `gemini-3.1-flash-lite-preview` constant | Pre-screen only answers yes/no; not worth a flag |
 
 ---
 
