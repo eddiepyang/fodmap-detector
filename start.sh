@@ -90,7 +90,7 @@ POSTGRES_DSN="$POSTGRES_DSN" go run . menutracking migrate-up || echo "    Warni
 
 # 4. Start the Go server in the background
 echo "[4/4] Starting Go server on port 8081..."
-ENABLE_PIPELINE=true go run . serve &
+ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" STORE_TYPE=postgres go run . serve &
 SERVER_PID=$!
 
 echo ""
