@@ -11,23 +11,25 @@ This project is developed on two machines with very different VRAM budgets, so w
 | **Mac M2 (64 GB unified)** | Ollama + `qwen3.6:35b-mlx` | One install (Ollama). 22 GB model, leaves ~28 GB usable. MLX-optimized. Vision + tools + thinking in one model. |
 | **Linux + NVIDIA 5080 (16 GB VRAM)** | vLLM + `Qwen/Qwen3-VL-8B-Instruct-AWQ` | AWQ 4-bit quant ≈ 6 GB weights, leaves ~8 GB for KV cache. Best vision quality that fits the card. Blackwell needs CUDA 12.6+. |
 
-Both expose `POST /v1/chat/completions`, so the Go pipeline's `--llm-backend openai-compat` flag works against either with only `--llm-url` and `--llm-model` differing.
+Both expose `POST /v1/chat/completions`; the Go pipeline uses one OpenAI-compatible HTTP client — backend choice is purely the `--llm-url` you pass (must include the version segment, e.g. `/v1`).
 
 ## Mac M2 setup — Ollama (recommended default)
 
 ```bash
 # Install Ollama (one-time): https://ollama.com/download
 ollama pull qwen3.6:35b-mlx        # 22 GB
-ollama serve                       # default port :11434
+# --reasoning-parser routes <think> tokens into the reasoning_content response
+# field so strict JSON output works with reasoning models.
+ollama serve --reasoning-parser deepseek_r1   # default port :11434
 ```
 
 Point the scraper:
 
 ```bash
 go run . scrape <url> \
-  --llm-backend openai-compat \
-  --llm-url http://localhost:11434 \
+  --llm-url http://localhost:11434/v1 \
   --llm-model qwen3.6:35b-mlx \
+  --llm-reasoning-effort none \
   --enable-vision
 ```
 
@@ -66,7 +68,7 @@ vllm serve <upstream-HF-checkpoint-name>     # e.g. mlx-community/<exact-tag>
 vllm serve mlx-community/Qwen3-VL-4B-Instruct-4bit
 ```
 
-Then point the scraper at `--llm-url http://localhost:8000` with the matching `--llm-model`.
+Then point the scraper at `--llm-url http://localhost:8000/v1` with the matching `--llm-model`.
 
 **Caveats:**
 - You load the **upstream HuggingFace MLX checkpoint** (e.g. from `mlx-community/`), not Ollama's bundled blob. Ollama stores weights in its own layout that vllm-metal doesn't read.
@@ -99,9 +101,9 @@ Point the scraper:
 
 ```bash
 go run . scrape <url> \
-  --llm-backend openai-compat \
-  --llm-url http://localhost:8000 \
+  --llm-url http://localhost:8000/v1 \
   --llm-model Qwen/Qwen3-VL-8B-Instruct-AWQ \
+  --llm-reasoning-effort none \
   --enable-vision
 ```
 
@@ -122,7 +124,7 @@ curl http://localhost:8000/v1/models    # Should list the loaded model
 .PHONY: llm-mac-up llm-mac-down llm-mac-status
 llm-mac-up:
 	@ollama pull qwen3.6:35b-mlx
-	@pgrep -x ollama > /dev/null || (ollama serve > tmp/ollama.log 2>&1 &)
+	@pgrep -x ollama > /dev/null || (ollama serve --reasoning-parser deepseek_r1 > tmp/ollama.log 2>&1 &)
 	@echo "Ollama serving qwen3.6:35b-mlx on :11434"
 llm-mac-status:
 	@curl -s http://localhost:11434/api/tags | head -c 200
@@ -143,12 +145,16 @@ llm-linux-status:
 
 ## Quick reference: pointing the scraper at each backend
 
-| Backend | `--llm-url` | `--llm-model` | `--enable-vision` |
+`--llm-url` must include the version segment. All backends accept `--llm-reasoning-effort` (default `none`).
+
+| Backend | `--llm-url` | `--llm-model` | `--llm-api-key` |
 |---|---|---|---|
-| Ollama (Mac) | `http://localhost:11434` | `qwen3.6:35b-mlx` | yes |
-| vLLM (Linux 5080) | `http://localhost:8000` | `Qwen/Qwen3-VL-8B-Instruct-AWQ` | yes |
-| OpenAI (cloud) | `https://api.openai.com` | `gpt-4o-mini` (set `--llm-api-key`) | yes |
-| Gemini (cloud) | n/a (use `--llm-backend gemini`) | `gemini-2.5-flash` (set `--llm-api-key`) | yes |
+| Ollama (Mac) | `http://localhost:11434/v1` | `qwen3.6:35b-mlx` | — |
+| vLLM (Linux 5080) | `http://localhost:8000/v1` | `Qwen/Qwen3-VL-8B-Instruct-AWQ` | — |
+| OpenAI (cloud) | `https://api.openai.com/v1` | `gpt-4o-mini` | required |
+| Gemini (cloud) | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash` | required |
+
+**Gemini note:** Gemini accepts `reasoning_effort` but never returns a `reasoning_content` field — thinking tokens are billed silently. `--llm-reasoning-effort=none` is cost-optimal for the Gemini path. Gemini 3.x at `effort=low` can spend ~12× more tokens than `none` on a single extraction.
 
 ## Known Limitations
 

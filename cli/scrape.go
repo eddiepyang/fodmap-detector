@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"google.golang.org/genai"
 )
 
 var scrapeCmd = &cobra.Command{
@@ -45,11 +44,16 @@ func init() {
 	scrapeCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 	scrapeCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port")
 
-	// LLM extraction backend
-	scrapeCmd.Flags().String("llm-backend", "openai-compat", "LLM backend: openai-compat | gemini")
-	scrapeCmd.Flags().String("llm-url", "http://localhost:11434", "Base URL for openai-compat backend")
+	// LLM extraction backend — any OpenAI-compatible endpoint.
+	// --llm-url must include the version segment:
+	//   Ollama:  http://localhost:11434/v1
+	//   vLLM:   http://localhost:8000/v1
+	//   OpenAI: https://api.openai.com/v1
+	//   Gemini: https://generativelanguage.googleapis.com/v1beta/openai
+	scrapeCmd.Flags().String("llm-url", "http://localhost:11434/v1", "Base URL for the OpenAI-compatible LLM endpoint (include version segment)")
 	scrapeCmd.Flags().String("llm-model", "qwen3.6:35b-mlx", "LLM model name")
-	scrapeCmd.Flags().String("llm-api-key", "", "API key for gemini or openai backends")
+	scrapeCmd.Flags().String("llm-api-key", "", "API key for cloud backends (OpenAI, Gemini, etc.)")
+	scrapeCmd.Flags().String("llm-reasoning-effort", "none", "Reasoning effort: none | low | medium | high (none = fastest, cost-optimal for Gemini)")
 
 	// Fetch options
 	scrapeCmd.Flags().Bool("ignore-robots", false, "Skip robots.txt check")
@@ -66,10 +70,10 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	enableVision, _ := cmd.Flags().GetBool("enable-vision")
 	usePdftotext, _ := cmd.Flags().GetBool("pdftotext")
 
-	llmBackend := viper.GetString("llm-backend")
 	llmURL := viper.GetString("llm-url")
 	llmModel := viper.GetString("llm-model")
 	llmAPIKey := viper.GetString("llm-api-key")
+	llmReasoningEffort := viper.GetString("llm-reasoning-effort")
 
 	ollamaURL := viper.GetString("ollama-url")
 	ollamaModel := viper.GetString("ollama-model")
@@ -104,15 +108,9 @@ func runScrape(cmd *cobra.Command, args []string) error {
 
 	// Build extractor.
 	var ex scraper.Extractor
-	switch llmBackend {
-	case "gemini":
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: llmAPIKey})
-		if err != nil {
-			return fmt.Errorf("gemini client: %w", err)
-		}
-		ex = scraper.NewGeminiExtractor(client, llmModel)
-	default: // openai-compat
-		ex = scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey)
+	ex, err = scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey, llmReasoningEffort)
+	if err != nil {
+		return fmt.Errorf("building extractor: %w", err)
 	}
 
 	fetcher := scraper.NewHTTPFetcher(ignoreRobots)

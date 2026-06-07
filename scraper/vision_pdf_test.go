@@ -29,8 +29,11 @@ func TestRenderPDFPages_InvalidPDF(t *testing.T) {
 }
 
 func TestExtractPDFVision_InvalidPDF(t *testing.T) {
-	ext := NewOpenAICompatExtractor("http://localhost", "test", "")
-	_, err := ExtractPDFVision(context.Background(), []byte("not a pdf"), ext)
+	ext, err := NewOpenAICompatExtractor("http://localhost/v1", "test", "", "none")
+	if err != nil {
+		t.Fatalf("NewOpenAICompatExtractor: %v", err)
+	}
+	_, err = ExtractPDFVision(context.Background(), []byte("not a pdf"), ext)
 	if err == nil || !strings.Contains(err.Error(), "rendering PDF") {
 		t.Errorf("expected rendering error, got %v", err)
 	}

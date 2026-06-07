@@ -1,7 +1,7 @@
 # Scraper Pipeline Plan
 
 ## Context
-Add a `fodmap scrape <url>` CLI command that fetches a restaurant menu page (HTML or PDF), converts it to a Markdown/text representation, calls a configurable LLM backend (Ollama, vLLM, OpenAI-compatible, or Gemini) to extract structured menu items (dish + ingredients), embeds the items, and upserts them into a **new dedicated `RestaurantMenu` collection** in the existing search backend so they are immediately searchable by the FODMAP chat without polluting the `YelpReview` collection.
+Add a `fodmap scrape <url>` CLI command that fetches a restaurant menu page (HTML or PDF), converts it to a Markdown/text representation, calls a configurable OpenAI-compatible LLM endpoint (Ollama, vLLM, OpenAI, Gemini's `/v1beta/openai` wrapper, or any compatible server) to extract structured menu items (dish + ingredients), embeds the items, and upserts them into a **new dedicated `RestaurantMenu` collection** in the existing search backend so they are immediately searchable by the FODMAP chat without polluting the `YelpReview` collection.
 
 **Pure-Go pipeline, unified vision LLM.** Earlier drafts split text vs. vision extraction across two specialized models (Qwen for text + Datalab's [Chandra](https://github.com/datalab-to/chandra) for document OCR). We later collapsed this to a single Qwen3-VL model handling both, for two reasons:
 
@@ -18,7 +18,6 @@ The Chandra path is documented as a future option for higher-VRAM environments (
 |---|---|
 | `scraper/scraper.go` | Core types + `Extractor` interface + pipeline stages |
 | `scraper/openai_extractor.go` | OpenAI-compatible `/v1/chat/completions` implementation — covers Ollama, vLLM, OpenAI, LM Studio, etc. |
-| `scraper/gemini_extractor.go` | Google Gemini implementation via `google.golang.org/genai` |
 | `scraper/jsonld_extractor.go` | Tier 0 fast-path — parses schema.org `Menu` / `Restaurant.hasMenu` JSON-LD blocks directly, no LLM call |
 | `scraper/api_inference.go` | Tier 2 fallback — uses the same `Extractor` to infer an API endpoint from page HTML and refetch |
 | `scraper/vision_pdf.go` | PDF path — renders PDF pages to PNG and sends them as `image_url` parts to the configured vision LLM via the existing OpenAI-compat extractor (uses the same `--llm-url` / `--llm-model` as text extraction, provided the model is vision-capable) |
@@ -193,8 +192,7 @@ When using image-based extraction for PDFs/Images:
 - **SSRF via `image_url`:** If users provide an `image_url` for extraction directly (rather than the backend uploading an image), that URL must be strictly validated against internal/private IPs.
 
 3. **Extract** — dispatches to the configured `Extractor` implementation:
-   - `OpenAICompatExtractor`: POST to `{llm-url}/v1/chat/completions`, `response_format:{type:"json_object"}`, optional API key. Works for **Ollama** (`http://localhost:11434`), **vLLM**, **OpenAI**, **LM Studio**, and any other OpenAI-compatible server — same wire format, just a different base URL and model name. *Note: If the backend supports it, using Structured Outputs (JSON Schema) or Function Calling guarantees schema adherence better than `json_object`.*
-   - `GeminiExtractor`: `client.Models.GenerateContent` with `ResponseMIMEType:"application/json"` via `google.golang.org/genai` (already in go.mod)
+   - `OpenAICompatExtractor`: POST to `{llm-url}/chat/completions` with `response_format:{type:"json_schema", strict:true}` and `reasoning_effort:<flag>`. Schema is reflected from the menu payload struct via `github.com/invopop/jsonschema`. Works for **Ollama** (`http://localhost:11434/v1`), **vLLM**, **OpenAI**, **LM Studio**, and Gemini's `/v1beta/openai` wrapper — same wire format, different base URL. Reasoning models' scratchpad is read from `message.reasoning_content` (Ollama, older vLLM) or `message.reasoning` (current vLLM/OpenAI spec) and logged at `slog.Debug`. Gemini silently consumes thinking tokens without surfacing the scratchpad — use `--llm-reasoning-effort=none` for cost-optimal Gemini use.
 
    All share the same prompt (embedded via `//go:embed scrape-prompt.txt`) and truncate input at 60k chars.
 4. **Map to MenuItems** (`ToMenuItems`) — one `search.MenuItem` per dish; embedding text: `"Menu item at {Restaurant}: {Dish}. {Description}. Stated ingredients: {a, b, c}."`; IDs via `uuid.NewSHA1(menuCollectionNamespace, businessID+dishName)` for idempotent upserts. Items carry `SourceURL`, `ScrapedAtUTC`, and `HasFullIngredients` so downstream callers can warn the user when ingredient data is incomplete.
@@ -207,7 +205,7 @@ All three concerns are wired through interfaces — the CLI chooses implementati
 |---|---|---|
 | **Storage** | `server.MenuStore` (new — defined separately in `server/server.go`; the same backend types satisfy both `Searcher` and `MenuStore`) | Weaviate, PostgreSQL/pgvector, Pinecone |
 | **Embeddings** | `search.Embedder` (`search/embedder.go`) | Ollama (`NewOllamaEmbedder`), HTTP vectorizer (`NewVectorizerClient`) |
-| **LLM extraction** | `scraper.Extractor` (new) | `OpenAICompatExtractor` (covers Ollama, vLLM, OpenAI, LM Studio), `GeminiExtractor` |
+| **LLM extraction** | `scraper.Extractor` (new) | `OpenAICompatExtractor` (covers Ollama, vLLM, OpenAI, LM Studio, Gemini's `/v1beta/openai` wrapper) |
 
 `runScrapeWith(ctx, url, fetcher, extractor, store, embedder, out)` accepts all four as interfaces, making it fully testable with stubs and swappable at runtime.
 
@@ -257,15 +255,20 @@ fodmap scrape <url> [flags]
   --vectorizer        HTTP vectorizer host:port (alternative to ollama)
 
   # LLM extraction backend (pick one)
-  --llm-backend       LLM backend: openai-compat | gemini (default: openai-compat)
-                      # openai-compat covers Ollama, vLLM, OpenAI, LM Studio — set --llm-url accordingly
-  --llm-url           Base URL for openai-compat backend (default: http://localhost:11434)
+  --llm-url           Base URL for the OpenAI-compatible endpoint — must include the version segment.
+                        Ollama:  http://localhost:11434/v1 (default)
+                        vLLM:   http://localhost:8000/v1
+                        OpenAI: https://api.openai.com/v1
+                        Gemini: https://generativelanguage.googleapis.com/v1beta/openai
   --llm-model         Model name. Recommended defaults per platform:
                        - Mac (M-series, 32GB+ unified): qwen3.6:35b-mlx via Ollama
                        - Linux + 16GB GPU (e.g. 5080): Qwen/Qwen3-VL-8B-Instruct-AWQ via vLLM
                        - Linux + 24GB+ GPU: Qwen/Qwen3-VL-30B-A3B-Instruct-AWQ via vLLM
                       See docs/llm-serving.md for serving guidance per platform.
-  --llm-api-key       API key for gemini or openai backends
+  --llm-api-key       API key for cloud backends (OpenAI, Gemini, etc.)
+  --llm-reasoning-effort  Reasoning effort: none | low | medium | high (default: none)
+                          none = fastest, cost-optimal; raise to low/medium for better accuracy
+                          on reasoning models. Gemini always uses none internally regardless.
 
   # Layered fetch strategy
   --enable-api-inference   If Tier 1 returns trivial result, ask LLM to infer the page's
@@ -310,7 +313,8 @@ Integration test (gated behind `// +build integration` build tag so `make check`
 - `search.Client.EnsureSchema` — pattern reused for new `EnsureMenuSchema`
 - `uuid.NewSHA1` (`github.com/google/uuid`, already in `go.mod`) — deterministic IDs
 - OpenAI-compatible `/v1/chat/completions` (covers Ollama / vLLM / OpenAI / LM Studio) — no new SDK needed, use `net/http` directly
-- `google.golang.org/genai` (already in `go.mod`) — for `GeminiExtractor` only
+- `google.golang.org/genai` (already in `go.mod`) — still used by the `chat/` package; **no longer used by the scraper** (Gemini now reached via the OpenAI-compat client)
+- `github.com/invopop/jsonschema` — reflect Go structs into JSON Schema for `response_format.json_schema`
 - `golang.org/x/net/html` + `golang.org/x/net/html/charset` — HTML parse + charset detect
 
 ## Known Limitations (documented, not blocking)
@@ -340,22 +344,21 @@ These are accepted tradeoffs for this PR and called out so reviewers and future 
 make check
 
 # --- Mac dev (M2, 64 GB) ---
-ollama pull qwen3.6:35b-mlx
+# Start Ollama with reasoning parser (routes <think> tokens out of content):
+ollama serve --reasoning-parser deepseek_r1
 go run . scrape "https://example-restaurant.com/menu" \
   --weaviate localhost:8090 \
-  --ollama-url http://localhost:11434 \
-  --llm-backend openai-compat \
-  --llm-url http://localhost:11434 \
+  --llm-url http://localhost:11434/v1 \
   --llm-model qwen3.6:35b-mlx \
+  --llm-reasoning-effort none \
   --enable-vision
 
 # --- Linux + 5080 (16 GB VRAM) ---
 # Serve Qwen3-VL-8B-Instruct-AWQ via vLLM first (see docs/llm-serving.md)
 go run . scrape "https://example-restaurant.com/menu" \
   --weaviate localhost:8090 \
-  --ollama-url http://localhost:11434 \
-  --llm-backend openai-compat \
-  --llm-url http://localhost:8000 \
+  --llm-url http://localhost:8000/v1 \
   --llm-model Qwen/Qwen3-VL-8B-Instruct-AWQ \
+  --llm-reasoning-effort none \
   --enable-vision
 ```

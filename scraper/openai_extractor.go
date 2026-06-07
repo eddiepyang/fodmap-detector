@@ -18,25 +18,35 @@ import (
 //go:embed scrape-prompt.txt
 var menuPrompt string
 
-// OpenAICompatExtractor calls any OpenAI-compatible /v1/chat/completions
-// endpoint (Ollama, vLLM, OpenAI, LM Studio, vllm-metal, etc.).
+// OpenAICompatExtractor calls any OpenAI-compatible /chat/completions endpoint
+// (Ollama, vLLM, OpenAI, LM Studio, Gemini's /v1beta/openai wrapper, etc.).
+// BaseURL must include the version segment: e.g. "http://localhost:11434/v1" or
+// "https://generativelanguage.googleapis.com/v1beta/openai".
 type OpenAICompatExtractor struct {
-	BaseURL string
-	Model   string
-	APIKey  string
-	client  *http.Client
+	BaseURL         string
+	Model           string
+	APIKey          string
+	ReasoningEffort string
+	schema          json.RawMessage
+	client          *http.Client
 }
 
 // NewOpenAICompatExtractor returns an extractor pointing at baseURL.
 // The HTTP client timeout is intentionally generous (5 min) because local
 // vision models processing large images can be slow.
-func NewOpenAICompatExtractor(baseURL, model, apiKey string) *OpenAICompatExtractor {
-	return &OpenAICompatExtractor{
-		BaseURL: baseURL,
-		Model:   model,
-		APIKey:  apiKey,
-		client:  &http.Client{Timeout: 5 * time.Minute},
+func NewOpenAICompatExtractor(baseURL, model, apiKey, reasoningEffort string) (*OpenAICompatExtractor, error) {
+	schema, err := menuExtractionSchema()
+	if err != nil {
+		return nil, fmt.Errorf("building menu schema: %w", err)
 	}
+	return &OpenAICompatExtractor{
+		BaseURL:         baseURL,
+		Model:           model,
+		APIKey:          apiKey,
+		ReasoningEffort: reasoningEffort,
+		schema:          schema,
+		client:          &http.Client{Timeout: 5 * time.Minute},
+	}, nil
 }
 
 type chatMessage struct {
@@ -54,28 +64,35 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
-// chatRequest represents the OpenAI-compatible /v1/chat/completions payload.
+type jsonSchemaFormat struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+type respFormat struct {
+	Type       string            `json:"type"`
+	JSONSchema *jsonSchemaFormat `json:"json_schema,omitempty"`
+}
+
+// chatRequest represents the OpenAI-compatible /chat/completions payload.
 //
-// NOTE ON max_tokens: We intentionally omit the `max_tokens` field. In the standard
-// OpenAI API, `max_tokens` limits generation output. However, some versions of Ollama
-// have a bug where they misinterpret `max_tokens` as a hard limit on the *total context
-// window* (prompt + generation). If we pass `max_tokens: 4096`, Ollama instantly drops
-// large HTML prompts (e.g. 6000 tokens) and returns an empty string, completely ignoring
-// any OLLAMA_NUM_CTX server limits.
+// NOTE ON max_tokens: Intentionally omitted. Some Ollama versions misinterpret
+// max_tokens as a hard limit on the total context window (prompt + generation),
+// instantly dropping large prompts and returning empty strings.
 type chatRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
-}
-
-type respFormat struct {
-	Type string `json:"type"`
+	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
 }
 
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Reasoning        string `json:"reasoning,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -108,16 +125,20 @@ func (e *OpenAICompatExtractor) chatJSON(ctx context.Context, prompt string, ima
 		content = []contentPart{{Type: "text", Text: prompt}}
 	}
 
-	// NOTE ON response_format: We intentionally omit `ResponseFormat: {"type":"json_object"}`.
-	// When using reasoning models (like Qwen3.6 or DeepSeek R1) in Ollama, the model often
-	// emits `<think>` tags before the JSON. Ollama's strict JSON grammar engine sees the
-	// `<think>` tag, instantly flags it as invalid JSON, and aborts the generation, returning
-	// an empty string. Instead, we let the model format naturally and use cleanJSON() to extract it.
 	req := chatRequest{
 		Model: e.Model,
 		Messages: []chatMessage{
 			{Role: "user", Content: content},
 		},
+		ResponseFormat: &respFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaFormat{
+				Name:   "menu_extraction",
+				Strict: true,
+				Schema: e.schema,
+			},
+		},
+		ReasoningEffort: e.ReasoningEffort,
 	}
 
 	body, err := json.Marshal(req)
@@ -126,7 +147,7 @@ func (e *OpenAICompatExtractor) chatJSON(ctx context.Context, prompt string, ima
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		e.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+		e.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return MenuExtractionResult{}, fmt.Errorf("build request: %w", err)
 	}
@@ -154,40 +175,46 @@ func (e *OpenAICompatExtractor) chatJSON(ctx context.Context, prompt string, ima
 		return MenuExtractionResult{}, fmt.Errorf("LLM returned no choices")
 	}
 
-	raw := chatResp.Choices[0].Message.Content
-	slog.Debug("LLM extracted payload", "bytes", len(raw), "finish_reason", chatResp.Choices[0].FinishReason)
+	choice := chatResp.Choices[0]
+	raw := choice.Message.Content
+
+	// reasoning_content (Ollama, older vLLM) or reasoning (current vLLM/OpenAI spec).
+	reasoning := choice.Message.ReasoningContent
+	if reasoning == "" {
+		reasoning = choice.Message.Reasoning
+	}
+
+	slog.Debug("LLM extracted payload",
+		"bytes", len(raw),
+		"reasoning_bytes", len(reasoning),
+		"finish_reason", choice.FinishReason,
+	)
 
 	if strings.TrimSpace(raw) == "" {
+		if reasoning != "" {
+			return MenuExtractionResult{}, fmt.Errorf(
+				"LLM returned reasoning but empty content (finish_reason: %q); "+
+					"some models (e.g. Gemma family on Ollama) emit all output in the reasoning channel — "+
+					"try --llm-reasoning-effort=low or restart Ollama with --reasoning-parser deepseek_r1",
+				choice.FinishReason,
+			)
+		}
 		return MenuExtractionResult{}, fmt.Errorf(
 			"LLM returned an empty response (finish_reason: %q). This usually happens when the restaurant menu is too large and exceeds the model's context window.\n\n"+
 				"If you are using Ollama locally, you can fix this by increasing its context window memory. Stop your current Ollama server and restart it with:\n"+
-				"  OLLAMA_NUM_CTX=16384 ollama serve",
-			chatResp.Choices[0].FinishReason,
+				"  OLLAMA_NUM_CTX=16384 ollama serve --reasoning-parser deepseek_r1",
+			choice.FinishReason,
 		)
 	}
-	cleaned := cleanJSON(raw)
-	var result MenuExtractionResult
-	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+
+	var payload llmMenuPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return MenuExtractionResult{}, fmt.Errorf("parse LLM JSON output: %w (raw: %.200s)", err, raw)
 	}
-	return result, nil
-}
-
-// cleanJSON strips markdown formatting blocks (e.g. ```json ... ```) from the LLM output.
-func cleanJSON(s string) string {
-	start := strings.Index(s, "```json")
-	if start != -1 {
-		s = s[start+7:]
-		end := strings.LastIndex(s, "```")
-		if end != -1 {
-			s = s[:end]
-		}
-	} else if start := strings.Index(s, "```"); start != -1 {
-		s = s[start+3:]
-		end := strings.LastIndex(s, "```")
-		if end != -1 {
-			s = s[:end]
-		}
-	}
-	return strings.TrimSpace(s)
+	return MenuExtractionResult{
+		RestaurantName: payload.RestaurantName,
+		City:           payload.City,
+		State:          payload.State,
+		Items:          payload.Items,
+	}, nil
 }
