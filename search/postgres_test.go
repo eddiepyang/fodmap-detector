@@ -358,7 +358,7 @@ func TestPostgresClient_BatchUpsert_BeginError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := &PostgresClient{db: db}
 
 	items := []IndexItem{
@@ -385,7 +385,7 @@ func TestPostgresClient_BatchUpsert_ExecError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := &PostgresClient{db: db}
 
 	items := []IndexItem{
@@ -417,7 +417,7 @@ func TestPostgresClient_GetBusinesses_QueryError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
 
 	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
@@ -433,7 +433,7 @@ func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}}
 
 	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
