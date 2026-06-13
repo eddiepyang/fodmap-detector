@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"fodmap/auth"
 	"fodmap/chat"
 	"fodmap/data"
+	"fodmap/fodmap/store"
 	"fodmap/search"
 
 	"golang.org/x/time/rate"
@@ -27,6 +29,33 @@ type Searcher interface {
 	BatchUpsert(ctx context.Context, items []search.IndexItem) error
 }
 
+// FodmapWriter is a narrow capability interface for syncing a single ingredient
+// change to the vector search index. Search backends implement this separately
+// from Searcher so existing Searcher test stubs stay untouched.
+type FodmapWriter interface {
+	UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error
+	DeleteFodmapItem(ctx context.Context, name string) error
+}
+
+// CatalogStore is the canonical store for FODMAP ingredient metadata. It is
+// implemented by *store.FodmapCatalogStore in production and by in-memory
+// stubs in tests.
+type CatalogStore interface {
+	EnsureSchema(ctx context.Context) error
+	Create(ctx context.Context, entry store.CatalogEntry) error
+	Get(ctx context.Context, name string) (*store.CatalogEntry, error)
+	List(ctx context.Context, offset, limit int, filter store.ListFilter) ([]store.CatalogEntry, error)
+	Count(ctx context.Context, filter store.ListFilter) (int, error)
+	Stats(ctx context.Context) (*store.Stats, error)
+	Update(ctx context.Context, name string, entry store.CatalogEntry) error
+	Delete(ctx context.Context, name string) error
+	ListAll(ctx context.Context) ([]store.CatalogEntry, error)
+	IsSeeded(ctx context.Context) (bool, error)
+	SetSeeded(ctx context.Context) error
+	Seed(ctx context.Context, items map[string]data.FodmapEntry) error
+	Close() error
+}
+
 // MenuStore manages the RestaurantMenu collection. It is defined separately
 // from Searcher so the same Weaviate/Postgres/Pinecone backend types can
 // satisfy both interfaces independently. DeleteStaleMenu is deferred to a
@@ -39,6 +68,7 @@ type MenuStore interface {
 
 type Server struct {
 	searcher           Searcher // nil when Weaviate is not configured
+	catalogStore       CatalogStore
 	port               int
 	chatBackend        chat.ChatBackend  // nil when chat is not configured
 	geminiApiKey       string            // for manual session creation
@@ -52,7 +82,7 @@ type Server struct {
 	userStore          auth.AdminStore
 	jwtSecret          string
 	adminEmail         string
-	menutrackingAdmin    http.Handler // nil when menutracking is not configured
+	menutrackingAdmin  http.Handler // nil when menutracking is not configured
 }
 
 type Config struct {
@@ -66,8 +96,9 @@ type Config struct {
 	PineconeIndexHost string          // optional (must start with https://)
 	VectorizerURL     string          // required for Pinecone; optional otherwise
 	PostgresSearch    bool            // optional; if true, uses PostgreSQL for search
-	PostgresDSN       string          // required if PostgresSearch is true
+	PostgresDSN       string          // required; used by both auth and the FODMAP catalog store
 	Embedder          search.Embedder // embedding provider (LlamaEmbedder or VectorizerClient)
+	CatalogStore      CatalogStore    // canonical FODMAP ingredient store
 
 	// Chat endpoint configuration.
 	GeminiAPIKey       string  // Gemini API key; omit to disable /chat
@@ -81,7 +112,7 @@ type Config struct {
 	UserStore          auth.AdminStore
 	JWTSecret          string
 	AdminEmail         string
-	MenutrackingAdmin   http.Handler // nil when menutracking is not configured
+	MenutrackingAdmin  http.Handler // nil when menutracking is not configured
 }
 
 // New initialises the server and Searcher client.
@@ -90,9 +121,10 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		port:               cfg.Port,
 		corsAllowedOrigins: cfg.CORSAllowedOrigins,
 		userStore:          cfg.UserStore,
+		catalogStore:       cfg.CatalogStore,
 		jwtSecret:          cfg.JWTSecret,
 		adminEmail:         cfg.AdminEmail,
-		menutrackingAdmin:    cfg.MenutrackingAdmin,
+		menutrackingAdmin:  cfg.MenutrackingAdmin,
 	}
 
 	if cfg.PostgresSearch && cfg.PostgresDSN != "" {
@@ -121,9 +153,10 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if err := s.searcher.EnsureFodmapSchema(ctx); err != nil {
 			slog.Warn("ensure fodmap schema failed", "error", err)
 		}
-		if err := s.searcher.BatchUpsertFodmap(ctx, data.FodmapDB); err != nil {
-			slog.Warn("batch upsert fodmap failed", "error", err)
-		}
+	}
+
+	if err := s.seedAndReload(ctx); err != nil {
+		slog.Warn("fodmap seed/reload failed", "error", err)
 	}
 
 	// Rate limiter and concurrency — used by conversation and chat routes.
@@ -172,12 +205,56 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	return s, nil
 }
 
+// seedAndReload seeds the canonical catalog once from the static map and
+// refreshes the vector search index from the catalog so edits survive restarts.
+func (s *Server) seedAndReload(ctx context.Context) error {
+	if s.catalogStore == nil {
+		if s.searcher != nil {
+			// Legacy path: no catalog store yet, fall back to the static map so
+			// existing deployments keep working until the catalog store is wired.
+			return s.searcher.BatchUpsertFodmap(ctx, data.FodmapDB)
+		}
+		return nil
+	}
+
+	if err := s.catalogStore.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure catalog schema: %w", err)
+	}
+
+	seeded, err := s.catalogStore.IsSeeded(ctx)
+	if err != nil {
+		return fmt.Errorf("checking seeded marker: %w", err)
+	}
+	if !seeded {
+		if err := s.catalogStore.Seed(ctx, data.FodmapDB); err != nil {
+			return fmt.Errorf("seeding catalog: %w", err)
+		}
+		slog.Info("seeded fodmap catalog", "count", len(data.FodmapDB))
+	}
+
+	if s.searcher == nil {
+		return nil
+	}
+
+	start := time.Now()
+	items, err := s.catalogStore.ListAll(ctx)
+	if err != nil {
+		return fmt.Errorf("listing catalog for reload: %w", err)
+	}
+	if err := s.searcher.BatchUpsertFodmap(ctx, store.ToMap(items)); err != nil {
+		return fmt.Errorf("reloading vector index: %w", err)
+	}
+	slog.Info("reloaded fodmap vector index from catalog", "count", len(items), "duration", time.Since(start))
+	return nil
+}
+
 // NewServer creates a Server with the provided Searcher. Intended for tests
 // where the real LLM and Weaviate clients should not be initialised. Pass nil for searcher
 // to disable the search endpoint.
 func NewServer(searcher Searcher, port int) *Server {
 	return &Server{
 		searcher:          searcher,
+		catalogStore:      newInMemoryCatalogStore(),
 		port:              port,
 		jwtSecret:         "test-secret", // default for tests
 		userStore:         newMockStore(),
@@ -211,6 +288,7 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 	}
 	return &Server{
 		searcher:          searcher,
+		catalogStore:      newInMemoryCatalogStore(),
 		port:              port,
 		chatBackend:       cfg.Backend,
 		chatAPIKey:        cfg.ChatAPIKey,
@@ -249,6 +327,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/admin/users/{id}/reset-password", adminMid(s.adminResetPasswordHandler))
 	mux.Handle("GET /api/v1/admin/conversations", adminMid(s.adminListConversationsHandler))
 	mux.Handle("GET /api/v1/admin/conversations/{id}", adminMid(s.adminGetConversationHandler))
+	mux.Handle("GET /api/v1/admin/ingredients", adminMid(s.adminListIngredientsHandler))
+	mux.Handle("GET /api/v1/admin/ingredients/stats", adminMid(s.adminIngredientStatsHandler))
+	mux.Handle("GET /api/v1/admin/ingredients/search-test", adminMid(s.adminIngredientSearchTestHandler))
+	mux.Handle("GET /api/v1/admin/ingredients/{name}", adminMid(s.adminGetIngredientHandler))
+	mux.Handle("POST /api/v1/admin/ingredients", adminMid(s.adminCreateIngredientHandler))
+	mux.Handle("PUT /api/v1/admin/ingredients/{name}", adminMid(s.adminUpdateIngredientHandler))
+	mux.Handle("DELETE /api/v1/admin/ingredients/{name}", adminMid(s.adminDeleteIngredientHandler))
 	mux.Handle("GET /api/v1/admin/analytics/overview", adminMid(s.adminAnalyticsOverviewHandler))
 	mux.Handle("GET /api/v1/admin/analytics/activity", adminMid(s.adminConversationActivityHandler))
 

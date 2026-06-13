@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -270,13 +271,47 @@ func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (F
 		&res.Ingredient, &res.Level, (*pgxStringArray)(&res.Groups), &res.Notes, (*pgxStringArray)(&res.Substitutions), &certainty,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return FodmapResult{}, 0, fmt.Errorf("not found")
 		}
 		return FodmapResult{}, 0, fmt.Errorf("query fodmap: %w", err)
 	}
 
 	return res, certainty, nil
+}
+
+// UpsertFodmapItem embeds and upserts a single ingredient into the Postgres
+// vector table. It is used by the admin CRUD handler to keep the search index
+// in sync with the canonical catalog.
+func (c *PostgresClient) UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error {
+	vec, err := c.embedder.EmbedSingle(ctx, name)
+	if err != nil {
+		return fmt.Errorf("vectorize ingredient: %w", err)
+	}
+
+	_, err = c.db.ExecContext(ctx, `
+		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, substitutions, embedding)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (ingredient) DO UPDATE SET
+			level = EXCLUDED.level,
+			groups = EXCLUDED.groups,
+			notes = EXCLUDED.notes,
+			substitutions = EXCLUDED.substitutions,
+			embedding = EXCLUDED.embedding
+	`, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pq.Array(entry.Substitutions), pgvector.NewVector(vec))
+	if err != nil {
+		return fmt.Errorf("upsert fodmap item: %w", err)
+	}
+	return nil
+}
+
+// DeleteFodmapItem removes a single ingredient from the Postgres vector table.
+func (c *PostgresClient) DeleteFodmapItem(ctx context.Context, name string) error {
+	_, err := c.db.ExecContext(ctx, `DELETE FROM fodmap_ingredients WHERE ingredient = $1`, name)
+	if err != nil {
+		return fmt.Errorf("delete fodmap item: %w", err)
+	}
+	return nil
 }
 
 // pgxStringArray is a helper to scan Postgres TEXT[] into []string for database/sql using pgx

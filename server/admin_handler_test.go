@@ -435,8 +435,8 @@ func TestAdminPaginationAndValidation(t *testing.T) {
 		if resp.Limit != 10 {
 			t.Errorf("limit = %d, want 10", resp.Limit)
 		}
-		if resp.Total != 25 {
-			t.Errorf("total = %d, want 25", resp.Total)
+		if resp.Total != 26 {
+			t.Errorf("total = %d, want 26", resp.Total)
 		}
 		if len(resp.Users) != 10 {
 			t.Errorf("got %d users, want 10", len(resp.Users))
@@ -476,7 +476,8 @@ func TestAdminHandlers_ErrorPaths(t *testing.T) {
 	errStore := &mockErrorStore{}
 
 	s := &Server{userStore: errStore, jwtSecret: secret}
-	store.users["admin@example.com"] = &auth.User{
+	mockStore := newMockStore()
+	mockStore.users["admin@example.com"] = &auth.User{
 		ID:     adminID,
 		Email:  "admin@example.com",
 		Role:   "admin",

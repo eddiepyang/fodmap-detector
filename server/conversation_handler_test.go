@@ -224,6 +224,10 @@ func (m *mockErrorStore) GetUserByEmail(ctx context.Context, email string) (*aut
 	return nil, errMock
 }
 func (m *mockErrorStore) GetUserByID(ctx context.Context, id string) (*auth.User, error) {
+	// Allow the admin check in adminRequired to succeed for error-path tests.
+	if id == "admin-1" {
+		return &auth.User{ID: id, Email: "admin@example.com", Role: "admin", Status: "active"}, nil
+	}
 	return nil, errMock
 }
 func (m *mockErrorStore) CreateConversation(ctx context.Context, c *auth.Conversation) error {
