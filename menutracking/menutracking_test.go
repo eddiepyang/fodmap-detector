@@ -198,6 +198,7 @@ func TestApplyRuleWithSelector_EmptyOutput(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result (with empty Extracted)")
+		return
 	}
 	if result.Extracted != nil {
 		t.Errorf("expected nil Extracted for missing key, got %+v", result.Extracted)
@@ -218,6 +219,7 @@ func TestApplyRuleWithSelector_CSSSelector(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if result.Extracted != nil {
 		t.Errorf("CSS selector should not extract yet, got %+v", result.Extracted)

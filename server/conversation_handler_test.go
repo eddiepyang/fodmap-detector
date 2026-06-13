@@ -241,6 +241,34 @@ func (m *mockErrorStore) GetMessages(ctx context.Context, convID string) ([]*aut
 	return nil, errMock
 }
 func (m *mockErrorStore) Close() error { return nil }
+func (m *mockErrorStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+	return nil, errMock
+}
+func (m *mockErrorStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error { return errMock }
+func (m *mockErrorStore) UpdateUserStatus(ctx context.Context, userID string, status string) error { return errMock }
+func (m *mockErrorStore) SetUserRole(ctx context.Context, userID string, role string) error { return errMock }
+func (m *mockErrorStore) ListUsers(ctx context.Context, offset, limit int, filter auth.UserFilter) ([]*auth.User, int, error) {
+	return nil, 0, errMock
+}
+func (m *mockErrorStore) GetUserDetail(ctx context.Context, userID string) (*auth.UserDetail, error) {
+	return nil, errMock
+}
+func (m *mockErrorStore) DeleteUserPermanently(ctx context.Context, userID string) error { return errMock }
+func (m *mockErrorStore) ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error {
+	return errMock
+}
+func (m *mockErrorStore) ListAllConversations(ctx context.Context, offset, limit int, search string) ([]*auth.ConversationSummary, int, error) {
+	return nil, 0, errMock
+}
+func (m *mockErrorStore) GetUserAnalytics(ctx context.Context) (*auth.UserAnalytics, error) {
+	return nil, errMock
+}
+func (m *mockErrorStore) GetConversationActivity(ctx context.Context, days int) ([]auth.DailyCount, error) {
+	return nil, errMock
+}
+func (m *mockErrorStore) GetConversationAnalytics(ctx context.Context) (*auth.ConversationAnalytics, error) {
+	return nil, errMock
+}
 
 func TestAuthHandler_LoginNonExistentUser(t *testing.T) {
 	store := newMockStore()
