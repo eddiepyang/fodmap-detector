@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -69,7 +70,12 @@ func (b *GeminiBackend) Generate(ctx context.Context, opts GenerateOpts) (Messag
 				},
 			}
 			if fc.ThoughtSignature != "" {
-				part.ThoughtSignature = []byte(fc.ThoughtSignature)
+				if decoded, err := base64.StdEncoding.DecodeString(fc.ThoughtSignature); err == nil {
+					part.ThoughtSignature = decoded
+				} else {
+					// Fallback to raw bytes for legacy/non-base64 test values
+					part.ThoughtSignature = []byte(fc.ThoughtSignature)
+				}
 			}
 			content.Parts = append(content.Parts, part)
 		}
@@ -104,7 +110,7 @@ func (b *GeminiBackend) Generate(ctx context.Context, opts GenerateOpts) (Messag
 					Args: part.FunctionCall.Args,
 				}
 				if len(part.ThoughtSignature) > 0 {
-					fc.ThoughtSignature = string(part.ThoughtSignature)
+					fc.ThoughtSignature = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
 				}
 				outCalls = append(outCalls, fc)
 

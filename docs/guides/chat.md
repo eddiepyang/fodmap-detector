@@ -17,10 +17,10 @@ via Gemini function calling.
   ┌──────────────────────────────────────────────────┐
   │  cli/chat.go  (runChat)                          │
   │                                                  │
-  │  1. GET /searchBusiness/pad%20thai?limit=1       │──► running HTTP server (port 8080)
+  │  1. GET /api/v1/search/businesses/pad%20thai     │──► running HTTP server (port 8081)
   │     ← top business {id, name, city, state}       │        │
   │                                                  │        ▼
-  │  2. GET /reviews?business_id={id}                │    Weaviate nearText
+  │  2. GET /api/v1/search/reviews/pad%20thai        │    Weaviate nearText
   │     ← []Review (capped at --limit)               │    + archive lookup
   │                                                  │
   │  3. Render chat-instruction.txt template              │
@@ -185,7 +185,7 @@ letting off-topic messages through when the pre-screen model is unavailable.
 
 **Decision:** The user explicitly wanted the agent to use the existing HTTP endpoints. This means
 the `chat` command requires `fodmap serve` to be running in a separate terminal — documented in the
-README and in the `--server` flag's default value (`http://localhost:8080`).
+README and in the `--server` flag's default value (`http://localhost:8081`).
 
 ---
 
@@ -230,7 +230,7 @@ from that plan and the reasoning behind each:
 
 ### Long-term
 
-9. **Persistent FODMAP database** — Migrate from static map to SQLite with a schema migration path.
+9. **Persistent FODMAP database** — Migrate from static map to PostgreSQL with a schema migration path.
    Allow users (or a periodic job) to import updated FODMAP datasets without rebuilding the binary.
 
 10. **Review summarization pre-pass** — Before starting the chat, run a one-shot Gemini call to

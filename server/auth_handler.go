@@ -21,8 +21,10 @@ type loginRequest struct {
 }
 
 type authUserResponse struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID     string `json:"id"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	Status string `json:"status"`
 }
 
 type authResponse struct {
@@ -58,8 +60,10 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := &auth.User{
-		ID:    uuid.New().String(),
-		Email: req.Email,
+		ID:     uuid.New().String(),
+		Email:  req.Email,
+		Role:   "user",
+		Status: "active",
 	}
 	if err := user.SetPassword(req.Password); err != nil {
 		respondError(w, "failed to process password", http.StatusInternalServerError)
@@ -72,11 +76,17 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.adminEmail != "" && user.Email == s.adminEmail {
+		if err := s.userStore.SetUserRole(r.Context(), user.ID, "admin"); err != nil {
+			slog.Warn("failed to auto-promote admin user", "email", user.Email, "error", err)
+		} else {
+			user.Role = "admin"
+		}
+	}
+
 	// Generate tokens for automatic initial login after registration
-	access, refresh, err := auth.GenerateTokens(user.ID, s.jwtSecret)
+	access, refresh, err := auth.GenerateTokensWithRole(user.ID, user.Role, s.jwtSecret)
 	if err != nil {
-		// User is created but tokens failed; return success with error message?
-		// No, return 201 Created and let login handle it or just return tokens now.
 		slog.Warn("user created but token generation failed", "user_id", user.ID, "error", err)
 	}
 
@@ -87,8 +97,10 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 		Token:        access,
 		RefreshToken: refresh,
 		User: authUserResponse{
-			ID:    user.ID,
-			Email: user.Email,
+			ID:     user.ID,
+			Email:  user.Email,
+			Role:   user.Role,
+			Status: user.Status,
 		},
 	})
 }
@@ -116,12 +128,12 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Status == "deleted" {
+	if user.Status == "deleted" || user.Status == "suspended" {
 		respondError(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	access, refresh, err := auth.GenerateTokens(user.ID, s.jwtSecret)
+	access, refresh, err := auth.GenerateTokensWithRole(user.ID, user.Role, s.jwtSecret)
 	if err != nil {
 		respondError(w, "failed to generate tokens", http.StatusInternalServerError)
 		return
@@ -133,8 +145,10 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		Token:        access,
 		RefreshToken: refresh,
 		User: authUserResponse{
-			ID:    user.ID,
-			Email: user.Email,
+			ID:     user.ID,
+			Email:  user.Email,
+			Role:   user.Role,
+			Status: user.Status,
 		},
 	})
 }
@@ -157,19 +171,26 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var user *auth.User
 	if s.userStore != nil {
-		user, err := s.userStore.GetUserByID(r.Context(), claims.UserID)
+		user, err = s.userStore.GetUserByID(r.Context(), claims.UserID)
 		if err != nil || user == nil {
 			respondError(w, "user not found", http.StatusUnauthorized)
 			return
 		}
-		if user.Status == "deleted" {
+		if user.Status == "deleted" || user.Status == "suspended" {
 			respondError(w, "user not found", http.StatusUnauthorized)
 			return
 		}
 	}
 
-	access, refresh, err := auth.GenerateTokens(claims.UserID, s.jwtSecret)
+	// Default role to "user" if userStore is nil
+	role := "user"
+	if user != nil {
+		role = user.Role
+	}
+
+	access, refresh, err := auth.GenerateTokensWithRole(claims.UserID, role, s.jwtSecret)
 	if err != nil {
 		respondError(w, "failed to generate tokens", http.StatusInternalServerError)
 		return
@@ -207,6 +228,33 @@ func (s *Server) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "account deleted"})
+}
+
+func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
+	if s.userStore == nil {
+		respondError(w, "authentication is not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	userID, ok := r.Context().Value(userContextKey).(string)
+	if !ok || userID == "" {
+		respondError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := s.userStore.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil || user.Status == "deleted" {
+		respondError(w, "user not found", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(authUserResponse{
+		ID:     user.ID,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
+	})
 }
 
 func respondError(w http.ResponseWriter, message string, code int) {

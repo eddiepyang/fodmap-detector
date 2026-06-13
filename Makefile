@@ -92,8 +92,10 @@ lint:
 
 check: lint test build
 
+POSTGRES_DSN ?= postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable
+
 run:
-	go run . serve
+	POSTGRES_DSN="$(POSTGRES_DSN)" go run . serve
 
 start:
 	./start.sh

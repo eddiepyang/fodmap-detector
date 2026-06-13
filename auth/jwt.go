@@ -15,14 +15,22 @@ const (
 // UserClaims defines the custom claims for the JWT.
 type UserClaims struct {
 	UserID string `json:"user_id"`
+	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 // GenerateTokens creates a fresh access token and refresh token for a user.
+// It delegates with a default role of "user" to maintain compatibility.
 func GenerateTokens(userID, secret string) (string, string, error) {
+	return GenerateTokensWithRole(userID, "user", secret)
+}
+
+// GenerateTokensWithRole creates a fresh access token and refresh token with a specific role claim.
+func GenerateTokensWithRole(userID, role, secret string) (string, string, error) {
 	// 1. Access Token
 	accessClaims := &UserClaims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenDuration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -37,6 +45,7 @@ func GenerateTokens(userID, secret string) (string, string, error) {
 	// 2. Refresh Token
 	refreshClaims := &UserClaims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(RefreshTokenDuration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

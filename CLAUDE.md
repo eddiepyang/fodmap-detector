@@ -93,3 +93,4 @@ Project-level rules for this codebase.
 
 - Always use a web search tool to confirm and fact-check findings or technical assumptions (e.g., model capabilities, version support, API limits) before finalizing recommendations or reporting back to the user. Do not rely solely on internal knowledge.
 - Always review implementation plans for risks, edge cases, and gaps after the first iteration to ensure robustness.
+- Prefer the LSP server (gopls) first for symbol-level questions — finding references, definitions, implementations, and call hierarchy. Use `grep`/text search only as a fallback when the LSP is unavailable or for non-symbol matches (comments, strings, file discovery). The LSP resolves actual symbol bindings; `grep` matches text and can false-match.

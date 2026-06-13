@@ -4,16 +4,16 @@
 
 ```sh
 # With search enabled (Weaviate local)
-go run . serve --weaviate localhost:8090
+go run . serve --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" --weaviate localhost:8090
 
 # With search enabled (Pinecone Cloud)
-go run . serve --pinecone-api-key KEY --pinecone-index-host HOST --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
+go run . serve --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" --pinecone-api-key KEY --pinecone-index-host HOST --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
 
 # With search enabled (PostgreSQL/pgvector)
-go run . serve --postgres-search --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
+go run . serve --postgres-search --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" --ollama-url http://localhost:11434 --ollama-model nomic-embed-text
 
 # Without search (search endpoint returns 503)
-go run . serve
+go run . serve --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
 ```
 
 Default port is `8081`.
@@ -31,6 +31,7 @@ Default port is `8081`.
 | `POST` | `/api/v1/auth/refresh` | — | Exchange a refresh token for new tokens |
 | `POST` | `/api/v1/auth/logout` | JWT | Log out (client-side token discard) |
 | `DELETE` | `/api/v1/auth/user` | JWT | Delete the authenticated user's account |
+| `GET` | `/api/v1/auth/me` | JWT | Get current user's profile info |
 | `GET` | `/api/v1/conversations` | JWT | List conversations |
 | `POST` | `/api/v1/conversations` | JWT | Create a new conversation |
 | `GET` | `/api/v1/conversations/{id}` | JWT | Get a conversation |
@@ -40,6 +41,15 @@ Default port is `8081`.
 | `GET` | `/api/v1/profile` | JWT | Get dietary profile |
 | `POST` | `/api/v1/profile` | JWT | Update dietary profile |
 | `POST` | `/chat/{query...}` | JWT/API Key | Legacy chat endpoint (streaming) |
+| `GET` | `/api/v1/admin/users` | JWT (Admin) | List active/suspended users |
+| `GET` | `/api/v1/admin/users/{id}` | JWT (Admin) | Inspect user details & dietary profile |
+| `PUT` | `/api/v1/admin/users/{id}/status` | JWT (Admin) | Toggle user status (active/suspended) |
+| `DELETE` | `/api/v1/admin/users/{id}` | JWT (Admin) | Cascade delete user account & message history |
+| `POST` | `/api/v1/admin/users/{id}/reset-password` | JWT (Admin) | Generate temporary password (bcrypt hash) |
+| `GET` | `/api/v1/admin/conversations` | JWT (Admin) | List all conversations across the system |
+| `GET` | `/api/v1/admin/conversations/{id}` | JWT (Admin) | Inspect a conversation's messages |
+| `GET` | `/api/v1/admin/analytics/overview` | JWT (Admin) | Fetch total, active, suspended users, and signups |
+| `GET` | `/api/v1/admin/analytics/activity` | JWT (Admin) | Fetch daily conversation activity stats |
 
 **Conversation export** — the `GET /api/v1/conversations/{id}/export` endpoint supports a `format` query parameter:
 
