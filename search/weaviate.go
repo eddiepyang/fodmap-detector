@@ -1180,9 +1180,14 @@ func extractParent(obj map[string]any) (map[string]any, bool) {
 	}
 	// Weaviate returns refs grouped by type, e.g., "... on YelpReview": {...}
 	parentRaw, ok := parentWrapper["... on "+collectionName]
-	if !ok {
-		return nil, false
+	if ok {
+		if parentObj, ok := parentRaw.(map[string]any); ok {
+			return parentObj, true
+		}
 	}
-	parentObj, ok := parentRaw.(map[string]any)
-	return parentObj, ok
+	// Fall back to returning parentWrapper directly if it has the required fields
+	if _, ok := parentWrapper["businessId"]; ok {
+		return parentWrapper, true
+	}
+	return nil, false
 }

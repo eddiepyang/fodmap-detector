@@ -89,6 +89,12 @@ POSTGRES_DSN="$POSTGRES_DSN" go run . menutracking migrate-up || echo "    Warni
 
 # 4. Start the Go server in the background
 echo "[4/4] Starting Go server on port 8081..."
+CONFLICTING_PID=$(lsof -t -i :8081 || true)
+if [ -n "$CONFLICTING_PID" ]; then
+    echo "    Found conflicting process(es) on port 8081: $CONFLICTING_PID. Killing..."
+    kill -9 $CONFLICTING_PID 2>/dev/null || true
+    sleep 1
+fi
 ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" ADMIN_EMAIL="admin@example.com" go run . serve &
 SERVER_PID=$!
 

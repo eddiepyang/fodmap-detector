@@ -131,6 +131,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [Chat Design](docs/guides/chat.md) - Chat agent design decisions.
 - [Server Design](docs/guides/server.md) - Server design and API docs.
 - [LLM Serving](docs/guides/llm-serving.md) - LLM serving architectures.
+- [Troubleshooting & Diagnostics](docs/guides/troubleshooting.md) - Common issues, Weaviate diagnostic queries, and schema migration steps.
 
 ### Plans & Roadmaps
 
