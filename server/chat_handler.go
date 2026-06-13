@@ -424,7 +424,7 @@ func messagesToHistory(msgs []*auth.Message) []chat.Message {
 
 // saveToolTurns persists each tool call/response pair from result to the store,
 // starting at seq. It returns the next available sequence number.
-func saveToolTurns(ctx context.Context, store auth.Store, convID string, result chat.SendResult, seq int) int {
+func saveToolTurns(ctx context.Context, store auth.ChatStore, convID string, result chat.SendResult, seq int) int {
 	for _, turn := range result.ToolTurns {
 		callsJSON, err := json.Marshal(turn.Calls)
 		if err != nil {
@@ -464,7 +464,7 @@ func saveToolTurns(ctx context.Context, store auth.Store, convID string, result 
 	return seq
 }
 
-func saveModelResponse(ctx context.Context, store auth.Store, convID string, res chat.SendResult, seq int) *auth.Message {
+func saveModelResponse(ctx context.Context, store auth.ChatStore, convID string, res chat.SendResult, seq int) *auth.Message {
 	msg := &auth.Message{
 		ID:             fmt.Sprintf("msg-%s-m-%d", convID, seq),
 		ConversationID: convID,

@@ -214,7 +214,7 @@ func TestConversationHandlers_Errors(t *testing.T) {
 }
 
 type mockErrorStore struct {
-	auth.Store // composition for interface satisfaction
+	auth.AdminStore // composition for interface satisfaction
 }
 
 var errMock = fmt.Errorf("internal store error")

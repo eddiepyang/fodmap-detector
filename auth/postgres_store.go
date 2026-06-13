@@ -3,12 +3,49 @@ package auth
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver
 )
+
+//go:embed sql/set_user_role.sql
+var setUserRoleSQL string
+
+//go:embed sql/list_users.sql
+var listUsersSQL string
+
+//go:embed sql/count_users.sql
+var countUsersSQL string
+
+//go:embed sql/get_user_detail.sql
+var getUserDetailSQL string
+
+//go:embed sql/delete_user_permanently.sql
+var deleteUserPermanentlySQL string
+
+//go:embed sql/reset_user_password.sql
+var resetUserPasswordSQL string
+
+//go:embed sql/list_all_conversations.sql
+var listAllConversationsSQL string
+
+//go:embed sql/count_all_conversations.sql
+var countAllConversationsSQL string
+
+//go:embed sql/get_user_analytics.sql
+var getUserAnalyticsSQL string
+
+//go:embed sql/get_recent_signups.sql
+var getRecentSignupsSQL string
+
+//go:embed sql/get_conversation_activity.sql
+var getConversationActivitySQL string
+
+//go:embed sql/get_conversation_analytics.sql
+var getConversationAnalyticsSQL string
 
 // PostgresStore implements Store for PostgreSQL.
 type PostgresStore struct {
@@ -35,6 +72,7 @@ func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStor
 			id         TEXT PRIMARY KEY,
 			email      TEXT UNIQUE NOT NULL,
 			password   TEXT NOT NULL,
+			role       TEXT NOT NULL DEFAULT 'user',
 			status     TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -78,6 +116,7 @@ func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStor
 
 	// Migrations
 	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';")
+	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';")
 	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
@@ -89,8 +128,11 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user *User) error {
 	if user.Status == "" {
 		user.Status = "active"
 	}
-	query := `INSERT INTO users (id, email, password, status, created_at) VALUES ($1, $2, $3, $4, $5)`
-	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.Status, user.CreatedAt)
+	if user.Role == "" {
+		user.Role = "user"
+	}
+	query := `INSERT INTO users (id, email, password, role, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Password, user.Role, user.Status, user.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
@@ -124,9 +166,9 @@ func (s *PostgresStore) SaveDietaryProfile(ctx context.Context, userID string, p
 // GetUserByEmail retrieves a user by their email address.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, status, created_at FROM users WHERE email = $1`
+	query := `SELECT id, email, password, role, status, created_at FROM users WHERE email = $1`
 	row := s.db.QueryRowContext(ctx, query, email)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Role, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}
@@ -139,9 +181,9 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 // GetUserByID retrieves a user by their ID.
 func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, email, password, status, created_at FROM users WHERE id = $1`
+	query := `SELECT id, email, password, role, status, created_at FROM users WHERE id = $1`
 	row := s.db.QueryRowContext(ctx, query, id)
-	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Status, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Role, &user.Status, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // User not found
 	}
@@ -297,4 +339,199 @@ func (s *PostgresStore) GetMessages(ctx context.Context, conversationID string) 
 // Close closes the database connection.
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
+}
+
+// SetUserRole sets a user's role.
+func (s *PostgresStore) SetUserRole(ctx context.Context, userID string, role string) error {
+	result, err := s.db.ExecContext(ctx, setUserRoleSQL, role, userID)
+	if err != nil {
+		return fmt.Errorf("failed to set user role: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+// ListUsers queries users filtering by email and status.
+func (s *PostgresStore) ListUsers(ctx context.Context, offset, limit int, filter UserFilter) ([]*User, int, error) {
+	var total int
+	err := s.db.QueryRowContext(ctx, countUsersSQL, filter.Search, filter.Status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, listUsersSQL, filter.Search, filter.Status, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var users []*User
+	for rows.Next() {
+		u := &User{}
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.Status, &u.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, total, nil
+}
+
+// GetUserDetail returns comprehensive statistics and status about a user.
+func (s *PostgresStore) GetUserDetail(ctx context.Context, userID string) (*UserDetail, error) {
+	var u User
+	var conversations int
+	var messages int
+	var profile []byte
+
+	err := s.db.QueryRowContext(ctx, getUserDetailSQL, userID).Scan(
+		&u.ID, &u.Email, &u.Role, &u.Status, &u.CreatedAt,
+		&conversations, &messages, &profile,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil // User not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query user detail: %w", err)
+	}
+
+	return &UserDetail{
+		User:           &u,
+		Conversations:  conversations,
+		Messages:       messages,
+		DietaryProfile: profile,
+	}, nil
+}
+
+// DeleteUserPermanently hard deletes a user and cascades deletion to other entities.
+func (s *PostgresStore) DeleteUserPermanently(ctx context.Context, userID string) error {
+	result, err := s.db.ExecContext(ctx, deleteUserPermanentlySQL, userID)
+	if err != nil {
+		return fmt.Errorf("failed to permanently delete user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+// ResetUserPassword updates a user's password.
+func (s *PostgresStore) ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error {
+	result, err := s.db.ExecContext(ctx, resetUserPasswordSQL, hashedPassword, userID)
+	if err != nil {
+		return fmt.Errorf("failed to reset user password: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+// ListAllConversations returns all conversations with email details and counts.
+func (s *PostgresStore) ListAllConversations(ctx context.Context, offset, limit int, search string) ([]*ConversationSummary, int, error) {
+	var total int
+	err := s.db.QueryRowContext(ctx, countAllConversationsSQL, search).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count conversations: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, listAllConversationsSQL, search, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query conversations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var summaries []*ConversationSummary
+	for rows.Next() {
+		c := &ConversationSummary{}
+		var created, updated time.Time
+		if err := rows.Scan(
+			&c.ID, &c.UserID, &c.UserEmail, &c.Title, &c.BusinessID, &c.BusinessName,
+			&c.MessageCount, &created, &updated,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan conversation summary: %w", err)
+		}
+		c.CreatedAt = created.Format(time.RFC3339)
+		c.UpdatedAt = updated.Format(time.RFC3339)
+		summaries = append(summaries, c)
+	}
+	return summaries, total, nil
+}
+
+// GetUserAnalytics returns counts of users.
+func (s *PostgresStore) GetUserAnalytics(ctx context.Context) (*UserAnalytics, error) {
+	var total, active, suspended int
+	err := s.db.QueryRowContext(ctx, getUserAnalyticsSQL).Scan(&total, &active, &suspended)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query user analytics: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, getRecentSignupsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent signups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var recent []*User
+	for rows.Next() {
+		u := &User{}
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.Status, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan recent signup: %w", err)
+		}
+		recent = append(recent, u)
+	}
+
+	return &UserAnalytics{
+		TotalUsers:     total,
+		ActiveUsers:    active,
+		SuspendedUsers: suspended,
+		RecentSignups:  recent,
+	}, nil
+}
+
+// GetConversationActivity returns day-by-day counts.
+func (s *PostgresStore) GetConversationActivity(ctx context.Context, days int) ([]DailyCount, error) {
+	rows, err := s.db.QueryContext(ctx, getConversationActivitySQL, days)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query conversation activity: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var activity []DailyCount
+	for rows.Next() {
+		var dc DailyCount
+		if err := rows.Scan(&dc.Date, &dc.Count); err != nil {
+			return nil, fmt.Errorf("failed to scan daily count: %w", err)
+		}
+		activity = append(activity, dc)
+	}
+	return activity, nil
+}
+
+// GetConversationAnalytics returns total and average conversations.
+func (s *PostgresStore) GetConversationAnalytics(ctx context.Context) (*ConversationAnalytics, error) {
+	var total int
+	var avg float64
+	err := s.db.QueryRowContext(ctx, getConversationAnalyticsSQL).Scan(&total, &avg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query conversation analytics: %w", err)
+	}
+
+	return &ConversationAnalytics{
+		TotalConversations: total,
+		AvgPerUser:         avg,
+	}, nil
 }
