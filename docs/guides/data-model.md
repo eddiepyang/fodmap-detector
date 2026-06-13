@@ -1,5 +1,7 @@
 # Data Model & Pipeline
 
+For the relational/Postgres schema, see [database-schema.md](database-schema.md).
+
 ## Core Data Model
 
 Reviews reference businesses by ID only. The business name and location metadata live in a separate dataset file.

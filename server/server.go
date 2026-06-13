@@ -70,11 +70,11 @@ type Server struct {
 	searcher           Searcher // nil when Weaviate is not configured
 	catalogStore       CatalogStore
 	port               int
-	chatBackend        chat.ChatBackend  // nil when chat is not configured
-	geminiApiKey       string            // for manual session creation
-	chatModel          string            // for manual session creation
-	filterModel        string            // for topic screening
-	chatAPIKey         string            // bearer token for /chat route
+	chatBackend        chat.ChatBackend // nil when chat is not configured
+	geminiApiKey       string           // for manual session creation
+	chatModel          string           // for manual session creation
+	filterModel        string           // for topic screening
+	chatAPIKey         string           // bearer token for /chat route
 	chatRateLimiter    *ipRateLimiter
 	chatMaxConcurrent  int
 	corsAllowedOrigins []string

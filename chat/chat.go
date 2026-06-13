@@ -225,21 +225,21 @@ func (s *Session) SendWithToolCalls(ctx context.Context, input string, onText fu
 		// 3. Dispatch tool calls and add response turn
 		responseMsg := Message{Role: "user"}
 		turn := ToolTurn{}
-		
+
 		for _, call := range modelMsg.FunctionCalls {
 			toolResult := s.DispatchTool(ctx, call.Name, call.Args)
 			resultMap := ToMap(toolResult)
-			
+
 			responseMsg.FunctionResults = append(responseMsg.FunctionResults, FunctionResult{
 				Name:   call.Name,
 				Result: resultMap,
 			})
-			
+
 			result.ToolCalls = append(result.ToolCalls, fmt.Sprintf("%s(%v)", call.Name, call.Args["ingredient"]))
 			turn.Calls = append(turn.Calls, ToolCallEntry(call))
 			turn.Responses = append(turn.Responses, ToolResponseEntry{Name: call.Name, Result: resultMap})
 		}
-		
+
 		result.ToolTurns = append(result.ToolTurns, turn)
 		s.History = append(s.History, responseMsg)
 

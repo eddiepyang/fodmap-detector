@@ -52,73 +52,20 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
-// NewPostgresStore creates a new PostgresStore.
+// NewPostgresStore creates a new PostgresStore. Schema creation is handled by
+// the centralised migration runner (internal/db); this constructor only opens
+// the database connection.
 func NewPostgresStore(ctx context.Context, dataSourceName string) (*PostgresStore, error) {
 	db, err := sql.Open("pgx", dataSourceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PostgreSQL database: %w", err)
 	}
 
-	// Ping to verify connection
 	err = db.PingContext(ctx)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
-
-	// Initialise the schema
-	schemas := []string{
-		`CREATE TABLE IF NOT EXISTS users (
-			id         TEXT PRIMARY KEY,
-			email      TEXT UNIQUE NOT NULL,
-			password   TEXT NOT NULL,
-			role       TEXT NOT NULL DEFAULT 'user',
-			status     TEXT NOT NULL DEFAULT 'active',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`CREATE TABLE IF NOT EXISTS user_profiles (
-			user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-			profile    JSONB NOT NULL DEFAULT '{}'::jsonb,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`CREATE TABLE IF NOT EXISTS conversations (
-			id                 TEXT PRIMARY KEY,
-			user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			business_id        TEXT NOT NULL,
-			business_name      TEXT,
-			title              TEXT NOT NULL,
-			created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			review_context     TEXT,
-			search_category    TEXT,
-			search_city        TEXT,
-			search_state       TEXT,
-			search_description TEXT
-		);`,
-		`CREATE TABLE IF NOT EXISTS messages (
-			id              TEXT PRIMARY KEY,
-			conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-			role            TEXT NOT NULL,
-			content         TEXT NOT NULL,
-			sequence        INTEGER NOT NULL,
-			created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sequence);`,
-	}
-
-	for _, s := range schemas {
-		if _, err := db.ExecContext(ctx, s); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("error creating schema in postgres: %w", err)
-		}
-	}
-
-	// Migrations
-	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';")
-	_, _ = db.ExecContext(ctx, "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';")
-	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-	_, _ = db.ExecContext(ctx, "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
 	return &PostgresStore{db: db}, nil
 }

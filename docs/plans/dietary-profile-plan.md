@@ -17,7 +17,7 @@ Enhance the personalization of the `fodmap-detector` by creating an onboarding a
 
 ### Phase 1: Database & Backend Data Models
 1.  **Update `auth.User` struct:** In `auth/user.go`, add a `DietaryProfile` field (type `json.RawMessage` or a defined struct) to the `User` model.
-2.  **Update PostgreSQL Schema:** Modify `auth/postgres_store.go` to include a `dietary_profile` JSONB column in the `users` table. Provide migration queries if necessary.
+2.  **Update PostgreSQL Schema:** Add a new migration file to `internal/db/migrations/` (e.g. `000002_add_dietary_profile.up.sql`) containing `ALTER TABLE users ADD COLUMN IF NOT EXISTS dietary_profile JSONB DEFAULT '{}'::jsonb`. Do not modify `auth/postgres_store.go` for schema changes — DDL lives in `internal/db/migrations/` and is applied by `golang-migrate`.
 3.  **Update Store Interfaces:** Ensure `auth.Store` methods (like `CreateUser`, `GetUser`, `UpdateUser`) handle the new `DietaryProfile` field.
 
 ### Phase 2: Onboarding Interview Handler

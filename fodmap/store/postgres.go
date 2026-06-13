@@ -35,9 +35,9 @@ var sqlFS embed.FS
 var sqlTemplates = template.Must(template.ParseFS(sqlFS, "sql/*.sql"))
 
 type sqlParams struct {
-	Where      string
-	LimitArg   string
-	OffsetArg  string
+	Where     string
+	LimitArg  string
+	OffsetArg string
 }
 
 // CatalogEntry is a single ingredient row from the canonical catalog.
@@ -88,15 +88,10 @@ func NewFodmapCatalogStore(dsn string) (*FodmapCatalogStore, error) {
 	return &FodmapCatalogStore{db: db}, nil
 }
 
-// EnsureSchema creates the catalog tables if they do not exist.
-func (s *FodmapCatalogStore) EnsureSchema(ctx context.Context) error {
-	schemaSQL, err := sqlFS.ReadFile("sql/schema.sql")
-	if err != nil {
-		return fmt.Errorf("reading schema: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, string(schemaSQL)); err != nil {
-		return fmt.Errorf("executing schema: %w", err)
-	}
+// EnsureSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the
+// CatalogStore interface.
+func (s *FodmapCatalogStore) EnsureSchema(_ context.Context) error {
 	return nil
 }
 
@@ -306,15 +301,15 @@ func (s *FodmapCatalogStore) Seed(ctx context.Context, items map[string]data.Fod
 
 // embedded SQL strings
 var (
-	createSQL   = mustRead("sql/create.sql")
-	getSQL      = mustRead("sql/get.sql")
-	updateSQL   = mustRead("sql/update.sql")
-	deleteSQL   = mustRead("sql/delete.sql")
-	listAllSQL  = mustRead("sql/list_all.sql")
-	statsSQL    = mustRead("sql/stats.sql")
-	seedSQL     = mustRead("sql/seed.sql")
-	getMetaSQL  = mustRead("sql/get_meta.sql")
-	setMetaSQL  = mustRead("sql/set_meta.sql")
+	createSQL  = mustRead("sql/create.sql")
+	getSQL     = mustRead("sql/get.sql")
+	updateSQL  = mustRead("sql/update.sql")
+	deleteSQL  = mustRead("sql/delete.sql")
+	listAllSQL = mustRead("sql/list_all.sql")
+	statsSQL   = mustRead("sql/stats.sql")
+	seedSQL    = mustRead("sql/seed.sql")
+	getMetaSQL = mustRead("sql/get_meta.sql")
+	setMetaSQL = mustRead("sql/set_meta.sql")
 )
 
 func mustRead(name string) string {
@@ -446,5 +441,3 @@ func ToMap(entries []CatalogEntry) map[string]data.FodmapEntry {
 	}
 	return m
 }
-
-

@@ -85,8 +85,6 @@ func runChat(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Starting chat (type 'exit' to quit)...\n")
 	}
 
-
-
 	tmplStr := chat.DefaultChatInstruction
 	if instructionPath != "" {
 		b, err := os.ReadFile(instructionPath)

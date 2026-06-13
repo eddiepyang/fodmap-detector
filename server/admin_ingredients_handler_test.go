@@ -73,8 +73,8 @@ func (n *noOpSearcher) GetReviews(ctx context.Context, query string, limit int, 
 func (n *noOpSearcher) SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error) {
 	return search.FodmapResult{}, 0, errors.New("not found")
 }
-func (n *noOpSearcher) EnsureSchema(ctx context.Context) error                 { return nil }
-func (n *noOpSearcher) EnsureFodmapSchema(ctx context.Context) error          { return nil }
+func (n *noOpSearcher) EnsureSchema(ctx context.Context) error       { return nil }
+func (n *noOpSearcher) EnsureFodmapSchema(ctx context.Context) error { return nil }
 func (n *noOpSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	return nil
 }

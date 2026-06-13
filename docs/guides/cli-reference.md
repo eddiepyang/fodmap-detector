@@ -60,5 +60,25 @@ GOOGLE_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state
 
 See [chat.md](chat.md) for design decisions and tradeoffs.
 
+##### Database Migrations
+
+```sh
+# Run all pending domain and river migrations
+go run . db migrate-up
+
+# Roll back one migration step
+go run . db migrate-down
+
+# Force-set migration version (for existing databases pre-golang-migrate)
+go run . db migrate-force 1
+
+# Print current migration version
+go run . db migrate-version
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--postgres-dsn` | `POSTGRES_DSN` env | PostgreSQL connection string (required) |
+
 ---
 

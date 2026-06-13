@@ -248,16 +248,24 @@ func (m *mockErrorStore) Close() error { return nil }
 func (m *mockErrorStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
 	return nil, errMock
 }
-func (m *mockErrorStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error { return errMock }
-func (m *mockErrorStore) UpdateUserStatus(ctx context.Context, userID string, status string) error { return errMock }
-func (m *mockErrorStore) SetUserRole(ctx context.Context, userID string, role string) error { return errMock }
+func (m *mockErrorStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
+	return errMock
+}
+func (m *mockErrorStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+	return errMock
+}
+func (m *mockErrorStore) SetUserRole(ctx context.Context, userID string, role string) error {
+	return errMock
+}
 func (m *mockErrorStore) ListUsers(ctx context.Context, offset, limit int, filter auth.UserFilter) ([]*auth.User, int, error) {
 	return nil, 0, errMock
 }
 func (m *mockErrorStore) GetUserDetail(ctx context.Context, userID string) (*auth.UserDetail, error) {
 	return nil, errMock
 }
-func (m *mockErrorStore) DeleteUserPermanently(ctx context.Context, userID string) error { return errMock }
+func (m *mockErrorStore) DeleteUserPermanently(ctx context.Context, userID string) error {
+	return errMock
+}
 func (m *mockErrorStore) ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error {
 	return errMock
 }

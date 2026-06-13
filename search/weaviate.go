@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	collectionName             = "YelpReview"
-	chunkCollectionName        = "YelpReviewChunk"
-	fodmapCollectionName       = "FodmapIngredient"
-	regulatoryCollectionName   = "RegulatoryUpdate"
-	topKReviews          = 5
+	collectionName           = "YelpReview"
+	chunkCollectionName      = "YelpReviewChunk"
+	fodmapCollectionName     = "FodmapIngredient"
+	regulatoryCollectionName = "RegulatoryUpdate"
+	topKReviews              = 5
 )
 
 // MenuItem is a single scraped menu item stored in the RestaurantMenu
@@ -1170,7 +1170,7 @@ func (c *Client) BatchUpsertRegulatory(ctx context.Context, items []RegulatoryUp
 				"substanceName": item.SubstanceName,
 				"changeType":    item.ChangeType,
 				"description":   item.Description,
-				"effectiveDate":  item.EffectiveDate,
+				"effectiveDate": item.EffectiveDate,
 			},
 		})
 	}

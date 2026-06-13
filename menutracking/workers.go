@@ -167,12 +167,12 @@ func (w *ScrapeWorker) Work(ctx context.Context, job *river.Job[ScrapeJobArgs]) 
 		vecItem := search.RegulatoryUpdate{
 			ID:            uuid.NewSHA1(uuid.NameSpaceURL, []byte(args.SourceID+update.CASNumber+update.SubstanceName)).String(),
 			SourceID:      args.SourceID,
-			SourceURL:      update.SourceURL,
-			CASNumber:      update.CASNumber,
-			SubstanceName:  update.SubstanceName,
-			ChangeType:     string(update.ChangeType),
-			Description:    update.Description,
-			EffectiveDate:  update.EffectiveDate,
+			SourceURL:     update.SourceURL,
+			CASNumber:     update.CASNumber,
+			SubstanceName: update.SubstanceName,
+			ChangeType:    string(update.ChangeType),
+			Description:   update.Description,
+			EffectiveDate: update.EffectiveDate,
 		}
 		if err := w.VectorSink.BatchUpsertRegulatory(ctx, []search.RegulatoryUpdate{vecItem}); err != nil {
 			slog.Warn("menutracking: vector sink upsert failed", "err", err)

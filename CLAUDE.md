@@ -82,7 +82,8 @@ Project-level rules for this codebase.
 
 - Never inline SQL queries in Go code. Put all SQL in `.sql` files under a `sql/` subdirectory of the package (e.g. `menutracking/store/sql/`, `search/sql/`) and embed them with `//go:embed sql/*.sql` as exported `var` constants (e.g. `var ListSourcesSQL string`).
 - Parameterized queries use `$1`, `$2`, etc. in the `.sql` files — never interpolate values with `fmt.Sprintf` or string concatenation.
-- DDL (CREATE TABLE, ALTER TABLE) goes in `schema.sql` and is executed at migration time, not embedded as query constants.
+- DDL (CREATE TABLE, ALTER TABLE) lives in versioned, timestamped files under `internal/db/migrations/`, embedded via `//go:embed` and applied by `golang-migrate`. Per-package `sql/` directories hold runtime queries only. Never add `CREATE TABLE` to Go source or to a constructor's startup path.
+- River's own tables (river_job, river_leader, etc.) are managed separately by `river migrate-up` and must NOT be included in `internal/db/migrations/`.
 
 ## Documentation & Scripts
 
@@ -92,5 +93,5 @@ Project-level rules for this codebase.
 ## AI Agent Rules
 
 - Always use a web search tool to confirm and fact-check findings or technical assumptions (e.g., model capabilities, version support, API limits) before finalizing recommendations or reporting back to the user. Do not rely solely on internal knowledge.
-- Always review implementation plans for risks, edge cases, and gaps after the first iteration to ensure robustness.
+- Always review implementation plans **and planning documents** for risks, edge cases, and gaps after the first iteration to ensure robustness. Every plan in `docs/plans/` must include a "Risks and Gaps" section before it is considered complete.
 - Prefer the LSP server (gopls) first for symbol-level questions — finding references, definitions, implementations, and call hierarchy. Use `grep`/text search only as a fallback when the LSP is unavailable or for non-symbol matches (comments, strings, file discovery). The LSP resolves actual symbol bindings; `grep` matches text and can false-match.

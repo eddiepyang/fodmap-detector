@@ -62,43 +62,10 @@ func NewPostgresClient(dsn string, e Embedder) (*PostgresClient, error) {
 	}, nil
 }
 
-// EnsureSchema creates the pgvector extension and the required tables for vectors.
-func (c *PostgresClient) EnsureSchema(ctx context.Context) error {
-	queries := []string{
-		`CREATE EXTENSION IF NOT EXISTS vector;`,
-		`CREATE TABLE IF NOT EXISTS reviews (
-			review_id TEXT PRIMARY KEY,
-			business_id TEXT,
-			business_name TEXT,
-			city TEXT,
-			state TEXT,
-			categories TEXT,
-			stars FLOAT,
-			text TEXT
-		);`,
-		// Migration for existing tables: remove old embedding column if it exists.
-		// Ignore errors if it doesn't exist. This handles the breaking schema change.
-		`ALTER TABLE reviews DROP COLUMN IF EXISTS embedding;`,
-		`CREATE TABLE IF NOT EXISTS review_chunks (
-			chunk_id SERIAL PRIMARY KEY,
-			review_id TEXT REFERENCES reviews(review_id) ON DELETE CASCADE,
-			chunk_text TEXT,
-			embedding vector(768)
-		);`,
-		// We use half-precision (if supported) or regular hnsw.
-		// `vector_cosine_ops` creates an index optimized for <=> cosine distance.
-		`CREATE INDEX IF NOT EXISTS idx_review_chunks_embedding ON review_chunks USING hnsw (embedding vector_cosine_ops);`,
-	}
-
-	for _, query := range queries {
-		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			// ALTER TABLE DROP COLUMN might fail if table didn't exist before CREATE TABLE ran,
-			// but we created it first.
-			if !strings.Contains(err.Error(), "does not exist") {
-				return fmt.Errorf("failed to execute schema query %q: %w", query, err)
-			}
-		}
-	}
+// EnsureSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the Searcher
+// interface.
+func (c *PostgresClient) EnsureSchema(_ context.Context) error {
 	return nil
 }
 
@@ -183,26 +150,10 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	return tx.Commit()
 }
 
-// EnsureFodmapSchema creates the table for FODMAP vectors.
-func (c *PostgresClient) EnsureFodmapSchema(ctx context.Context) error {
-	queries := []string{
-		`CREATE EXTENSION IF NOT EXISTS vector;`,
-		`CREATE TABLE IF NOT EXISTS fodmap_ingredients (
-			ingredient TEXT PRIMARY KEY,
-			level TEXT,
-			groups TEXT[],
-			notes TEXT,
-			substitutions TEXT[],
-			embedding vector(768)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_fodmap_embedding ON fodmap_ingredients USING hnsw (embedding vector_cosine_ops);`,
-	}
-
-	for _, query := range queries {
-		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			return fmt.Errorf("failed to execute fodmap schema query: %w", err)
-		}
-	}
+// EnsureFodmapSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the Searcher
+// interface.
+func (c *PostgresClient) EnsureFodmapSchema(_ context.Context) error {
 	return nil
 }
 

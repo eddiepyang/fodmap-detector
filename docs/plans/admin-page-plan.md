@@ -20,7 +20,7 @@ analytics queries, and a React frontend admin UI with data visualizations.
 | Frontend layout | Shared admin sidebar over three pages: `/admin` (Dashboard), `/admin/users`, `/admin/conversations` |
 | Charts | The only chart the mock draws is a **conversation-activity** bar chart (7/14/30-day toggles). A small inline SVG bar chart is sufficient; Recharts is **not** installed — do not add it. |
 | User-facing role management | Out of scope — not present in the mock |
-| Delete model | Admin delete = **hard** delete (cascade via existing FKs). Note this differs from user self-delete (`deleteUserHandler`), which is a **soft** delete (`status="deleted"`). Both are intentional. No `deleted` analytics bucket. **CASCADE confirmed present** — `user_profiles` (`postgres_store.go:42`), `conversations` (`:49`), and `messages`→conversations all declare `ON DELETE CASCADE`, so `DELETE FROM users` cascades cleanly; no migration change needed. |
+| Delete model | Admin delete = **hard** delete (cascade via existing FKs). Note this differs from user self-delete (`deleteUserHandler`), which is a **soft** delete (`status="deleted"`). Both are intentional. No `deleted` analytics bucket. **CASCADE confirmed present** — `user_profiles`, `conversations`, and `messages`→conversations all declare `ON DELETE CASCADE` in `internal/db/migrations/`, so `DELETE FROM users` cascades cleanly; no migration change needed. |
 | Admin handler tests | The **in-memory mock store implements both `ChatStore` and `AdminStore`** so handler success paths are testable without a live Postgres. |
 | Password reset | No email infrastructure — the handler **generates a random temporary password** server-side, bcrypt-hashes it, stores the hash via `ResetUserPassword`, and returns the plaintext to the admin in the JSON response. The admin communicates it to the user out-of-band. UI toast copy updated to reflect this (not "link sent"). |
 | Top FODMAP Triggers / Recent Sign-ups | Recent Sign-ups: reuse `ListUsers` ordered by `created_at DESC`. Top Triggers needs message-content analysis — **deferred** (see Open Questions); dashboard ships without it. |
@@ -131,7 +131,7 @@ Notes:
 #### [MODIFY] `auth/postgres_store.go` — implements both `ChatStore` and `AdminStore`
 
 - Add DB migration: `ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'`
-  (the `status` column migration already exists — see `auth/postgres_store.go:80`)
+  (the `status` column migration already exists in `internal/db/migrations/`)
 - Update `CreateUser` to persist role; update `GetUserByEmail` / `GetUserByID` to scan role
 - `UpdateUserStatus` already exists — no change needed for suspend/unban
 - Implement the `AdminStore` methods with PostgreSQL queries (all parameterized — never interpolate filter values):

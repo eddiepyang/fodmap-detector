@@ -79,7 +79,13 @@ You must run Weaviate and Ollama to enable semantic search.
    docker compose up -d
    ```
 
-3. **Or use `start.sh`** to launch Weaviate and the Go server in one command (Ensure Ollama is running first):
+3. **Run database migrations** (creates all domain tables):
+   ```sh
+   export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+   go run . db migrate-up
+   ```
+
+4. **Or use `start.sh`** to launch Weaviate, run migrations, and start the Go server in one command (Ensure Ollama is running first):
    ```sh
    ./start.sh
    ```

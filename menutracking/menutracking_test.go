@@ -75,7 +75,7 @@ func TestExtractWithAgent_ParseTextResponse(t *testing.T) {
 		CASNumber:     "50-00-0",
 		ChangeType:    ChangeTypeAddition,
 		Description:   "Added to restricted list",
-		SourceURL:      "https://example.com",
+		SourceURL:     "https://example.com",
 	}
 	updateJSON, _ := json.Marshal(update)
 
@@ -108,7 +108,7 @@ func TestExtractWithAgent_ParseToolCall(t *testing.T) {
 		CASNumber:     "71-43-2",
 		ChangeType:    ChangeTypeRestriction,
 		Description:   "New exposure limit",
-		SourceURL:      "https://example.com/benzene",
+		SourceURL:     "https://example.com/benzene",
 	}
 	updateBytes, _ := json.Marshal(update)
 	updateMap := map[string]any{}
@@ -303,7 +303,7 @@ func TestSource_FieldsDefaults(t *testing.T) {
 		URL:          "https://epa.gov/regulations",
 		Domain:       "epa.gov",
 		Tier:         "gov",
-		CronSchedule: "@daily",
+		CronSchedule: "@weekly",
 		MaxTokens:    32000,
 	}
 	if src.ID != "" {
