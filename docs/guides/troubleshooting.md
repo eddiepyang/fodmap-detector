@@ -136,3 +136,42 @@ We updated the `chat` package to safely encode the `ThoughtSignature` into a **b
 
 If you are developing custom clients or wrappers that manage Gemini's reasoning history, ensure you serialize binary thought signatures as base64 strings rather than converting them directly to raw UTF-8 strings.
 
+---
+
+## 5. Admin & User Account Diagnostics (PostgreSQL)
+
+During testing, you may encounter issues registering admin/user accounts (e.g. duplicate key errors) or need to manually check user roles.
+
+### Diagnosing Duplicate Registrations
+If registration fails with the following error:
+```
+failed to create user: ERROR: duplicate key value violates unique constraint "users_email_key" (SQLSTATE 23505)
+```
+The user is already registered in the PostgreSQL database.
+
+### Direct Database Queries via Docker
+Since PostgreSQL runs inside a Docker container (`fodmap-detector-postgres-1`), you can run `psql` queries directly from your shell:
+
+#### 1. Search for a Specific User Record
+```bash
+docker exec -it fodmap-detector-postgres-1 psql -U fodmap -d fodmap -c "SELECT id, email, role, status, created_at FROM users WHERE email = 'admin@example.com';"
+```
+
+#### 2. List All Registered Users
+```bash
+docker exec -it fodmap-detector-postgres-1 psql -U fodmap -d fodmap -c "SELECT id, email, role, status FROM users;"
+```
+
+#### 3. Delete/Reset an Account (for Fresh Registration)
+To delete a user account so you can register it fresh through the UI:
+```bash
+docker exec -it fodmap-detector-postgres-1 psql -U fodmap -d fodmap -c "DELETE FROM users WHERE email = 'admin@example.com';"
+```
+
+#### 4. Manually Promote a User to Admin
+If you need to manually grant a registered user admin privileges:
+```bash
+docker exec -it fodmap-detector-postgres-1 psql -U fodmap -d fodmap -c "UPDATE users SET role = 'admin' WHERE email = 'user@example.com';"
+```
+
+
