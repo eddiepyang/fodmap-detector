@@ -2,8 +2,8 @@ package auth
 
 import "context"
 
-// Store defines the interface for all persistent data (users, conversations, etc.).
-type Store interface {
+// ChatStore defines the interface for all persistent data (users, conversations, etc.).
+type ChatStore interface {
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByEmail(ctx context.Context, email string) (*User, error)

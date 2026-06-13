@@ -14,7 +14,7 @@ make run                          # starts the server on :8081
 1. Download Go module dependencies
 2. Install [golangci-lint](https://golangci-lint.run/) (via Homebrew on macOS, install script on Linux)
 3. Install [Ollama](https://ollama.com/) if not present and pull the `nomic-embed-text` embedding model
-4. Start Weaviate via Docker Compose
+4. Start Weaviate and PostgreSQL via Docker Compose
 
 ---
 
@@ -94,6 +94,7 @@ Pinecone is a managed vector database. Use this if you want to offload storage t
 2. **Run with Pinecone Flags:**
    ```sh
    go run . serve \
+     --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" \
      --pinecone-api-key YOUR_KEY \
      --pinecone-index-host https://YOUR_INDEX.svc.pinecone.io \
      --ollama-url http://localhost:11434 \
@@ -116,7 +117,7 @@ Use PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extensi
    ```sh
    go run . serve \
      --postgres-search \
-     --postgres-dsn "postgres://user:pass@localhost:5432/fodmap?sslmode=disable" \
+     --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" \
      --ollama-url http://localhost:11434 \
      --ollama-model nomic-embed-text
    ```

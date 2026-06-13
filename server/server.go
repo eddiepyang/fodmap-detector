@@ -49,8 +49,9 @@ type Server struct {
 	chatMaxConcurrent  int
 	corsAllowedOrigins []string
 	genaiClient        *genai.Client
-	userStore          auth.Store
+	userStore          auth.AdminStore
 	jwtSecret          string
+	adminEmail         string
 	menutrackingAdmin    http.Handler // nil when menutracking is not configured
 }
 
@@ -77,8 +78,9 @@ type Config struct {
 	ChatRateBurst      int     // burst allowance (default: 5)
 	ChatMaxConcurrent  int     // max simultaneous chat requests (default: 10)
 	CORSAllowedOrigins []string
-	UserStore          auth.Store
+	UserStore          auth.AdminStore
 	JWTSecret          string
+	AdminEmail         string
 	MenutrackingAdmin   http.Handler // nil when menutracking is not configured
 }
 
@@ -89,6 +91,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		corsAllowedOrigins: cfg.CORSAllowedOrigins,
 		userStore:          cfg.UserStore,
 		jwtSecret:          cfg.JWTSecret,
+		adminEmail:         cfg.AdminEmail,
 		menutrackingAdmin:    cfg.MenutrackingAdmin,
 	}
 
@@ -231,8 +234,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/register", s.registerHandler)
 	mux.HandleFunc("POST /api/v1/auth/login", s.loginHandler)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refreshHandler)
+	mux.Handle("GET /api/v1/auth/me", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.meHandler)))
 	mux.Handle("POST /api/v1/auth/logout", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.logoutHandler)))
 	mux.Handle("DELETE /api/v1/auth/user", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.deleteUserHandler)))
+
+	// Admin endpoints (JWT -> adminRequired middleware -> handler)
+	adminMid := func(h http.HandlerFunc) http.Handler {
+		return chain(http.HandlerFunc(h), jwtAuth(s.jwtSecret), s.adminRequired)
+	}
+	mux.Handle("GET /api/v1/admin/users", adminMid(s.adminListUsersHandler))
+	mux.Handle("GET /api/v1/admin/users/{id}", adminMid(s.adminGetUserHandler))
+	mux.Handle("PUT /api/v1/admin/users/{id}/status", adminMid(s.adminUpdateUserStatusHandler))
+	mux.Handle("DELETE /api/v1/admin/users/{id}", adminMid(s.adminDeleteUserHandler))
+	mux.Handle("POST /api/v1/admin/users/{id}/reset-password", adminMid(s.adminResetPasswordHandler))
+	mux.Handle("GET /api/v1/admin/conversations", adminMid(s.adminListConversationsHandler))
+	mux.Handle("GET /api/v1/admin/conversations/{id}", adminMid(s.adminGetConversationHandler))
+	mux.Handle("GET /api/v1/admin/analytics/overview", adminMid(s.adminAnalyticsOverviewHandler))
+	mux.Handle("GET /api/v1/admin/analytics/activity", adminMid(s.adminConversationActivityHandler))
 
 	// Conversation handlers (protected by JWT)
 	mux.Handle("GET /api/v1/conversations", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.listConversationsHandler)))

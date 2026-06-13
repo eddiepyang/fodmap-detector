@@ -1,6 +1,6 @@
 # FODMAP Detector
 
-A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentable Oligosaccharides, Disaccharides, Monosaccharides, and Polyols) content in food items. Designed to help people with digestive sensitivities by analyzing restaurant reviews for dish ingredients and flagging FODMAP groups.
+A full-stack application (Go HTTP API backend and React SPA frontend) featuring an AI-powered chat assistant that analyzes restaurant menus and Yelp reviews to identify FODMAP (Fermentable Oligosaccharides, Disaccharides, Monosaccharides, and Polyols) content and food allergens. Designed to help individuals with digestive sensitivities make safe dining choices using personalized dietary profiles, hybrid vector-grounded search, and a comprehensive administrative RBAC console.
 
 ---
 
@@ -14,16 +14,16 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|-----------|
-| Language | Go 1.26+ |
-| CLI | [Cobra](https://github.com/spf13/cobra) |
-| Input | TAR archive of JSON lines (Yelp dataset) |
-| Concurrency | Go channels + goroutines |
-| Vector search | [Weaviate](https://weaviate.io) (local), [Pinecone](https://pinecone.io) (cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
-| LLM (chat) | Google Gemini (`gemini-3-flash-preview`) |
-| LLM (scraping) | Any OpenAI-compatible endpoint (Ollama, vLLM, OpenAI, Gemini) |
-| Embeddings | Ollama (`nomic-embed-text`) |
+| Component      | Technology                                                                                                                                       |
+| ----------------| --------------------------------------------------------------------------------------------------------------------------------------------------|
+| Language       | Go 1.26+                                                                                                                                         |
+| CLI            | [Cobra](https://github.com/spf13/cobra)                                                                                                          |
+| Input          | TAR archive of JSON lines (Yelp dataset)                                                                                                         |
+| Concurrency    | Go channels + goroutines                                                                                                                         |
+| Vector search  | [Weaviate](https://weaviate.io) (local), [Pinecone](https://pinecone.io) (cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
+| LLM (chat)     | Google Gemini (`gemini-3-flash-preview`)                                                                                                         |
+| LLM (scraping) | Any OpenAI-compatible endpoint (Ollama, vLLM, OpenAI, Gemini)                                                                                    |
+| Embeddings     | Ollama (`nomic-embed-text`)                                                                                                                      |
 
 ---
 
@@ -49,6 +49,7 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # Search & FODMAP HTTP handlers
 │   ├── auth_handler.go      # Auth endpoints (register, login, refresh, delete)
+│   ├── admin_handler.go     # Admin Console RBAC endpoints
 │   ├── chat_handler.go      # Chat streaming handler (SSE)
 │   ├── conversation_handler.go       # Conversation CRUD endpoints
 │   ├── conversation_export_handler.go # Conversation export (JSON/Markdown)
@@ -78,19 +79,41 @@ A Go CLI tool that processes Yelp dataset reviews to identify FODMAP (Fermentabl
 │   └── vectorizer.go        # HTTP vectorizer proxy client
 │
 ├── auth/
-│   ├── store.go             # Unified Store interface
-│   ├── sqlite_store.go      # SQLite implementation
+│   ├── store.go             # Unified ChatStore interface
+│   ├── admin.go             # AdminStore interface (extends ChatStore)
 │   ├── postgres_store.go    # PostgreSQL implementation
 │   ├── conversation.go      # Conversation & Message models
 │   ├── jwt.go               # Token generation/validation
-│   └── user.go              # User model
+│   ├── user.go              # User model
+│   └── sql/                 # Embedded SQL migration & query files
 │
 ├── docs/
 │   ├── guides/                  # Playbooks, API/CLI references, system design
 │   └── plans/                   # Feature implementation plans and roadmaps
 │
-└── docker-compose.yaml      # Vector database configuration (Weaviate)
+└── docker-compose.yaml      # Vector database (Weaviate) + relational DB (PostgreSQL) configuration
 ```
+
+---
+
+### Relational Database Backend
+> [!IMPORTANT]
+> **PostgreSQL is now the mandatory database backend.** SQLite support has been completely decommissioned.
+> To run the server, `POSTGRES_DSN` is required (or starts PostgreSQL in Docker via `make start`). Relational schemas, migrations, and queries are embedded using Go's `//go:embed` feature.
+
+### Role-Based Access Control (RBAC) & Admin Console
+- **RBAC Model**: Users are mapped to `'user'` or `'admin'` roles. The role is claim-based in JWT for client routing, but re-verified against the database on every admin API request for server security.
+- **Admin CLI Flag**: The `--admin-email` (or `ADMIN_EMAIL` env var) flag promotes a specific registered user to the `admin` role on startup.
+- **API Endpoints (`/api/v1/admin/*`)**:
+  - `GET /api/v1/admin/users` - Lists active/suspended users.
+  - `GET /api/v1/admin/users/{id}` - Returns user details, message counts, and saved dietary profile.
+  - `PUT /api/v1/admin/users/{id}/status` - Toggles user account status (`active` / `suspended`).
+  - `DELETE /api/v1/admin/users/{id}` - Performs permanent cascading delete of user's profile, conversations, and messages.
+  - `POST /api/v1/admin/users/{id}/reset-password` - Resets password to a secure temporary bcrypt hash.
+  - `GET /api/v1/admin/conversations` - Lists user chat sessions.
+  - `GET /api/v1/admin/conversations/{id}` - Reads complete transcript messages.
+  - `GET /api/v1/admin/analytics/overview` - Fetches total, active, and suspended user counts and signups.
+  - `GET /api/v1/admin/analytics/activity` - Fetches daily conversation volume.
 
 ---
 
@@ -112,6 +135,7 @@ We have split our documentation into separate guides and plans for easier readin
 ### Plans & Roadmaps
 
 **Completed:**
+- [Admin System & RBAC Console Plan](docs/plans/admin-page-plan.md)
 - [Scraper Pipeline Plan](docs/plans/scraper-pipeline-plan.md)
 - [Dietary Profile Plan](docs/plans/dietary-profile-plan.md)
 - [Indexing Improvements](docs/plans/indexing-improvements.md)
@@ -128,3 +152,4 @@ We have split our documentation into separate guides and plans for easier readin
 
 **Archived:**
 - [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md) — replaced by pure-Go OpenAI-compatible extractor
+

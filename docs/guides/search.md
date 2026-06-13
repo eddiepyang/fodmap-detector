@@ -9,9 +9,9 @@ well their reviews match the query — optionally filtered by category, city, an
 ## Architecture Overview
 
 ```
-                          ┌─────────────────────────────┐
-  GET /search/...    ───► │     Go HTTP Server           │
-                          │  searchHandler               │
+                                      ┌─────────────────────────────┐
+  GET /api/v1/search/businesses/... ─►│     Go HTTP Server           │
+                                      │  getBusinessesHandler       │
                           └──────────┬──────────────────┘
                                      │
                   ┌──────────────────┴──────────────────┐
@@ -37,9 +37,9 @@ well their reviews match the query — optionally filtered by category, city, an
 5. Both the vector and metadata are stored in Weaviate
 
 **Data flow at query time:**
-1. `GET /search/<description>` arrives at the server
-2. Server calls Weaviate `nearText` with the query string (Weaviate embeds the query too)
-3. Top matching reviews are returned with `certainty` scores
+1. `GET /api/v1/search/businesses/{query...}` arrives at the server
+2. Server calls Weaviate `nearText` (or pgvector cosine similarity) with the query string (embedded via Ollama or Weaviate)
+3. Top matching reviews are returned with search scores
 4. Server aggregates scores by `businessId` using Top-K average (see below)
 5. Top `limit` restaurant IDs are returned, ranked by aggregated score
 
@@ -74,7 +74,7 @@ Flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `100` | Reviews per Weaviate batch upsert |
+| `--batch-size` | `512` | Reviews per Weaviate batch upsert |
 
 The command is **idempotent** — each review is assigned a deterministic UUID from its `review_id`,
 so re-running `index` updates existing records rather than creating duplicates.
@@ -94,14 +94,14 @@ INFO indexing complete total_reviews=6990280
 ### Endpoint
 
 ```
-GET /search/<description>[?category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
+GET /api/v1/search/businesses/{query...}[?category=<cat>][&city=<city>][&state=<state>][&limit=<n>]
 ```
 
 ### Parameters
 
 | Parameter | Where | Required | Default | Description |
 |---|---|---|---|---|
-| `<description>` | path | Yes | — | Natural-language description of the restaurant |
+| `{query...}` | path | Yes | — | Natural-language query string describing the restaurant |
 | `category` | query | No | — | Substring match against Yelp categories (e.g. `Italian`, `Tacos`) |
 | `city` | query | No | — | Exact city name match (e.g. `Phoenix`) |
 | `state` | query | No | — | Exact state abbreviation match (e.g. `AZ`) |
@@ -119,22 +119,22 @@ GET /search/<description>[?category=<cat>][&city=<city>][&state=<state>][&limit=
 
 ```bash
 # Basic semantic search
-curl "localhost:8080/search/cozy Italian with great pasta"
+curl "localhost:8081/api/v1/search/businesses/cozy%20Italian%20with%20great%20pasta"
 
 # Filter by category and location
-curl "localhost:8080/search/great tacos?category=Mexican&city=Phoenix&state=AZ&limit=5"
+curl "localhost:8081/api/v1/search/businesses/great%20tacos?category=Mexican&city=Phoenix&state=AZ&limit=5"
 
 # Find romantic dinner spots in Las Vegas
-curl "localhost:8080/search/romantic dinner candlelit?city=Las Vegas&state=NV"
+curl "localhost:8081/api/v1/search/businesses/romantic%20dinner%20candlelit?city=Las%20Vegas&state=NV"
 ```
 
 ### Server startup with search enabled
 
 ```bash
-go run . serve --weaviate localhost:8090
+POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" go run . serve --weaviate localhost:8090
 ```
 
-If `--weaviate` is omitted, the server starts normally but `GET /search/<query>` returns `503 Service Unavailable`.
+If `--weaviate` is omitted, the server starts normally but `GET /api/v1/search/businesses/...` returns `503 Service Unavailable`.
 
 ---
 
@@ -155,7 +155,7 @@ If `--weaviate` is omitted, the server starts normally but `GET /search/<query>`
 | Flag | Default | Description |
 |---|---|---|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--batch-size` | `100` | Reviews per batch |
+| `--batch-size` | `512` | Reviews per batch |
 
 ---
 

@@ -57,13 +57,12 @@ docker compose up -d
 # Wait for Postgres to become ready (query the host port directly)
 echo "    Waiting for Postgres to be ready..."
 for i in $(seq 1 30); do
-    if pg_isready -h 127.0.0.1 -p 5432 -U fodmap > /dev/null 2>&1; then
+    if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
         echo "    Postgres is ready!"
         break
     fi
     if [ "$i" -eq 30 ]; then
         echo "    ERROR: Postgres did not become ready in time."
-        echo "    Hint: install postgres-client for pg_isready, or check that docker compose is running."
         exit 1
     fi
     sleep 1
@@ -90,7 +89,7 @@ POSTGRES_DSN="$POSTGRES_DSN" go run . menutracking migrate-up || echo "    Warni
 
 # 4. Start the Go server in the background
 echo "[4/4] Starting Go server on port 8081..."
-ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" STORE_TYPE=postgres go run . serve &
+ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" ADMIN_EMAIL="admin@example.com" go run . serve &
 SERVER_PID=$!
 
 echo ""
