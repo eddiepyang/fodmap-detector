@@ -83,6 +83,82 @@ func TestGetArchive_Success(t *testing.T) {
 
 // ---- GetReviewsByBusiness ----
 
+func TestUnmarshalReview(t *testing.T) {
+	b, _ := json.Marshal(schemas.Review{ReviewID: "r1", BusinessID: "b1", Stars: 4, Text: "tasty"})
+	got, err := UnmarshalReview(nil, b)
+	if err != nil {
+		t.Fatalf("UnmarshalReview: %v", err)
+	}
+	if got.ReviewID != "r1" || got.Text != "tasty" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestUnmarshalReview_InvalidJSON(t *testing.T) {
+	_, err := UnmarshalReview(nil, []byte("not-json"))
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+// ---- ListDir ----
+
+func TestListDir(t *testing.T) {
+	// ListDir hard-codes ../../../data/; when tests run from the package
+	// directory /home/ryeyoo/projects/fodmap-detector/data, that resolves to
+	// /home/ryeyoo/projects/data. Create the required hierarchy and chdir
+	// accordingly.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	root := t.TempDir()
+	// We need ../../../data under root to point at root/data.
+	pkg := filepath.Join(root, "projects", "fodmap-detector", "data")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(root, "data")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	if err := os.Chdir(pkg); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := ListDir(); err != nil {
+		t.Fatalf("ListDir: %v", err)
+	}
+}
+
+func TestListDir_Error(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	root := t.TempDir()
+	pkg := filepath.Join(root, "projects", "fodmap-detector", "data")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chdir(pkg); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	// No data directory exists, so the read should fail.
+	if err := ListDir(); err == nil {
+		t.Error("expected error when data directory does not exist")
+	}
+}
+
 func TestGetReviewsByBusiness_Success(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
