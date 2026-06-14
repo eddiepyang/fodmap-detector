@@ -87,6 +87,12 @@ var FodmapDB = map[string]FodmapEntry{
 		Notes:         "High in both fructans and inulin",
 		Substitutions: []string{"arugula", "spinach", "kale"},
 	},
+	"artichoke": {
+		Level:         "high",
+		Groups:        []string{"fructans"},
+		Notes:         "Globe artichoke is among the vegetables Monash lists as particularly rich in fructans",
+		Substitutions: []string{"bamboo shoots", "green beans", "zucchini"},
+	},
 
 	// GOS (galacto-oligosaccharides)
 	"chickpeas": {
@@ -142,6 +148,12 @@ var FodmapDB = map[string]FodmapEntry{
 		Groups:        []string{"GOS"},
 		Notes:         "Made from whole soybeans which are high GOS; soy milk from soy protein isolate may be lower",
 		Substitutions: []string{"almond milk", "rice milk", "lactose-free milk", "oat milk (small amount)"},
+	},
+	"silken tofu": {
+		Level:         "high",
+		Groups:        []string{"GOS", "fructans"},
+		Notes:         "Monash: high FODMAP at a 170g serve from oligos (GOS and fructans); unlike firm tofu it is not pressed, so it retains FODMAPs",
+		Substitutions: []string{"firm tofu", "tempeh"},
 	},
 
 	// Lactose
@@ -298,8 +310,8 @@ var FodmapDB = map[string]FodmapEntry{
 	// Polyols (sorbitol)
 	"avocado": {
 		Level:         "high",
-		Groups:        []string{"sorbitol"},
-		Notes:         "60g is low FODMAP; larger servings are high in sorbitol",
+		Groups:        []string{"perseitol"},
+		Notes:         "60g is low FODMAP; larger servings are high in perseitol, a polyol Monash confirmed (not sorbitol) is unique to avocado",
 		Substitutions: []string{"avocado (60g or less)", "hummus without garlic (small amount)", "olive oil spread"},
 	},
 	"lychee": {
@@ -427,10 +439,9 @@ var FodmapDB = map[string]FodmapEntry{
 		Substitutions: []string{"lactose-free half-and-half", "coconut cream (small amount)"},
 	},
 	"blueberry": {
-		Level:         "moderate",
-		Groups:        []string{"excess fructose"},
-		Notes:         "Moderate at 1/4 cup; larger servings are high; 1 cup is high FODMAP",
-		Substitutions: []string{"strawberry", "raspberry", "kiwi"},
+		Level:  "low",
+		Groups: []string{},
+		Notes:  "Listed low FODMAP by Monash; larger servings may be moderate — check the app for serve size",
 	},
 	"grapefruit": {
 		Level:         "moderate",
