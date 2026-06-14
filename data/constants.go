@@ -15,3 +15,18 @@ const (
     ]
 }`
 )
+
+// ValidFodmapLevels is the set of allowed FODMAP classification levels.
+// It is kept in lowercase to match the data layer.
+var ValidFodmapLevels = []string{"high", "moderate", "low"}
+
+// ValidFodmapGroups is the set of allowed FODMAP groups. Ingredients may
+// belong to one or more of these groups.
+var ValidFodmapGroups = []string{
+	"fructans",
+	"GOS",
+	"lactose",
+	"excess fructose",
+	"sorbitol",
+	"mannitol",
+}

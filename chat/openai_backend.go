@@ -94,7 +94,7 @@ func (b *OpenAICompatBackend) Generate(ctx context.Context, opts GenerateOpts) (
 		if role == "model" {
 			role = "assistant"
 		}
-		
+
 		if len(h.FunctionResults) > 0 {
 			for _, fr := range h.FunctionResults {
 				resBytes, _ := json.Marshal(fr.Result)

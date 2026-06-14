@@ -82,10 +82,10 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-# 3. Run menutracking migrations if POSTGRES_DSN is set
+# 3. Run database migrations (domain tables + river schema)
 POSTGRES_DSN="${POSTGRES_DSN:-postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable}"
-echo "[3/4] Running menutracking migrations..."
-POSTGRES_DSN="$POSTGRES_DSN" go run . menutracking migrate-up || echo "    Warning: menutracking migrations failed (may already be up)"
+echo "[3/4] Running database migrations..."
+POSTGRES_DSN="$POSTGRES_DSN" go run . db migrate-up
 
 # 4. Start the Go server in the background
 echo "[4/4] Starting Go server on port 8081..."

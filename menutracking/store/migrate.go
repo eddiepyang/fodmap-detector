@@ -1,28 +1,10 @@
-// Package store manages the database schema and SQL queries for the menutracking
-// domain tables. River's own tables (river_job, river_leader, etc.) are managed
-// by "river migrate-up" and live in the 'river' schema, not here.
+// Package store manages the database SQL queries for the menutracking
+// domain tables. Schema creation is handled by the centralised migration
+// runner (internal/db); River's own tables (river_job, river_leader, etc.)
+// are managed separately by "river migrate-up".
 package store
 
-import (
-	"context"
-	_ "embed"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-//go:embed schema.sql
-var schemaSQL string
-
-// MigrateUp creates the menutracking domain tables (sources, extraction_rules,
-// regulatory_updates, menutracking_dead_letter) in the public schema. It is
-// idempotent — all statements use IF NOT EXISTS.
-func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, schemaSQL)
-	if err != nil {
-		return err
-	}
-	return nil
-}
+import _ "embed"
 
 //go:embed sql/list_sources.sql
 var ListSourcesSQL string

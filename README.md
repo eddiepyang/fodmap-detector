@@ -85,7 +85,12 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 │   ├── conversation.go      # Conversation & Message models
 │   ├── jwt.go               # Token generation/validation
 │   ├── user.go              # User model
-│   └── sql/                 # Embedded SQL migration & query files
+│   └── sql/                 # Embedded SQL query files
+│
+├── internal/
+│   └── db/
+│       ├── migrate.go       # Centralised migration runner (golang-migrate)
+│       └── migrations/      # Versioned .sql migration files
 │
 ├── docs/
 │   ├── guides/                  # Playbooks, API/CLI references, system design
@@ -99,7 +104,7 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 ### Relational Database Backend
 > [!IMPORTANT]
 > **PostgreSQL is now the mandatory database backend.** SQLite support has been completely decommissioned.
-> To run the server, `POSTGRES_DSN` is required (or starts PostgreSQL in Docker via `make start`). Relational schemas, migrations, and queries are embedded using Go's `//go:embed` feature.
+> To run the server, `POSTGRES_DSN` is required (or starts PostgreSQL in Docker via `make start`). Schema migrations are managed by `golang-migrate` and embedded into the binary via `//go:embed`. Run `go run . db migrate-up` before starting the server (or use `./start.sh` which does this automatically).
 
 ### Role-Based Access Control (RBAC) & Admin Console
 - **RBAC Model**: Users are mapped to `'user'` or `'admin'` roles. The role is claim-based in JWT for client routing, but re-verified against the database on every admin API request for server security.
@@ -126,6 +131,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [API Reference](docs/guides/api-reference.md) - HTTP endpoints, auth, and search.
 - [CLI Reference](docs/guides/cli-reference.md) - Commands for indexing, scraping, and chatting.
 - [Data Model & Pipeline](docs/guides/data-model.md) - Core data structures and inputs.
+- [Database Schema](docs/guides/database-schema.md) - Postgres table reference and migration guide.
 - [Testing](docs/guides/testing.md) - How to run tests and coverage targets.
 - [Search Design](docs/guides/search.md) - Search service design decisions.
 - [Chat Design](docs/guides/chat.md) - Chat agent design decisions.
@@ -142,6 +148,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [Indexing Improvements](docs/plans/indexing-improvements.md)
 - [Deleted User Plan](docs/plans/handle-deleted-user-plan.md)
 - [Frontend Plan](docs/plans/frontend-plan.md)
+- [SQL File Management Plan](docs/plans/sql-file-management-plan.md)
 
 **In Progress:**
 - [Feature Recommendations](docs/plans/feature-recommendations.md) — partially implemented

@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	collectionName             = "YelpReview"
-	chunkCollectionName        = "YelpReviewChunk"
-	fodmapCollectionName       = "FodmapIngredient"
-	regulatoryCollectionName   = "RegulatoryUpdate"
-	topKReviews          = 5
+	collectionName           = "YelpReview"
+	chunkCollectionName      = "YelpReviewChunk"
+	fodmapCollectionName     = "FodmapIngredient"
+	regulatoryCollectionName = "RegulatoryUpdate"
+	topKReviews              = 5
 )
 
 // MenuItem is a single scraped menu item stored in the RestaurantMenu
@@ -813,6 +813,51 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 	return nil
 }
 
+// UpsertFodmapItem embeds and upserts a single ingredient into Weaviate.
+func (c *Client) UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error {
+	if c.embedder == nil {
+		return errors.New("embedder is not configured")
+	}
+	vec, err := c.embedder.EmbedSingle(ctx, "search_document: "+name)
+	if err != nil {
+		return fmt.Errorf("embedding fodmap %q: %w", name, err)
+	}
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("fodmap_"+name)).String()
+	_, err = c.wv.Data().Creator().
+		WithClassName(fodmapCollectionName).
+		WithID(id).
+		WithVector(models.C11yVector(vec)).
+		WithProperties(map[string]any{
+			"ingredient":    name,
+			"level":         entry.Level,
+			"groups":        entry.Groups,
+			"notes":         entry.Notes,
+			"substitutions": entry.Substitutions,
+		}).Do(ctx)
+	if err != nil {
+		return fmt.Errorf("upsert fodmap item %q: %w", name, err)
+	}
+	return nil
+}
+
+// DeleteFodmapItem removes a single ingredient from Weaviate. It uses the
+// deterministic ID convention and does not treat "not found" as an error.
+func (c *Client) DeleteFodmapItem(ctx context.Context, name string) error {
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("fodmap_"+name)).String()
+	err := c.wv.Data().Deleter().
+		WithClassName(fodmapCollectionName).
+		WithID(id).
+		Do(ctx)
+	if err != nil {
+		var wErr *fault.WeaviateClientError
+		if errors.As(err, &wErr) && wErr.DerivedFromError != nil {
+			return fmt.Errorf("delete fodmap item %q: %w", name, wErr.DerivedFromError)
+		}
+		return fmt.Errorf("delete fodmap item %q: %w", name, err)
+	}
+	return nil
+}
+
 // SearchFodmap performs a nearVector query on the FodmapIngredient collection.
 func (c *Client) SearchFodmap(ctx context.Context, ingredient string) (FodmapResult, float64, error) {
 	if c.embedder == nil {
@@ -1125,7 +1170,7 @@ func (c *Client) BatchUpsertRegulatory(ctx context.Context, items []RegulatoryUp
 				"substanceName": item.SubstanceName,
 				"changeType":    item.ChangeType,
 				"description":   item.Description,
-				"effectiveDate":  item.EffectiveDate,
+				"effectiveDate": item.EffectiveDate,
 			},
 		})
 	}

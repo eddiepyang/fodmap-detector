@@ -12,13 +12,11 @@ import (
 
 	"fodmap/chat"
 	"fodmap/menutracking"
-	"fodmap/menutracking/store"
 	"fodmap/scraper"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -27,12 +25,6 @@ import (
 var menutrackingCmd = &cobra.Command{
 	Use:   "menutracking",
 	Short: "Regulatory tracking pipeline commands.",
-}
-
-var menutrackingMigrateCmd = &cobra.Command{
-	Use:   "migrate-up",
-	Short: "Run menutracking database migrations (domain tables + river schema).",
-	RunE:  runMenutrackingMigrate,
 }
 
 var menutrackingAddSourceCmd = &cobra.Command{
@@ -44,50 +36,12 @@ var menutrackingAddSourceCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(menutrackingCmd)
-	menutrackingCmd.AddCommand(menutrackingMigrateCmd)
 	menutrackingCmd.AddCommand(menutrackingAddSourceCmd)
 
 	menutrackingAddSourceCmd.Flags().String("name", "", "Human-readable name for the source")
 	menutrackingAddSourceCmd.Flags().String("tier", "gov", "Source tier: gov | consultancy | commercial")
-	menutrackingAddSourceCmd.Flags().String("cron", "@daily", "Cron schedule (e.g. '@daily', '0 6 * * 1-5')")
+	menutrackingAddSourceCmd.Flags().String("cron", "@weekly", "Cron schedule (e.g. '@weekly', '@daily', '0 6 * * 1-5')")
 	menutrackingAddSourceCmd.Flags().Int("max-tokens", 32000, "Max input tokens per source page")
-}
-
-func runMenutrackingMigrate(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-	dsn := viper.GetString("postgres-dsn")
-	if dsn == "" {
-		return fmt.Errorf("postgres-dsn is required (set via --postgres-dsn or POSTGRES_DSN env)")
-	}
-
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		return fmt.Errorf("connecting to postgres: %w", err)
-	}
-	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("pinging postgres: %w", err)
-	}
-
-	// Run river's own migrations first.
-	slog.Info("running river migrations")
-	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{})
-	if err != nil {
-		return fmt.Errorf("creating river migrator: %w", err)
-	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		return fmt.Errorf("running river migrate-up: %w", err)
-	}
-
-	// Then run our domain table migrations.
-	slog.Info("running menutracking domain migrations")
-	if err := store.MigrateUp(ctx, pool); err != nil {
-		return fmt.Errorf("running menutracking schema: %w", err)
-	}
-
-	slog.Info("migrations complete")
-	return nil
 }
 
 func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
@@ -145,8 +99,8 @@ type PipelineConfig struct {
 // PipelineResult holds the running pipeline's stop function and references
 // needed for runtime operations like source reloading.
 type PipelineResult struct {
-	Stop  func(context.Context) error
-	Pool  *pgxpool.Pool
+	Stop func(context.Context) error
+	Pool *pgxpool.Pool
 }
 
 // deadLetterHandler implements river.ErrorHandler to persist discarded jobs
@@ -236,16 +190,16 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		}
 		pj := river.NewPeriodicJob(schedule, func() (river.JobArgs, *river.InsertOpts) {
 			return menutracking.ScrapeJobArgs{
-				SourceID: s.ID,
-				URL:      s.URL,
-				Domain:   s.Domain,
-			}, &river.InsertOpts{
-				MaxAttempts: menutracking.DefaultScrapeMaxAttempts,
-				UniqueOpts: river.UniqueOpts{
-					ByPeriod: 24 * time.Hour,
-				},
-			}
-		}, &river.PeriodicJobOpts{RunOnStart: true})
+					SourceID: s.ID,
+					URL:      s.URL,
+					Domain:   s.Domain,
+				}, &river.InsertOpts{
+					MaxAttempts: menutracking.DefaultScrapeMaxAttempts,
+					UniqueOpts: river.UniqueOpts{
+						ByPeriod: 7 * 24 * time.Hour,
+					},
+				}
+		}, &river.PeriodicJobOpts{RunOnStart: false})
 		periodicJobs = append(periodicJobs, pj)
 	}
 
@@ -253,10 +207,10 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 10},
 		},
-		Workers:                    workers,
-		PeriodicJobs:               periodicJobs,
+		Workers:                     workers,
+		PeriodicJobs:                periodicJobs,
 		DiscardedJobRetentionPeriod: 30 * 24 * time.Hour,
-		ErrorHandler:               &deadLetterHandler{pool: pool},
+		ErrorHandler:                &deadLetterHandler{pool: pool},
 	})
 	if err != nil {
 		pool.Close()

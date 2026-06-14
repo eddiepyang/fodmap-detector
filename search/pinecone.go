@@ -308,6 +308,62 @@ func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	return c.doUpsert(ctx, pineconeVectors, pineconeFodmapNamespace)
 }
 
+// UpsertFodmapItem embeds and upserts a single ingredient into Pinecone.
+func (c *PineconeClient) UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error {
+	vec, err := c.embedder.EmbedSingle(ctx, name)
+	if err != nil {
+		return fmt.Errorf("vectorize ingredient: %w", err)
+	}
+
+	meta := map[string]any{
+		"ingredient": name,
+		"level":      entry.Level,
+		"groups":     entry.Groups,
+		"notes":      entry.Notes,
+	}
+	if len(entry.Substitutions) > 0 {
+		meta["substitutions"] = entry.Substitutions
+	}
+
+	return c.doUpsert(ctx, []map[string]any{{
+		"id":       fmt.Sprintf("fodmap-%s", name),
+		"values":   vec,
+		"metadata": meta,
+	}}, pineconeFodmapNamespace)
+}
+
+// DeleteFodmapItem removes a single ingredient from Pinecone. It uses the
+// deterministic ID convention and does not treat "not found" as an error.
+func (c *PineconeClient) DeleteFodmapItem(ctx context.Context, name string) error {
+	id := fmt.Sprintf("fodmap-%s", name)
+	payload := map[string]any{
+		"ids":       []string{id},
+		"namespace": pineconeFodmapNamespace,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling delete payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.IndexHost+"/vectors/delete", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating delete request: %w", err)
+	}
+	req.Header.Set("Api-Key", c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing pinecone delete: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		out, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("pinecone delete error (status %d): %s", resp.StatusCode, string(out))
+	}
+	return nil
+}
+
 func (c *PineconeClient) doQuery(ctx context.Context, payload map[string]any) (PineconeQueryResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
