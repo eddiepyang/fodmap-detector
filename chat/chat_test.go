@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -641,16 +643,16 @@ func TestToMap_Nil(t *testing.T) {
 
 // ---- FodmapAllergenTools ----
 
-func TestFodmapAllergenTools_HasBothDeclarations(t *testing.T) {
+func TestFodmapAllergenTools_HasAllDeclarations(t *testing.T) {
 	tools := FodmapAllergenTools()
-	if len(tools) != 2 {
-		t.Fatalf("expected 2 declarations, got %d", len(tools))
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 declarations, got %d", len(tools))
 	}
 	names := map[string]bool{}
 	for _, decl := range tools {
 		names[decl.Name] = true
 	}
-	if !names["lookup_fodmap"] || !names["lookup_allergens"] {
+	if !names["lookup_fodmap"] || !names["lookup_allergens"] || !names["lookup_product_fodmap"] {
 		t.Errorf("missing expected tool declarations: %v", names)
 	}
 }
@@ -667,4 +669,221 @@ func (m *mockFodmapClient) FetchChatReviews(ctx context.Context, businessID, que
 }
 func (m *mockFodmapClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
 	return FodmapToolResponse{Ingredient: ingredient, Found: true, FodmapLevel: "high"}, nil
+}
+
+// ---- product FODMAP analysis ----
+
+func TestLookupProductIngredients(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"products": []map[string]any{
+				{"ingredients_tags": []string{"en:wheat-flour", "en:sugar", "en:garlic", "en:wheat-flour"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewOpenFoodFactsClient(srv.URL)
+	got, err := client.LookupProductIngredients(t.Context(), "cookies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "en:" prefix stripped, hyphens normalized, duplicates removed.
+	want := []string{"wheat flour", "sugar", "garlic"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestLookupProductIngredients_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewOpenFoodFactsClient(srv.URL)
+	if _, err := client.LookupProductIngredients(t.Context(), "cookies"); err == nil {
+		t.Error("expected error for 500")
+	}
+}
+
+// stubProductClient is a test ProductIngredientClient.
+type stubProductClient struct {
+	ingredients []string
+	err         error
+}
+
+func (s stubProductClient) LookupProductIngredients(ctx context.Context, product string) ([]string, error) {
+	return s.ingredients, s.err
+}
+
+// stubFodmapLookup is a configurable FodmapSessionClient keyed by ingredient.
+type stubFodmapLookup struct {
+	byName map[string]FodmapToolResponse
+}
+
+func (s stubFodmapLookup) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
+	if r, ok := s.byName[ingredient]; ok {
+		return r, nil
+	}
+	return FodmapToolResponse{Ingredient: ingredient, Found: false}, nil
+}
+
+func TestAnalyzeProductFodmap_WorstCase(t *testing.T) {
+	products := stubProductClient{ingredients: []string{"wheat flour", "sugar", "unobtainium"}}
+	fodmap := stubFodmapLookup{byName: map[string]FodmapToolResponse{
+		"wheat flour": {Found: true, FodmapLevel: "high", FodmapGroups: []string{"fructans"}},
+		"sugar":       {Found: true, FodmapLevel: "low"},
+	}}
+
+	resp := AnalyzeProductFodmap(t.Context(), products, fodmap, "cookies")
+
+	if resp.OverallLevel != "high" {
+		t.Errorf("overall level = %q, want high", resp.OverallLevel)
+	}
+	if len(resp.Ingredients) != 2 {
+		t.Errorf("classified ingredients = %d, want 2", len(resp.Ingredients))
+	}
+	if !reflect.DeepEqual(resp.Groups, []string{"fructans"}) {
+		t.Errorf("groups = %v, want [fructans]", resp.Groups)
+	}
+	if !reflect.DeepEqual(resp.Unknown, []string{"unobtainium"}) {
+		t.Errorf("unknown = %v, want [unobtainium]", resp.Unknown)
+	}
+}
+
+func TestAnalyzeProductFodmap_ModerateWhenNoHigh(t *testing.T) {
+	products := stubProductClient{ingredients: []string{"peas", "carrot"}}
+	fodmap := stubFodmapLookup{byName: map[string]FodmapToolResponse{
+		"peas":   {Found: true, FodmapLevel: "moderate", FodmapGroups: []string{"GOS"}},
+		"carrot": {Found: true, FodmapLevel: "low"},
+	}}
+
+	resp := AnalyzeProductFodmap(t.Context(), products, fodmap, "veg mix")
+	if resp.OverallLevel != "moderate" {
+		t.Errorf("overall level = %q, want moderate", resp.OverallLevel)
+	}
+}
+
+func TestAnalyzeProductFodmap_NoMatches(t *testing.T) {
+	products := stubProductClient{ingredients: []string{"unobtainium"}}
+	resp := AnalyzeProductFodmap(t.Context(), products, stubFodmapLookup{}, "mystery")
+	if resp.OverallLevel != "" {
+		t.Errorf("overall level = %q, want empty", resp.OverallLevel)
+	}
+	if resp.Message == "" {
+		t.Error("expected a message when no ingredients match")
+	}
+}
+
+func TestAnalyzeProductFodmap_FetchError(t *testing.T) {
+	products := stubProductClient{err: errors.New("boom")}
+	resp := AnalyzeProductFodmap(t.Context(), products, stubFodmapLookup{}, "x")
+	if resp.Error == "" {
+		t.Error("expected error to be surfaced")
+	}
+}
+
+func TestAnalyzeProductFodmap_NoIngredients(t *testing.T) {
+	products := stubProductClient{ingredients: nil}
+	resp := AnalyzeProductFodmap(t.Context(), products, stubFodmapLookup{}, "x")
+	if resp.Message == "" {
+		t.Error("expected a message when product has no ingredients")
+	}
+}
+
+func TestDispatchTool_ProductFodmap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"products": []map[string]any{
+				{"ingredients_tags": []string{"en:wheat-flour", "en:sugar"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s := &Session{
+		ProductClient: NewOpenFoodFactsClient(srv.URL),
+		FodmapClient: stubFodmapLookup{byName: map[string]FodmapToolResponse{
+			"wheat flour": {Found: true, FodmapLevel: "high", FodmapGroups: []string{"fructans"}},
+			"sugar":       {Found: true, FodmapLevel: "low"},
+		}},
+	}
+	result := s.DispatchTool(t.Context(), "lookup_product_fodmap", map[string]any{"product": "cookies"}).(ProductFodmapResponse)
+	if result.OverallLevel != "high" {
+		t.Errorf("overall level = %q, want high", result.OverallLevel)
+	}
+	if result.Product != "cookies" {
+		t.Errorf("product = %q, want cookies", result.Product)
+	}
+}
+
+func TestDispatchTool_ProductFodmap_NilClient(t *testing.T) {
+	s := &Session{} // no ProductClient configured
+	result := s.DispatchTool(t.Context(), "lookup_product_fodmap", map[string]any{"product": "cookies"}).(ProductFodmapResponse)
+	if result.Error == "" {
+		t.Error("expected error when ProductClient is nil")
+	}
+}
+
+func TestLookupProductIngredients_SkipsEmptyProducts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"products": []map[string]any{
+				{"ingredients_tags": []string{}},
+				{"ingredients_tags": []string{"en:oats", "en:water"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewOpenFoodFactsClient(srv.URL)
+	got, err := client.LookupProductIngredients(t.Context(), "oat milk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"oats", "water"}) {
+		t.Errorf("got %v, want [oats water]", got)
+	}
+}
+
+func TestLookupProductIngredients_NoProducts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"products": []any{}})
+	}))
+	defer srv.Close()
+
+	client := NewOpenFoodFactsClient(srv.URL)
+	got, err := client.LookupProductIngredients(t.Context(), "mystery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected no ingredients, got %v", got)
+	}
+}
+
+func TestLookupProductIngredients_Cached(t *testing.T) {
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"products": []map[string]any{
+				{"ingredients_tags": []string{"en:sugar"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewOpenFoodFactsClient(srv.URL)
+	_, _ = client.LookupProductIngredients(t.Context(), "candy")
+	_, _ = client.LookupProductIngredients(t.Context(), "candy")
+	if callCount != 1 {
+		t.Errorf("expected 1 HTTP call (cached), got %d", callCount)
+	}
 }

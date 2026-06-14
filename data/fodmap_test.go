@@ -21,6 +21,7 @@ var validGroups = map[string]bool{
 	"sorbitol":        true,
 	"mannitol":        true,
 	"fructan":         true,
+	"perseitol":       true,
 }
 
 func TestFodmapDB_MinimumEntries(t *testing.T) {

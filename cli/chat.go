@@ -125,6 +125,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	session := &chat.Session{
 		FodmapClient:   fodmapClient,
 		AllergenClient: allergenClient,
+		ProductClient:  allergenClient,
 		Backend:        backend,
 		SystemPrompt:   systemPrompt,
 		Tools:          chat.FodmapAllergenTools(),
