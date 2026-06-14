@@ -283,6 +283,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 		session := &chat.Session{
 			FodmapClient:   fodmapClient,
 			AllergenClient: allergenClient,
+			ProductClient:  allergenClient,
 			Backend:        backend,
 			SystemPrompt:   systemPrompt,
 			Tools:          chat.FodmapAllergenTools(),
