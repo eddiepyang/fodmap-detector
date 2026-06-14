@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,10 @@ func TestParseCronSchedule(t *testing.T) {
 // isolation without mutating global command state.
 func newAddSourceTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "add-source"}
+	// Execute() would normally seed a non-nil context; runMenutrackingAddSource
+	// reads cmd.Context() and passes it to pgxpool.New, which spawns a goroutine
+	// that calls context.WithCancel and panics on a nil parent.
+	cmd.SetContext(context.Background())
 	cmd.Flags().String("name", "", "")
 	cmd.Flags().String("tier", "gov", "")
 	cmd.Flags().String("cron", "@weekly", "")
@@ -64,8 +69,8 @@ func newAddSourceTestCmd() *cobra.Command {
 }
 
 func TestRunMenutrackingAddSourceRejectsInvalidCron(t *testing.T) {
-	// A parseable DSN that points nowhere: pgxpool.New is lazy, so no
-	// connection is attempted before the cron guard returns.
+	// A parseable DSN that points nowhere. With MinConns=0 the pool creates no
+	// idle connections, so the cron guard returns before any dial is attempted.
 	viper.Set("postgres-dsn", "postgres://u:p@127.0.0.1:1/none")
 	t.Cleanup(func() { viper.Set("postgres-dsn", "") })
 
