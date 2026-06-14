@@ -13,17 +13,17 @@ import (
 
 // DiscardedJob represents a river job in the discarded state.
 type DiscardedJob struct {
-	Kind            string          `json:"kind"`
-	Args            json.RawMessage `json:"args"`
-	FinalAttemptAt  string          `json:"final_attempt_at,omitempty"`
-	State           string          `json:"state"`
-	CreatedAt       string          `json:"created_at"`
+	Kind           string          `json:"kind"`
+	Args           json.RawMessage `json:"args"`
+	FinalAttemptAt string          `json:"final_attempt_at,omitempty"`
+	State          string          `json:"state"`
+	CreatedAt      string          `json:"created_at"`
 }
 
 // MenutrackingAdminHandler returns an HTTP handler that serves menutracking admin
 // endpoints. It requires a pgxpool.Pool to query river and domain tables.
 type MenutrackingAdminHandler struct {
-	Pool        *pgxpool.Pool
+	Pool         *pgxpool.Pool
 	ReloadSignal chan struct{} // written to on POST /menutracking/reload to trigger periodic job refresh
 }
 

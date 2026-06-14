@@ -18,7 +18,7 @@ Two structural facts shape the fix:
 
 The change denormalizes hot-path fields onto `YelpReviewChunk`, stops writing the `YelpReview` parent to Weaviate, and routes every review write to Postgres regardless of search backend. Clean separation: Weaviate = vector index, Postgres = source of truth for structured data.
 
-Migration is wipe-and-rebuild rather than in-place. The two Weaviate classes that hold Yelp data (`YelpReview`, `YelpReviewChunk`) get deleted; the server restart re-creates `YelpReviewChunk` with the new schema and creates the Postgres `reviews` table; the indexer re-runs from offset 0 against the existing Yelp archive at `/Users/edwardyang/projects/data/yelp_dataset.tar`. Avoids a bespoke migration CLI in exchange for ~3 hours of re-embed time on the dev box.
+Migration is wipe-and-rebuild rather than in-place. The two Weaviate classes that hold Yelp data (`YelpReview`, `YelpReviewChunk`) get deleted; the server restart re-creates `YelpReviewChunk` with the new schema; the Postgres `reviews` table is created by `golang-migrate` via `go run . db migrate-up` (not by `EnsureSchema`); the indexer re-runs from offset 0 against the existing Yelp archive at `/Users/edwardyang/projects/data/yelp_dataset.tar`. Avoids a bespoke migration CLI in exchange for ~3 hours of re-embed time on the dev box.
 
 ## Tradeoffs
 
@@ -60,7 +60,9 @@ Remove the `YelpReview` class declaration from `EnsureSchema` entirely — it's 
 
 ### 2. Postgres schema — `search/postgres.go:65-101` (`EnsureSchema`)
 
-Already declares the `reviews` table. Change: call this unconditionally whenever `POSTGRES_DSN` is set, not only when `STORE_TYPE=postgres`. Wire the call into the server bootstrap and the indexer's startup so the table is guaranteed to exist before either reads or writes it.
+> **Note:** `EnsureSchema` on PostgresClient is now a no-op. The `reviews` table is created by `golang-migrate` via `go run . db migrate-up` (see `internal/db/migrations/`). The call to `EnsureSchema` still exists in the server bootstrap but does nothing.
+
+Already declares the `reviews` table (in the migration, not in EnsureSchema). Change: ensure the table is created unconditionally whenever `POSTGRES_DSN` is set, not only when `STORE_TYPE=postgres`. This is now handled by `db migrate-up`. Wire the call into the server bootstrap and the indexer's startup so the table is guaranteed to exist before either reads or writes it.
 
 The orphan `review_chunks` and `fodmap_ingredients` tables created by the same EnsureSchema are harmless empty tables when WV is the search backend — leave them alone, no cleanup needed.
 
@@ -132,7 +134,7 @@ Single-row PK lookup on an indexed primary key (~microsecond latency on an exist
 
 | Store | Preserve | Delete |
 |---|---|---|
-| Postgres | `users`, `conversations`, `messages`, `user_profiles`, `sources`, `extraction_rules`, `regulatory_updates`, `menutracking_dead_letter`, `river_*` | nothing — `reviews` doesn't exist yet, `EnsureSchema` creates it fresh |
+| Postgres | `users`, `conversations`, `messages`, `user_profiles`, `sources`, `extraction_rules`, `regulatory_updates`, `menutracking_dead_letter`, `river_*` | nothing — `reviews` is created by `go run . db migrate-up` |
 | Weaviate | `RestaurantMenu` (110 scraped menus — losing these forces a full re-scrape) | `YelpReview`, `YelpReviewChunk`, `FodmapIngredient` (re-upserted from source on server start, fixes the schema drift) |
 
 **Run order**:
@@ -144,7 +146,7 @@ Single-row PK lookup on an indexed primary key (~microsecond latency on an exist
    curl -X DELETE http://localhost:8090/v1/schema/YelpReviewChunk
    curl -X DELETE http://localhost:8090/v1/schema/FodmapIngredient
    ```
-3. **Restart the Go server.** `EnsureSchema` recreates `YelpReviewChunk` with the new 7-field schema and `FodmapIngredient` with the explicit `text[]` shape; Postgres `EnsureSchema` creates the `reviews` table; server startup re-upserts the 120 FODMAP ingredients into the fresh class.
+3. **Restart the Go server.** `EnsureSchema` recreates `YelpReviewChunk` with the new 7-field schema and `FodmapIngredient` with the explicit `text[]` shape; Postgres tables are created by `go run . db migrate-up`; server startup re-upserts the 120 FODMAP ingredients into the fresh class.
 4. **Run a fresh index pass.** `go run . index --weaviate localhost:8090` from offset 0 (the prior `index.checkpoint` references the wiped class — delete or rename `index.checkpoint` first). Re-embeds 296k reviews ≈ ~3 hours at observed ~180 chunks/sec, dual-writing reviews to PG and chunks to WV. Chat returns "no businesses found" for cities until enough chunks land — acceptable for a dev box.
 
 **Do not run**: `docker compose down -v` (wipes the WV data volume *and* the PG data volume, destroying auth/chat/menutracking), `DROP DATABASE fodmap` (same), `rm -rf` on the Yelp archive at `/Users/edwardyang/projects/data/yelp_dataset.tar`.
@@ -167,7 +169,7 @@ Single-row PK lookup on an indexed primary key (~microsecond latency on an exist
 - `/Users/edwardyang/projects/fodmap-detector/search/review_store_test.go` (new).
 - `/Users/edwardyang/projects/fodmap-detector/cli/index.go` — accept and call `ReviewStore` alongside the search backend, wire selection by `--store-type`.
 - `/Users/edwardyang/projects/fodmap-detector/cli/index_test.go` — dual-write assertions.
-- `/Users/edwardyang/projects/fodmap-detector/server/server.go` — call `PostgresClient.EnsureSchema()` at startup whenever `POSTGRES_DSN` is set.
+- `/Users/edwardyang/projects/fodmap-detector/server/server.go` — call `PostgresClient.EnsureSchema()` at startup whenever `POSTGRES_DSN` is set (now a no-op — table creation handled by `go run . db migrate-up`).
 
 Not modified: `docker-compose.yaml` (no cap bump needed), `pinecone.go` (already flat), `cli/index_backfill.go` / `cli/index_migrate.go` (NOT NEEDED — wipe-and-rebuild replaces both).
 

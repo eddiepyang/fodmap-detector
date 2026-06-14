@@ -119,17 +119,17 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.userStore.GetUserByEmail(r.Context(), req.Email)
 	if err != nil || user == nil {
-		respondError(w, "invalid credentials", http.StatusUnauthorized)
+		respondError(w, "no account found for this email", http.StatusUnauthorized)
 		return
 	}
 
 	if !user.CheckPassword(req.Password) {
-		respondError(w, "invalid credentials", http.StatusUnauthorized)
+		respondError(w, "incorrect password", http.StatusUnauthorized)
 		return
 	}
 
 	if user.Status == "deleted" || user.Status == "suspended" {
-		respondError(w, "invalid credentials", http.StatusUnauthorized)
+		respondError(w, "account is "+user.Status, http.StatusUnauthorized)
 		return
 	}
 
@@ -179,7 +179,7 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if user.Status == "deleted" || user.Status == "suspended" {
-			respondError(w, "user not found", http.StatusUnauthorized)
+			respondError(w, "account is "+user.Status, http.StatusUnauthorized)
 			return
 		}
 	}

@@ -31,7 +31,7 @@ const (
 // AgentPathResult is the outcome of the agent (LLM) extraction path.
 type AgentPathResult struct {
 	Update    *StructuredUpdate
-	RawLLM   string // raw model output before JSON parsing
+	RawLLM    string // raw model output before JSON parsing
 	RuleText  string // the rule proposal the model emitted, if any
 	RuleMatch bool   // true if the model proposed a rule alongside the update
 }

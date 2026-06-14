@@ -8,6 +8,7 @@ import (
 
 	"fodmap/auth"
 	"fodmap/chat"
+	"fodmap/fodmap/store"
 	"fodmap/menutracking"
 	"fodmap/scraper"
 	"fodmap/search"
@@ -67,18 +68,26 @@ var serveCmd = &cobra.Command{
 			jwtSecret = "change-me-in-production"
 		}
 
-		var userStore auth.AdminStore
-		var err error
-
 		if postgresDSN == "" {
 			return fmt.Errorf("postgres-dsn is required")
 		}
-		userStore, err = auth.NewPostgresStore(context.Background(), postgresDSN)
 
+		var userStore auth.AdminStore
+		var err error
+		userStore, err = auth.NewPostgresStore(context.Background(), postgresDSN)
 		if err != nil {
 			return fmt.Errorf("initializing user store: %w", err)
 		}
 		defer func() { _ = userStore.Close() }()
+
+		catalogStore, err := store.NewFodmapCatalogStore(postgresDSN)
+		if err != nil {
+			return fmt.Errorf("initializing fodmap catalog store: %w", err)
+		}
+		defer func() { _ = catalogStore.Close() }()
+		if err := catalogStore.EnsureSchema(context.Background()); err != nil {
+			return fmt.Errorf("ensuring fodmap catalog schema: %w", err)
+		}
 
 		adminEmail := viper.GetString("admin-email")
 		if adminEmail != "" {
@@ -110,6 +119,7 @@ var serveCmd = &cobra.Command{
 			WeaviateAPIKey:     weaviateAPIKey,
 			PostgresSearch:     postgresSearch,
 			PostgresDSN:        postgresDSN,
+			CatalogStore:       catalogStore,
 			GeminiAPIKey:       os.Getenv("GOOGLE_API_KEY"),
 			ChatModel:          chatModel,
 			FilterModel:        filterModel,

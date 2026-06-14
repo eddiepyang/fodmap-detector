@@ -2,6 +2,16 @@ version: "2"
 
 run:
   go: 1.26.2
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - vendor$
 linters:
   exclusions:
     generated: lax

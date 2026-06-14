@@ -42,7 +42,7 @@ func (m *mockEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float3
 func (m *mockEmbedder) Close() error { return nil }
 
 func TestPostgresClient_EnsureSchema(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
@@ -52,25 +52,15 @@ func TestPostgresClient_EnsureSchema(t *testing.T) {
 		db:       db,
 		embedder: nil,
 	}
-
-	mock.ExpectExec("CREATE EXTENSION IF NOT EXISTS vector").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS reviews").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("ALTER TABLE reviews DROP COLUMN IF EXISTS embedding").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS review_chunks").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_review_chunks_embedding").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err = client.EnsureSchema(context.Background())
 	if err != nil {
 		t.Errorf("EnsureSchema returned error: %v", err)
 	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("there were unfulfilled expectations: %s", err)
-	}
 }
 
 func TestPostgresClient_EnsureFodmapSchema(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
@@ -81,17 +71,9 @@ func TestPostgresClient_EnsureFodmapSchema(t *testing.T) {
 		embedder: nil,
 	}
 
-	mock.ExpectExec("CREATE EXTENSION IF NOT EXISTS vector").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS fodmap_ingredients").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("CREATE INDEX IF NOT EXISTS idx_fodmap_embedding").WillReturnResult(sqlmock.NewResult(0, 0))
-
 	err = client.EnsureFodmapSchema(context.Background())
 	if err != nil {
 		t.Errorf("EnsureFodmapSchema returned error: %v", err)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
 }
 

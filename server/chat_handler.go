@@ -477,4 +477,3 @@ func saveModelResponse(ctx context.Context, store auth.ChatStore, convID string,
 	}
 	return msg
 }
-

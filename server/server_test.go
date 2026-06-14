@@ -22,7 +22,6 @@ func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 
 func (m *mockEmbedder) Close() error { return nil }
 
-
 func TestServerNew(t *testing.T) {
 	ctx := context.Background()
 

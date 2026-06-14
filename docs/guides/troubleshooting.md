@@ -174,4 +174,32 @@ If you need to manually grant a registered user admin privileges:
 docker exec -it fodmap-detector-postgres-1 psql -U fodmap -d fodmap -c "UPDATE users SET role = 'admin' WHERE email = 'user@example.com';"
 ```
 
+---
+
+## 6. Postgres Migration Issues
+
+Domain table DDL is managed by `golang-migrate` and applied via `go run . db migrate-up`. The migration state is tracked in the `schema_migrations` table.
+
+### Check current migration version
+```bash
+go run . db migrate-version
+```
+
+### Migrations fail on existing database
+If `db migrate-up` fails on a database that already has tables (e.g. from before the migration system was introduced), the baseline migration uses `IF NOT EXISTS` and should be safe. If you see errors about duplicate objects, you can force-mark the baseline as applied:
+```bash
+go run . db migrate-force 1
+```
+Then run `db migrate-up` again to apply any remaining migrations.
+
+### Reset migrations (destructive)
+To wipe the migration state and start fresh (only for development):
+```bash
+go run . db migrate-down
+```
+This drops all domain tables. You can then run `db migrate-up` to recreate them.
+
+### River's own tables
+River's schema tables (`river_job`, `river_leader`, `river_queue`, `river_client`) are managed separately by `river migrate-up` and are **not** included in `golang-migrate` migrations. Do not attempt to manage them with `db migrate-up/down`.
+
 

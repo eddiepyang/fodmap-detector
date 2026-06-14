@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -61,43 +62,10 @@ func NewPostgresClient(dsn string, e Embedder) (*PostgresClient, error) {
 	}, nil
 }
 
-// EnsureSchema creates the pgvector extension and the required tables for vectors.
-func (c *PostgresClient) EnsureSchema(ctx context.Context) error {
-	queries := []string{
-		`CREATE EXTENSION IF NOT EXISTS vector;`,
-		`CREATE TABLE IF NOT EXISTS reviews (
-			review_id TEXT PRIMARY KEY,
-			business_id TEXT,
-			business_name TEXT,
-			city TEXT,
-			state TEXT,
-			categories TEXT,
-			stars FLOAT,
-			text TEXT
-		);`,
-		// Migration for existing tables: remove old embedding column if it exists.
-		// Ignore errors if it doesn't exist. This handles the breaking schema change.
-		`ALTER TABLE reviews DROP COLUMN IF EXISTS embedding;`,
-		`CREATE TABLE IF NOT EXISTS review_chunks (
-			chunk_id SERIAL PRIMARY KEY,
-			review_id TEXT REFERENCES reviews(review_id) ON DELETE CASCADE,
-			chunk_text TEXT,
-			embedding vector(768)
-		);`,
-		// We use half-precision (if supported) or regular hnsw.
-		// `vector_cosine_ops` creates an index optimized for <=> cosine distance.
-		`CREATE INDEX IF NOT EXISTS idx_review_chunks_embedding ON review_chunks USING hnsw (embedding vector_cosine_ops);`,
-	}
-
-	for _, query := range queries {
-		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			// ALTER TABLE DROP COLUMN might fail if table didn't exist before CREATE TABLE ran,
-			// but we created it first.
-			if !strings.Contains(err.Error(), "does not exist") {
-				return fmt.Errorf("failed to execute schema query %q: %w", query, err)
-			}
-		}
-	}
+// EnsureSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the Searcher
+// interface.
+func (c *PostgresClient) EnsureSchema(_ context.Context) error {
 	return nil
 }
 
@@ -182,26 +150,10 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	return tx.Commit()
 }
 
-// EnsureFodmapSchema creates the table for FODMAP vectors.
-func (c *PostgresClient) EnsureFodmapSchema(ctx context.Context) error {
-	queries := []string{
-		`CREATE EXTENSION IF NOT EXISTS vector;`,
-		`CREATE TABLE IF NOT EXISTS fodmap_ingredients (
-			ingredient TEXT PRIMARY KEY,
-			level TEXT,
-			groups TEXT[],
-			notes TEXT,
-			substitutions TEXT[],
-			embedding vector(768)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_fodmap_embedding ON fodmap_ingredients USING hnsw (embedding vector_cosine_ops);`,
-	}
-
-	for _, query := range queries {
-		if _, err := c.db.ExecContext(ctx, query); err != nil {
-			return fmt.Errorf("failed to execute fodmap schema query: %w", err)
-		}
-	}
+// EnsureFodmapSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the Searcher
+// interface.
+func (c *PostgresClient) EnsureFodmapSchema(_ context.Context) error {
 	return nil
 }
 
@@ -270,13 +222,47 @@ func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (F
 		&res.Ingredient, &res.Level, (*pgxStringArray)(&res.Groups), &res.Notes, (*pgxStringArray)(&res.Substitutions), &certainty,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return FodmapResult{}, 0, fmt.Errorf("not found")
 		}
 		return FodmapResult{}, 0, fmt.Errorf("query fodmap: %w", err)
 	}
 
 	return res, certainty, nil
+}
+
+// UpsertFodmapItem embeds and upserts a single ingredient into the Postgres
+// vector table. It is used by the admin CRUD handler to keep the search index
+// in sync with the canonical catalog.
+func (c *PostgresClient) UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error {
+	vec, err := c.embedder.EmbedSingle(ctx, name)
+	if err != nil {
+		return fmt.Errorf("vectorize ingredient: %w", err)
+	}
+
+	_, err = c.db.ExecContext(ctx, `
+		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, substitutions, embedding)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (ingredient) DO UPDATE SET
+			level = EXCLUDED.level,
+			groups = EXCLUDED.groups,
+			notes = EXCLUDED.notes,
+			substitutions = EXCLUDED.substitutions,
+			embedding = EXCLUDED.embedding
+	`, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pq.Array(entry.Substitutions), pgvector.NewVector(vec))
+	if err != nil {
+		return fmt.Errorf("upsert fodmap item: %w", err)
+	}
+	return nil
+}
+
+// DeleteFodmapItem removes a single ingredient from the Postgres vector table.
+func (c *PostgresClient) DeleteFodmapItem(ctx context.Context, name string) error {
+	_, err := c.db.ExecContext(ctx, `DELETE FROM fodmap_ingredients WHERE ingredient = $1`, name)
+	if err != nil {
+		return fmt.Errorf("delete fodmap item: %w", err)
+	}
+	return nil
 }
 
 // pgxStringArray is a helper to scan Postgres TEXT[] into []string for database/sql using pgx

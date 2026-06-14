@@ -12,10 +12,10 @@ type UserFilter struct {
 
 // UserDetail holds a user along with counts and their dietary profile.
 type UserDetail struct {
-	User           *User   `json:"user"`
-	Conversations  int     `json:"conversations"`
-	Messages       int     `json:"messages"`
-	DietaryProfile []byte  `json:"dietary_profile"` // Raw profile JSON or nil
+	User           *User  `json:"user"`
+	Conversations  int    `json:"conversations"`
+	Messages       int    `json:"messages"`
+	DietaryProfile []byte `json:"dietary_profile"` // Raw profile JSON or nil
 }
 
 // ConversationSummary describes conversation details for administration.

@@ -10,7 +10,7 @@ import (
 
 func TestOpenAICompatBackend_Generate(t *testing.T) {
 	mux := http.NewServeMux()
-	
+
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{
 			"choices": []map[string]any{
@@ -19,10 +19,10 @@ func TestOpenAICompatBackend_Generate(t *testing.T) {
 						"content": "Hello from OpenAI mock",
 						"tool_calls": []map[string]any{
 							{
-								"id": "call_123",
+								"id":   "call_123",
 								"type": "function",
 								"function": map[string]any{
-									"name": "lookup_fodmap",
+									"name":      "lookup_fodmap",
 									"arguments": `{"food":"garlic"}`,
 								},
 							},
@@ -71,16 +71,16 @@ func TestOpenAICompatBackend_Generate(t *testing.T) {
 
 func TestOpenAICompatBackend_Generate_Stream(t *testing.T) {
 	mux := http.NewServeMux()
-	
+
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		
+
 		chunks := []string{
 			`{"choices": [{"delta": {"content": "Hello ", "tool_calls": [{"index": 0, "id": "call_456", "type": "function", "function": {"name": "lookup_fodmap", "arguments": "{\"food\": \"apple\"}"}}]}}]}`,
 			`{"choices": [{"delta": {"content": "world!"}}]}`,
 			`[DONE]`,
 		}
-		
+
 		for _, chunk := range chunks {
 			if chunk == "[DONE]" {
 				_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -112,7 +112,7 @@ func TestOpenAICompatBackend_Generate_Stream(t *testing.T) {
 	if msg.Text != "Hello world!" {
 		t.Errorf("expected text 'Hello world!', got '%s'", msg.Text)
 	}
-	
+
 	if streamText != "Hello world!" {
 		t.Errorf("expected stream text 'Hello world!', got '%s'", streamText)
 	}

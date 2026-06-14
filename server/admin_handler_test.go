@@ -379,3 +379,167 @@ func TestAdminAnalyticsAndConversationHandlers(t *testing.T) {
 		}
 	})
 }
+
+func TestAdminPaginationAndValidation(t *testing.T) {
+	store := newMockStore()
+	secret := "test-secret"
+	adminID := "admin-1"
+	s := &Server{
+		userStore: store,
+		jwtSecret: secret,
+	}
+	store.users["admin@example.com"] = &auth.User{
+		ID:        adminID,
+		Email:     "admin@example.com",
+		Role:      "admin",
+		Status:    "active",
+		CreatedAt: time.Now(),
+	}
+	adminToken, _, _ := auth.GenerateTokensWithRole(adminID, "admin", secret)
+
+	for i := 0; i < 25; i++ {
+		store.users["user"+string(rune('a'+i))+"@example.com"] = &auth.User{
+			ID:        "u" + string(rune('0'+i)),
+			Email:     "user" + string(rune('a'+i)) + "@example.com",
+			Role:      "user",
+			Status:    "active",
+			CreatedAt: time.Now().Add(-time.Duration(i) * time.Second),
+		}
+	}
+
+	mux := s.Handler()
+
+	t.Run("User list pagination respects limit and page", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users?page=2&limit=10", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+
+		var resp struct {
+			Users []*auth.User `json:"users"`
+			Total int          `json:"total"`
+			Page  int          `json:"page"`
+			Limit int          `json:"limit"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+
+		if resp.Page != 2 {
+			t.Errorf("page = %d, want 2", resp.Page)
+		}
+		if resp.Limit != 10 {
+			t.Errorf("limit = %d, want 10", resp.Limit)
+		}
+		if resp.Total != 26 {
+			t.Errorf("total = %d, want 26", resp.Total)
+		}
+		if len(resp.Users) != 10 {
+			t.Errorf("got %d users, want 10", len(resp.Users))
+		}
+	})
+
+	t.Run("User list clamps limit to 100", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users?limit=999", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		var resp struct {
+			Limit int `json:"limit"`
+		}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp.Limit != 100 {
+			t.Errorf("limit = %d, want 100", resp.Limit)
+		}
+	})
+
+	t.Run("Conversation activity clamps days to 90", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/analytics/activity?days=365", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
+}
+
+func TestAdminHandlers_ErrorPaths(t *testing.T) {
+	secret := "test-secret"
+	adminID := "admin-1"
+	errStore := &mockErrorStore{}
+
+	s := &Server{userStore: errStore, jwtSecret: secret}
+	mockStore := newMockStore()
+	mockStore.users["admin@example.com"] = &auth.User{
+		ID:     adminID,
+		Email:  "admin@example.com",
+		Role:   "admin",
+		Status: "active",
+	}
+	adminToken, _, _ := auth.GenerateTokensWithRole(adminID, "admin", secret)
+
+	mux := s.Handler()
+
+	t.Run("List users returns 500 on store error", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("Get user returns 500 on store error", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users/u1", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("Update status rejects invalid status", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"status": "banned"})
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/users/admin-1/status", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("Analytics overview returns 500 on store error", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/analytics/overview", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("List conversations returns 500 on store error", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/conversations", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+	})
+}
