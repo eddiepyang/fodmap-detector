@@ -81,6 +81,12 @@ type AllergenClient interface {
 	LookupAllergens(ctx context.Context, ingredient string) (AllergenToolResponse, error)
 }
 
+// ProductIngredientClient fetches the ingredient names that make up a packaged
+// product (e.g. from Open Food Facts) so each can be classified individually.
+type ProductIngredientClient interface {
+	LookupProductIngredients(ctx context.Context, product string) ([]string, error)
+}
+
 // ---- tool response types ----
 
 type FodmapToolResponse struct {
@@ -99,6 +105,27 @@ type AllergenToolResponse struct {
 	Allergens  []string `json:"allergens,omitempty"`
 	Source     string   `json:"source,omitempty"`
 	Error      string   `json:"error,omitempty"`
+}
+
+// IngredientFodmap pairs a product ingredient with its FODMAP classification.
+type IngredientFodmap struct {
+	Ingredient string   `json:"ingredient"`
+	Found      bool     `json:"found"`
+	Level      string   `json:"level,omitempty"`
+	Groups     []string `json:"groups,omitempty"`
+}
+
+// ProductFodmapResponse is the aggregated FODMAP assessment of a packaged
+// product, derived by classifying each of its ingredients. OverallLevel is the
+// worst case across the ingredients found in the FODMAP database.
+type ProductFodmapResponse struct {
+	Product      string             `json:"product"`
+	OverallLevel string             `json:"overall_level,omitempty"`
+	Groups       []string           `json:"groups,omitempty"`
+	Ingredients  []IngredientFodmap `json:"ingredients,omitempty"`
+	Unknown      []string           `json:"unknown,omitempty"`
+	Message      string             `json:"message,omitempty"`
+	Error        string             `json:"error,omitempty"`
 }
 
 // ---- guardrails ----
@@ -150,6 +177,7 @@ func IsFoodRelated(ctx context.Context, client *genai.Client, model, input strin
 type Session struct {
 	FodmapClient   FodmapSessionClient
 	AllergenClient AllergenClient
+	ProductClient  ProductIngredientClient
 	Backend        ChatBackend
 	SystemPrompt   string
 	Tools          []ToolDeclaration
@@ -267,6 +295,12 @@ func (s *Session) DispatchTool(ctx context.Context, name string, args map[string
 			return AllergenToolResponse{Ingredient: ingredient, Error: err.Error()}
 		}
 		return result
+	case "lookup_product_fodmap":
+		product, _ := args["product"].(string)
+		if s.ProductClient == nil {
+			return ProductFodmapResponse{Product: product, Error: "product lookup is not configured"}
+		}
+		return AnalyzeProductFodmap(ctx, s.ProductClient, s.FodmapClient, product)
 	default:
 		return map[string]any{"error": "unknown tool: " + name}
 	}
@@ -277,6 +311,77 @@ func ToMap(v any) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
 	return m
+}
+
+// fodmapLevelRank orders FODMAP levels by severity so the worst case across a
+// product's ingredients can be computed. Unknown levels rank 0.
+func fodmapLevelRank(level string) int {
+	switch level {
+	case "low":
+		return 1
+	case "moderate":
+		return 2
+	case "high":
+		return 3
+	default:
+		return 0
+	}
+}
+
+// AnalyzeProductFodmap fetches a packaged product's ingredient list via the
+// ProductIngredientClient and classifies each ingredient with the FODMAP
+// client, returning the worst-case level and the union of FODMAP groups found.
+// Ingredients absent from the FODMAP database are reported under Unknown and do
+// not affect the overall level.
+func AnalyzeProductFodmap(ctx context.Context, products ProductIngredientClient, fodmap FodmapSessionClient, product string) ProductFodmapResponse {
+	resp := ProductFodmapResponse{Product: product}
+
+	ingredients, err := products.LookupProductIngredients(ctx, product)
+	if err != nil {
+		resp.Error = err.Error()
+		return resp
+	}
+	if len(ingredients) == 0 {
+		resp.Message = "no ingredients found for product; it may not be in Open Food Facts"
+		return resp
+	}
+
+	worst := 0
+	seenGroup := make(map[string]bool)
+	for _, ing := range ingredients {
+		res, err := fodmap.LookupFODMAP(ctx, ing)
+		if err != nil || !res.Found {
+			resp.Unknown = append(resp.Unknown, ing)
+			continue
+		}
+		resp.Ingredients = append(resp.Ingredients, IngredientFodmap{
+			Ingredient: ing,
+			Found:      true,
+			Level:      res.FodmapLevel,
+			Groups:     res.FodmapGroups,
+		})
+		if r := fodmapLevelRank(res.FodmapLevel); r > worst {
+			worst = r
+		}
+		for _, g := range res.FodmapGroups {
+			if !seenGroup[g] {
+				seenGroup[g] = true
+				resp.Groups = append(resp.Groups, g)
+			}
+		}
+	}
+
+	switch worst {
+	case 3:
+		resp.OverallLevel = "high"
+	case 2:
+		resp.OverallLevel = "moderate"
+	case 1:
+		resp.OverallLevel = "low"
+	default:
+		resp.Message = "no ingredients matched the FODMAP database; consult the Monash University FODMAP app"
+	}
+	return resp
 }
 
 // ---- tool declarations ----
@@ -292,6 +397,11 @@ func FodmapAllergenTools() []ToolDeclaration {
 			Name:        "lookup_allergens",
 			Description: "Look up common allergens for a food ingredient using the Open Food Facts database.",
 			Parameters:  json.RawMessage(`{"type":"OBJECT","properties":{"ingredient":{"type":"STRING","description":"The food ingredient name to look up (e.g. \"garlic\", \"wheat\", \"milk\")"}},"required":["ingredient"]}`),
+		},
+		{
+			Name:        "lookup_product_fodmap",
+			Description: "Assess the overall FODMAP level of a packaged or branded food product by name. Fetches the product's ingredient list from Open Food Facts, classifies each ingredient, and returns the worst-case FODMAP level plus the groups present.",
+			Parameters:  json.RawMessage(`{"type":"OBJECT","properties":{"product":{"type":"STRING","description":"The packaged or branded product name to assess (e.g. \"Oreo cookies\", \"Heinz tomato ketchup\")"}},"required":["product"]}`),
 		},
 	}
 }
@@ -505,12 +615,24 @@ func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient st
 }
 
 type OpenFoodFactsClient struct {
-	baseURL  string
-	client   *http.Client
-	cache    sync.Map
-	mu       sync.Mutex    // serializes requests to avoid rate-limiting
-	lastCall time.Time     // tracks last request time
-	minDelay time.Duration // minimum delay between requests
+	baseURL   string
+	client    *http.Client
+	cache     sync.Map      // allergen lookups keyed by ingredient
+	prodCache sync.Map      // ingredient lists keyed by product
+	mu        sync.Mutex    // serializes requests to avoid rate-limiting
+	lastCall  time.Time     // tracks last request time
+	minDelay  time.Duration // minimum delay between requests
+}
+
+// throttle serializes Open Food Facts requests and enforces minDelay between
+// them to avoid rate-limiting.
+func (c *OpenFoodFactsClient) throttle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if elapsed := time.Since(c.lastCall); elapsed < c.minDelay {
+		time.Sleep(c.minDelay - elapsed)
+	}
+	c.lastCall = time.Now()
 }
 
 func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
@@ -529,13 +651,7 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 		return cached.(AllergenToolResponse), nil
 	}
 
-	// Rate-limit: serialize requests and enforce minimum delay
-	c.mu.Lock()
-	if elapsed := time.Since(c.lastCall); elapsed < c.minDelay {
-		time.Sleep(c.minDelay - elapsed)
-	}
-	c.lastCall = time.Now()
-	c.mu.Unlock()
+	c.throttle()
 	searchURL := c.baseURL + "?search_terms=" +
 		url.QueryEscape(ingredient) +
 		"&search_simple=1&action=process&json=1&page_size=3"
@@ -596,4 +712,63 @@ func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient st
 	}
 	c.cache.Store(ingredient, res)
 	return res, nil
+}
+
+// LookupProductIngredients searches Open Food Facts for a product by name and
+// returns the cleaned ingredient names of the first matching product that lists
+// ingredients. Names are normalized — the "en:" locale prefix is removed and
+// hyphens become spaces — so they can be passed straight to a FODMAP lookup.
+func (c *OpenFoodFactsClient) LookupProductIngredients(ctx context.Context, product string) ([]string, error) {
+	if cached, ok := c.prodCache.Load(product); ok {
+		return cached.([]string), nil
+	}
+
+	c.throttle()
+	searchURL := c.baseURL + "?search_terms=" +
+		url.QueryEscape(product) +
+		"&search_simple=1&action=process&json=1&page_size=3&fields=ingredients_tags"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building OFF request: %w", err)
+	}
+	req.Header.Set("User-Agent", "fodmap-detector/1.0")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("OFF request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("open food facts returned status %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var result struct {
+		Products []struct {
+			IngredientsTags []string `json:"ingredients_tags"`
+		} `json:"products"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing Open Food Facts response: %w", err)
+	}
+
+	var ingredients []string
+	for _, p := range result.Products {
+		if len(p.IngredientsTags) == 0 {
+			continue
+		}
+		seen := make(map[string]bool)
+		for _, tag := range p.IngredientsTags {
+			name := strings.ReplaceAll(strings.TrimPrefix(tag, "en:"), "-", " ")
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			ingredients = append(ingredients, name)
+		}
+		break
+	}
+
+	c.prodCache.Store(product, ingredients)
+	return ingredients, nil
 }
