@@ -278,12 +278,20 @@ func (s *FodmapCatalogStore) Seed(ctx context.Context, items map[string]data.Fod
 	defer func() { _ = stmt.Close() }()
 
 	for name, entry := range items {
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
 		if _, err := stmt.ExecContext(ctx,
 			strings.ToLower(name),
 			entry.Level,
-			pq.Array(entry.Groups),
+			pq.Array(groups),
 			entry.Notes,
-			pq.Array(entry.Substitutions),
+			pq.Array(subs),
 		); err != nil {
 			return fmt.Errorf("seeding ingredient %q: %w", name, err)
 		}
@@ -299,6 +307,50 @@ func (s *FodmapCatalogStore) Seed(ctx context.Context, items map[string]data.Fod
 	return nil
 }
 
+// Reseed upserts the static FodmapDB map into the catalog, overwriting entries
+// that already exist. Unlike Seed, it does not skip duplicates and does not
+// touch the seeded marker. It returns the number of items processed.
+func (s *FodmapCatalogStore) Reseed(ctx context.Context, items map[string]data.FodmapEntry) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin reseed transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, reseedSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare reseed statement: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	count := 0
+	for name, entry := range items {
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
+		if _, err := stmt.ExecContext(ctx,
+			strings.ToLower(name),
+			entry.Level,
+			pq.Array(groups),
+			entry.Notes,
+			pq.Array(subs),
+		); err != nil {
+			return 0, fmt.Errorf("reseeding ingredient %q: %w", name, err)
+		}
+		count++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing reseed transaction: %w", err)
+	}
+	return count, nil
+}
+
 // embedded SQL strings
 var (
 	createSQL  = mustRead("sql/create.sql")
@@ -308,6 +360,7 @@ var (
 	listAllSQL = mustRead("sql/list_all.sql")
 	statsSQL   = mustRead("sql/stats.sql")
 	seedSQL    = mustRead("sql/seed.sql")
+	reseedSQL  = mustRead("sql/reseed.sql")
 	getMetaSQL = mustRead("sql/get_meta.sql")
 	setMetaSQL = mustRead("sql/set_meta.sql")
 )
@@ -410,12 +463,11 @@ type pgxStringArray []string
 func (a *pgxStringArray) Scan(src any) error {
 	switch v := src.(type) {
 	case string:
-		s := strings.Trim(v, "{}")
-		if s == "" {
-			*a = []string{}
-			return nil
+		parsed, err := parsePGArray(v)
+		if err != nil {
+			return fmt.Errorf("parsing postgres array: %w", err)
 		}
-		*a = strings.Split(s, ",")
+		*a = parsed
 		return nil
 	case []string:
 		*a = v
@@ -426,6 +478,53 @@ func (a *pgxStringArray) Scan(src any) error {
 	default:
 		return fmt.Errorf("unsupported type %T for string array", src)
 	}
+}
+
+// parsePGArray parses a PostgreSQL array literal (e.g. {a,"b c","d,e"}) into
+// a []string, correctly handling quoted elements that contain commas, spaces, or
+// special characters.
+func parsePGArray(s string) ([]string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "{}" || s == "NULL" {
+		return []string{}, nil
+	}
+	if len(s) < 2 || s[0] != '{' || s[len(s)-1] != '}' {
+		return nil, fmt.Errorf("invalid postgres array: %q", s)
+	}
+	inner := s[1 : len(s)-1]
+	if inner == "" {
+		return []string{}, nil
+	}
+
+	var result []string
+	var current strings.Builder
+	inQuotes := false
+	escaped := false
+
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if escaped {
+			current.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inQuotes = !inQuotes
+			continue
+		}
+		if ch == ',' && !inQuotes {
+			result = append(result, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteByte(ch)
+	}
+	result = append(result, current.String())
+	return result, nil
 }
 
 // ToMap converts a slice of catalog entries to a data.FodmapDB-style map.

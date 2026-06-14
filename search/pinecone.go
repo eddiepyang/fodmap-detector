@@ -287,14 +287,22 @@ func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string
 	var pineconeVectors []map[string]any
 	i := 0
 	for name, entry := range items {
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
 		meta := map[string]any{
 			"ingredient": name,
 			"level":      entry.Level,
-			"groups":     entry.Groups,
+			"groups":     groups,
 			"notes":      entry.Notes,
 		}
-		if len(entry.Substitutions) > 0 {
-			meta["substitutions"] = entry.Substitutions
+		if len(subs) > 0 {
+			meta["substitutions"] = subs
 		}
 		pineconeVectors = append(pineconeVectors, map[string]any{
 			"id":       fmt.Sprintf("fodmap-%s", name),
@@ -315,11 +323,23 @@ func (c *PineconeClient) UpsertFodmapItem(ctx context.Context, name string, entr
 		return fmt.Errorf("vectorize ingredient: %w", err)
 	}
 
+	groups := entry.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	subs := entry.Substitutions
+	if subs == nil {
+		subs = []string{}
+	}
+
 	meta := map[string]any{
 		"ingredient": name,
 		"level":      entry.Level,
-		"groups":     entry.Groups,
+		"groups":     groups,
 		"notes":      entry.Notes,
+	}
+	if len(subs) > 0 {
+		meta["substitutions"] = subs
 	}
 	if len(entry.Substitutions) > 0 {
 		meta["substitutions"] = entry.Substitutions

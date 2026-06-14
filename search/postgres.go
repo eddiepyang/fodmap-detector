@@ -194,7 +194,15 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 			return fmt.Errorf("vectorize %q: %w", name, err)
 		}
 
-		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pq.Array(entry.Substitutions), pgvector.NewVector(vec)); err != nil {
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
+		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewVector(vec)); err != nil {
 			return fmt.Errorf("insert fodmap %q: %w", name, err)
 		}
 	}
@@ -240,6 +248,15 @@ func (c *PostgresClient) UpsertFodmapItem(ctx context.Context, name string, entr
 		return fmt.Errorf("vectorize ingredient: %w", err)
 	}
 
+	groups := entry.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	subs := entry.Substitutions
+	if subs == nil {
+		subs = []string{}
+	}
+
 	_, err = c.db.ExecContext(ctx, `
 		INSERT INTO fodmap_ingredients (ingredient, level, groups, notes, substitutions, embedding)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -249,7 +266,7 @@ func (c *PostgresClient) UpsertFodmapItem(ctx context.Context, name string, entr
 			notes = EXCLUDED.notes,
 			substitutions = EXCLUDED.substitutions,
 			embedding = EXCLUDED.embedding
-	`, name, entry.Level, pq.Array(entry.Groups), entry.Notes, pq.Array(entry.Substitutions), pgvector.NewVector(vec))
+	`, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewVector(vec))
 	if err != nil {
 		return fmt.Errorf("upsert fodmap item: %w", err)
 	}

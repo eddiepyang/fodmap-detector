@@ -19,13 +19,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubFodmapWriter tracks upsert/delete calls for assertion.
+// stubFodmapWriter tracks upsert/delete/batch-upsert calls for assertion.
 type stubFodmapWriter struct {
 	*MockSearcher
-	upserts   map[string]data.FodmapEntry
-	deletes   []string
-	upsertErr error
-	deleteErr error
+	upserts        map[string]data.FodmapEntry
+	deletes        []string
+	batchUpserts   []map[string]data.FodmapEntry
+	upsertErr      error
+	deleteErr      error
+	batchUpsertErr error
 }
 
 // Ensure stubFodmapWriter satisfies server.FodmapWriter.
@@ -47,6 +49,14 @@ func (s *stubFodmapWriter) DeleteFodmapItem(ctx context.Context, name string) er
 		return s.deleteErr
 	}
 	s.deletes = append(s.deletes, name)
+	return nil
+}
+
+func (s *stubFodmapWriter) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
+	if s.batchUpsertErr != nil {
+		return s.batchUpsertErr
+	}
+	s.batchUpserts = append(s.batchUpserts, items)
 	return nil
 }
 
@@ -431,4 +441,131 @@ func TestAdminIngredientHandlers_Unauthorized(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAdminIngredientHandlers_Reseed(t *testing.T) {
+	fw := &stubFodmapWriter{}
+	s, cs, token := adminIngredientTestServer(t)
+	s.searcher = fw
+
+	// Add an admin-created entry not in static data
+	_ = cs.Create(context.Background(), store.CatalogEntry{Ingredient: "custom spice", Level: "low"})
+	// Modify an entry that exists in static data
+	_ = cs.Create(context.Background(), store.CatalogEntry{Ingredient: "garlic", Level: "moderate", Groups: []string{"fructans"}})
+
+	mux := s.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/ingredients/reseed", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, true, resp["reseeded"])
+	assert.GreaterOrEqual(t, int(resp["count"].(float64)), 1)
+
+	// Verify that the static entry was reset
+	entry, err := cs.Get(context.Background(), "garlic")
+	require.NoError(t, err)
+	assert.Equal(t, "high", entry.Level, "garlic should have been reset to its static level")
+
+	// Verify that the admin-added entry still exists
+	customEntry, err := cs.Get(context.Background(), "custom spice")
+	require.NoError(t, err)
+	require.NotNil(t, customEntry, "admin-added entry should be preserved")
+	assert.Equal(t, "low", customEntry.Level)
+
+	// Verify that BatchUpsertFodmap was called to rebuild the vector index
+	assert.NotEmpty(t, fw.batchUpserts, "BatchUpsertFodmap should have been called")
+}
+
+func TestAdminIngredientHandlers_ReseedNoSearcher(t *testing.T) {
+	s, _, token := adminIngredientTestServer(t)
+	// searcher is nil by default
+
+	mux := s.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/ingredients/reseed", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, true, resp["reseeded"])
+	// No warning field when searcher is nil
+	_, hasWarning := resp["warning"]
+	assert.False(t, hasWarning, "no warning when searcher is nil")
+}
+
+func TestAdminIngredientHandlers_ReseedSyncFailure(t *testing.T) {
+	fw := &stubFodmapWriter{batchUpsertErr: errors.New("search down")}
+	s, _, token := adminIngredientTestServer(t)
+	s.searcher = fw
+
+	mux := s.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/ingredients/reseed", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, true, resp["reseeded"])
+	assert.Equal(t, "search index sync pending", resp["warning"])
+}
+
+func TestInMemoryCatalogStore_ReseedNormalizesNilSlices(t *testing.T) {
+	cs := newInMemoryCatalogStore().(*inMemoryCatalogStore)
+
+	// Reseed with entries that have nil Groups and Substitutions
+	items := map[string]data.FodmapEntry{
+		"tofu": {Level: "low"},
+	}
+	count, err := cs.Reseed(context.Background(), items)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	entry, err := cs.Get(context.Background(), "tofu")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, []string{}, entry.Groups, "nil Groups should be normalized to empty slice")
+	assert.Equal(t, []string{}, entry.Substitutions, "nil Substitutions should be normalized to empty slice")
+}
+
+func TestInMemoryCatalogStore_SeedNormalizesNilSlices(t *testing.T) {
+	cs := newInMemoryCatalogStore().(*inMemoryCatalogStore)
+
+	items := map[string]data.FodmapEntry{
+		"rice": {Level: "low"},
+	}
+	err := cs.Seed(context.Background(), items)
+	require.NoError(t, err)
+
+	entry, err := cs.Get(context.Background(), "rice")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, []string{}, entry.Groups, "nil Groups should be normalized to empty slice")
+	assert.Equal(t, []string{}, entry.Substitutions, "nil Substitutions should be normalized to empty slice")
+}
+
+func TestInMemoryCatalogStore_ReseedOverwritesExisting(t *testing.T) {
+	cs := newInMemoryCatalogStore().(*inMemoryCatalogStore)
+
+	// Create an entry with wrong level
+	_ = cs.Create(context.Background(), store.CatalogEntry{Ingredient: "garlic", Level: "low"})
+
+	// Reseed with correct data
+	count, err := cs.Reseed(context.Background(), map[string]data.FodmapEntry{
+		"garlic": {Level: "high", Groups: []string{"fructans"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	entry, err := cs.Get(context.Background(), "garlic")
+	require.NoError(t, err)
+	assert.Equal(t, "high", entry.Level, "reseed should overwrite existing entry")
+	assert.Equal(t, []string{"fructans"}, entry.Groups)
 }

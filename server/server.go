@@ -53,6 +53,7 @@ type CatalogStore interface {
 	IsSeeded(ctx context.Context) (bool, error)
 	SetSeeded(ctx context.Context) error
 	Seed(ctx context.Context, items map[string]data.FodmapEntry) error
+	Reseed(ctx context.Context, items map[string]data.FodmapEntry) (int, error)
 	Close() error
 }
 
@@ -334,6 +335,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/admin/ingredients", adminMid(s.adminCreateIngredientHandler))
 	mux.Handle("PUT /api/v1/admin/ingredients/{name}", adminMid(s.adminUpdateIngredientHandler))
 	mux.Handle("DELETE /api/v1/admin/ingredients/{name}", adminMid(s.adminDeleteIngredientHandler))
+	mux.Handle("POST /api/v1/admin/ingredients/reseed", adminMid(s.adminReseedIngredientsHandler))
 	mux.Handle("GET /api/v1/admin/analytics/overview", adminMid(s.adminAnalyticsOverviewHandler))
 	mux.Handle("GET /api/v1/admin/analytics/activity", adminMid(s.adminConversationActivityHandler))
 

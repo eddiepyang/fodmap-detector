@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"fodmap/chat"
@@ -40,12 +38,12 @@ func init() {
 
 	menutrackingAddSourceCmd.Flags().String("name", "", "Human-readable name for the source")
 	menutrackingAddSourceCmd.Flags().String("tier", "gov", "Source tier: gov | consultancy | commercial")
-	menutrackingAddSourceCmd.Flags().String("cron", "@weekly", "Cron schedule (e.g. '@weekly', '@daily', '0 6 * * 1-5')")
+	menutrackingAddSourceCmd.Flags().String("cron", "@weekly", "Cron schedule: one of @daily, @hourly, @weekly")
 	menutrackingAddSourceCmd.Flags().Int("max-tokens", 32000, "Max input tokens per source page")
 }
 
 func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 	dsn := viper.GetString("postgres-dsn")
 	if dsn == "" {
 		return fmt.Errorf("postgres-dsn is required (set via --postgres-dsn or POSTGRES_DSN env)")
@@ -62,6 +60,10 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 	cron, _ := cmd.Flags().GetString("cron")
 	maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 	rawURL := args[0]
+
+	if _, err := parseCronSchedule(cron); err != nil {
+		return fmt.Errorf("invalid --cron: %w", err)
+	}
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -89,11 +91,10 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 
 // PipelineConfig holds the configuration for starting the menutracking pipeline.
 type PipelineConfig struct {
-	DSN          string
-	Fetcher      scraper.Fetcher
-	VectorSink   menutracking.VectorSink
-	ChatBackend  chat.ChatBackend
-	ReloadSignal <-chan struct{} // optional: written to on SIGHUP or POST /menutracking/reload
+	DSN         string
+	Fetcher     scraper.Fetcher
+	VectorSink  menutracking.VectorSink
+	ChatBackend chat.ChatBackend
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -110,25 +111,15 @@ type deadLetterHandler struct {
 }
 
 func (h *deadLetterHandler) HandleError(ctx context.Context, job *rivertype.JobRow, err error) *river.ErrorHandlerResult {
-	jobKind := job.Kind
-	var jobArgs json.RawMessage
-	if job.EncodedArgs != nil {
-		jobArgs = job.EncodedArgs
-	}
-	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, jobKind, jobArgs, err.Error()); dlErr != nil {
+	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, job.Kind, json.RawMessage(job.EncodedArgs), err.Error()); dlErr != nil {
 		slog.Warn("menutracking: failed to write dead letter", "err", dlErr)
 	}
 	return nil
 }
 
 func (h *deadLetterHandler) HandlePanic(ctx context.Context, job *rivertype.JobRow, panicVal any, trace string) *river.ErrorHandlerResult {
-	jobKind := job.Kind
-	var jobArgs json.RawMessage
-	if job.EncodedArgs != nil {
-		jobArgs = job.EncodedArgs
-	}
 	errMsg := fmt.Sprintf("panic: %v\n%s", panicVal, trace)
-	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, jobKind, jobArgs, errMsg); dlErr != nil {
+	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, job.Kind, json.RawMessage(job.EncodedArgs), errMsg); dlErr != nil {
 		slog.Warn("menutracking: failed to write dead letter for panic", "err", dlErr)
 	}
 	return nil
@@ -182,7 +173,6 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	// Build periodic jobs from sources.
 	var periodicJobs []*river.PeriodicJob
 	for _, s := range sources {
-		s := s
 		schedule, err := parseCronSchedule(s.CronSchedule)
 		if err != nil {
 			slog.Warn("skipping source with invalid cron schedule", "source", s.ID, "cron", s.CronSchedule, "err", err)
@@ -239,29 +229,6 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		Stop: stop,
 		Pool: pool,
 	}, nil
-}
-
-// Deprecated: use StartMenutrackingPipeline instead. This function exists for
-// backward compatibility with the CLI menutracking subcommand.
-func RunMenutrackingPipeline(dsn string, fetcher scraper.Fetcher) error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	stopFn, err := StartMenutrackingPipeline(ctx, PipelineConfig{
-		DSN:     dsn,
-		Fetcher: fetcher,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Wait for signal.
-	<-ctx.Done()
-	slog.Info("shutting down menutracking pipeline")
-
-	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return stopFn.Stop(drainCtx)
 }
 
 // parseCronSchedule converts common cron expressions to river.PeriodicSchedule.
