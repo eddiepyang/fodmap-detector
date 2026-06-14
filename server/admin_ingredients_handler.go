@@ -278,6 +278,49 @@ func (s *Server) adminDeleteIngredientHandler(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// adminReseedIngredientsHandler re-upserts the static FodmapDB map into the
+// catalog (overwriting existing entries with the defaults) and then rebuilds
+// the vector search index from the full catalog.
+func (s *Server) adminReseedIngredientsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.catalogStore == nil {
+		respondError(w, "catalog store not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	count, err := s.catalogStore.Reseed(r.Context(), data.FodmapDB)
+	if err != nil {
+		slog.Error("failed to reseed ingredients", "error", err)
+		respondError(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("reseeded fodmap catalog", "count", count)
+
+	warning := ""
+	if s.searcher != nil {
+		items, err := s.catalogStore.ListAll(r.Context())
+		if err != nil {
+			slog.Error("failed to list catalog for index rebuild after reseed", "error", err)
+			warning = "search index sync pending"
+		} else if err := s.searcher.BatchUpsertFodmap(r.Context(), store.ToMap(items)); err != nil {
+			slog.Error("failed to rebuild search index after reseed", "error", err)
+			warning = "search index sync pending"
+		} else {
+			slog.Info("rebuilt search index after reseed", "count", len(items))
+		}
+	}
+
+	resp := map[string]any{
+		"reseeded": true,
+		"count":    count,
+	}
+	if warning != "" {
+		resp["warning"] = warning
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // ingredientRequest is the JSON body for create/update requests.
 type ingredientRequest struct {
 	Name          string   `json:"name"`

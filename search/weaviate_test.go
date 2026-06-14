@@ -752,6 +752,100 @@ func TestClient_EnsureFodmapSchema(t *testing.T) {
 	}
 }
 
+func TestClient_EnsureFodmapSchema_FixesWrongPropertyType(t *testing.T) {
+	var deleted, created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// GET class — return existing class with wrong schema (substitutions as "text" instead of "text[]")
+		if r.Method == "GET" && strings.Contains(r.URL.Path, fodmapCollectionName) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"class":      fodmapCollectionName,
+				"vectorizer": "none",
+				"properties": []any{
+					map[string]any{"name": "ingredient", "dataType": []any{"text"}},
+					map[string]any{"name": "level", "dataType": []any{"text"}},
+					map[string]any{"name": "groups", "dataType": []any{"text[]"}},
+					map[string]any{"name": "notes", "dataType": []any{"text"}},
+					map[string]any{"name": "substitutions", "dataType": []any{"text"}}, // wrong: should be text[]
+				},
+			})
+			return
+		}
+		// DELETE class
+		if r.Method == "DELETE" && strings.Contains(r.URL.Path, fodmapCollectionName) {
+			deleted = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+		// POST schema (recreate)
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	if err := client.EnsureFodmapSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureFodmapSchema failed: %v", err)
+	}
+	if !deleted {
+		t.Error("expected fodmap class to be deleted for schema fix")
+	}
+	if !created {
+		t.Error("expected fodmap class to be recreated")
+	}
+}
+
+func TestClient_EnsureFodmapSchema_SkipsWhenCorrect(t *testing.T) {
+	var deleted, created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// GET class — return existing class with correct schema
+		if r.Method == "GET" && strings.Contains(r.URL.Path, fodmapCollectionName) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"class":      fodmapCollectionName,
+				"vectorizer": "none",
+				"properties": []any{
+					map[string]any{"name": "ingredient", "dataType": []any{"text"}},
+					map[string]any{"name": "level", "dataType": []any{"text"}},
+					map[string]any{"name": "groups", "dataType": []any{"text[]"}},
+					map[string]any{"name": "notes", "dataType": []any{"text"}},
+					map[string]any{"name": "substitutions", "dataType": []any{"text[]"}},
+				},
+			})
+			return
+		}
+		if r.Method == "DELETE" {
+			deleted = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/v1/schema" {
+			created = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
+
+	if err := client.EnsureFodmapSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureFodmapSchema failed: %v", err)
+	}
+	if deleted {
+		t.Error("should not delete class when schema is correct")
+	}
+	if created {
+		t.Error("should not recreate class when schema is correct")
+	}
+}
+
 func TestClient_SearchFodmap_WithSubstitutions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
