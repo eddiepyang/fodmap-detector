@@ -71,8 +71,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"beetroot": {
 		Level:         "high",
-		Groups:        []string{"fructans"},
-		Notes:         "High in fructans at standard servings; small amounts (2-3 slices) may be tolerated",
+		Groups:        []string{"fructans", "GOS"},
+		Notes:         "High in fructans and GOS at standard servings; small amounts (2-3 slices) may be tolerated",
 		Substitutions: []string{"carrot", "roasted red pepper"},
 	},
 	"savoy cabbage": {
@@ -127,13 +127,13 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"cashews": {
 		Level:         "high",
-		Groups:        []string{"GOS"},
-		Notes:         "High at standard servings; 10 cashews may be tolerated",
+		Groups:        []string{"GOS", "fructans"},
+		Notes:         "High at standard servings; 15g (about 10 activated cashews) may be low FODMAP",
 		Substitutions: []string{"walnuts (small amount)", "macadamia nuts", "peanuts"},
 	},
 	"pistachios": {
 		Level:         "high",
-		Groups:        []string{"GOS"},
+		Groups:        []string{"GOS", "fructans"},
 		Notes:         "High at standard servings",
 		Substitutions: []string{"walnuts", "macadamia nuts", "pecans"},
 	},
@@ -176,9 +176,9 @@ var FodmapDB = map[string]FodmapEntry{
 		Substitutions: []string{"hard cheese", "lactose-free ricotta", "almond ricotta"},
 	},
 	"cream cheese": {
-		Level:         "high",
+		Level:         "moderate",
 		Groups:        []string{"lactose"},
-		Notes:         "High lactose at standard servings",
+		Notes:         "Moderate lactose; a small serving (~40g) is low FODMAP",
 		Substitutions: []string{"hard cheese", "lactose-free cream cheese", "cashew cream (small amount)"},
 	},
 	"condensed milk": {
@@ -200,17 +200,16 @@ var FodmapDB = map[string]FodmapEntry{
 		Substitutions: []string{"lactose-free custard", "coconut custard", "chia pudding"},
 	},
 	"cream": {
-		Level:         "high",
-		Groups:        []string{"lactose"},
-		Notes:         "Heavy cream and whipping cream contain lactose; half-and-half is moderate",
-		Substitutions: []string{"lactose-free cream", "coconut cream", "dairy-free whipping cream"},
+		Level:  "low",
+		Groups: []string{},
+		Notes:  "Heavy cream and whipping cream are low FODMAP (~½ cup) due to high fat and low lactose; half-and-half is moderate",
 	},
 
 	// Excess fructose
 	"apple": {
 		Level:         "high",
-		Groups:        []string{"excess fructose"},
-		Notes:         "High in excess fructose; also contains sorbitol in some varieties",
+		Groups:        []string{"excess fructose", "sorbitol"},
+		Notes:         "High in excess fructose and sorbitol",
 		Substitutions: []string{"strawberry", "orange", "grape", "kiwi"},
 	},
 	"pear": {
@@ -245,8 +244,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"dried fig": {
 		Level:         "high",
-		Groups:        []string{"excess fructose"},
-		Notes:         "Very concentrated fructose source",
+		Groups:        []string{"excess fructose", "fructans"},
+		Notes:         "Very concentrated; high in both excess fructose and fructans",
 		Substitutions: []string{"dried cranberries (small amount)", "dried strawberry"},
 	},
 	"dried date": {
@@ -257,8 +256,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"watermelon": {
 		Level:         "high",
-		Groups:        []string{"excess fructose", "fructans"},
-		Notes:         "High in both excess fructose and fructans",
+		Groups:        []string{"excess fructose", "fructans", "mannitol"},
+		Notes:         "High in excess fructose, fructans, and mannitol",
 		Substitutions: []string{"cantaloupe", "honeydew", "strawberry"},
 	},
 	"cherry": {
@@ -269,8 +268,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"blackberry": {
 		Level:         "high",
-		Groups:        []string{"excess fructose", "sorbitol"},
-		Notes:         "High in both excess fructose and sorbitol",
+		Groups:        []string{"sorbitol"},
+		Notes:         "High in sorbitol; very small serving (4g) may be low FODMAP",
 		Substitutions: []string{"strawberry", "raspberry", "blueberry"},
 	},
 	"boysenberry": {
@@ -280,21 +279,19 @@ var FodmapDB = map[string]FodmapEntry{
 		Substitutions: []string{"strawberry", "raspberry", "blueberry"},
 	},
 	"tamarind": {
-		Level:         "high",
-		Groups:        []string{"excess fructose", "fructans"},
-		Notes:         "High in both excess fructose and fructans",
-		Substitutions: []string{"lime juice", "lemon juice", "tamarind-free pad thai sauce"},
+		Level:  "low",
+		Groups: []string{},
+		Notes:  "Tamarind paste is low FODMAP at ½ tbsp; moderate in fructans at 3+ tbsp",
 	},
 	"persimmon": {
-		Level:         "high",
-		Groups:        []string{"excess fructose"},
-		Notes:         "High at standard servings",
-		Substitutions: []string{"papaya", "cantaloupe", "orange"},
+		Level:  "low",
+		Groups: []string{},
+		Notes:  "Low FODMAP up to 64g; moderate in fructans above 65g",
 	},
 	"sugar snap pea": {
 		Level:         "high",
-		Groups:        []string{"excess fructose"},
-		Notes:         "High at standard servings; also contains fructans",
+		Groups:        []string{"excess fructose", "fructans"},
+		Notes:         "High at standard servings in both excess fructose and fructans",
 		Substitutions: []string{"green beans", "bok choy", "bell pepper"},
 	},
 
@@ -302,8 +299,8 @@ var FodmapDB = map[string]FodmapEntry{
 	"avocado": {
 		Level:         "high",
 		Groups:        []string{"sorbitol"},
-		Notes:         "1/8 of an avocado is low FODMAP; larger servings are high due to sorbitol",
-		Substitutions: []string{"avocado (1/8 or less)", "hummus without garlic (small amount)", "olive oil spread"},
+		Notes:         "60g is low FODMAP; larger servings are high in sorbitol",
+		Substitutions: []string{"avocado (60g or less)", "hummus without garlic (small amount)", "olive oil spread"},
 	},
 	"lychee": {
 		Level:         "high",
@@ -363,8 +360,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"sweet potato": {
 		Level:         "high",
-		Groups:        []string{"mannitol"},
-		Notes:         "High in mannitol at standard servings; 1/2 cup may be tolerated",
+		Groups:        []string{"fructans"},
+		Notes:         "Retested by Monash as fructans; 1/2 cup (75g) is low FODMAP, larger servings are high",
 		Substitutions: []string{"potato", "butternut squash (small amount)", "carrot"},
 	},
 
@@ -372,15 +369,14 @@ var FodmapDB = map[string]FodmapEntry{
 
 	"peas": {
 		Level:         "moderate",
-		Groups:        []string{"GOS", "mannitol"},
+		Groups:        []string{"GOS", "fructans"},
 		Notes:         "Green peas; 1/3 cup is moderate; larger servings are high",
 		Substitutions: []string{"green beans", "bok choy", "carrot"},
 	},
 	"coconut cream": {
-		Level:         "moderate",
-		Groups:        []string{"sorbitol"},
-		Notes:         "Coconut milk (1/2 cup canned) is low FODMAP; coconut cream is more concentrated",
-		Substitutions: []string{"coconut milk (canned, 1/2 cup)", "lactose-free cream"},
+		Level:  "low",
+		Groups: []string{},
+		Notes:  "Canned coconut cream is low FODMAP in serves up to 500g",
 	},
 	"leek green": {
 		Level:         "moderate",
@@ -450,8 +446,8 @@ var FodmapDB = map[string]FodmapEntry{
 	},
 	"broccoli": {
 		Level:         "moderate",
-		Groups:        []string{"fructans", "GOS"},
-		Notes:         "1/2 cup broccoli heads is moderate; stalks are higher in fructans",
+		Groups:        []string{"excess fructose"},
+		Notes:         "Retested by Monash; main FODMAP is excess fructose, concentrated in the stalks. Heads are low at 75g, stalks at 45g",
 		Substitutions: []string{"bok choy", "green beans", "zucchini"},
 	},
 	"cashew butter": {
@@ -587,7 +583,7 @@ var FodmapDB = map[string]FodmapEntry{
 	"banana": {
 		Level:  "low",
 		Groups: []string{},
-		Notes:  "Firm/slightly green banana is low FODMAP; very ripe banana develops excess fructose",
+		Notes:  "Firm/slightly green banana is low FODMAP; very ripe banana develops fructans (moderate FODMAP)",
 	},
 	"strawberry": {Level: "low", Groups: []string{}},
 	"orange":     {Level: "low", Groups: []string{}},

@@ -747,27 +747,76 @@ func getReviews(data map[string]models.JSONObject, limit int) SearchReviews {
 	return SearchReviews{BusinessReviews: results}
 }
 
-// EnsureFodmapSchema creates the FodmapIngredient collection if it does not already exist.
+// EnsureFodmapSchema creates the FodmapIngredient collection if it does not
+// already exist, and ensures all properties have the correct data types. If a
+// property has the wrong type (e.g. "text" instead of "text[]"), the class is
+// deleted and recreated to fix the schema.
 func (c *Client) EnsureFodmapSchema(ctx context.Context) error {
-	_, err := c.wv.Schema().ClassGetter().WithClassName(fodmapCollectionName).Do(ctx)
-	if err == nil {
+	desiredProps := []*models.Property{
+		{Name: "ingredient", DataType: []string{"text"}},
+		{Name: "level", DataType: []string{"text"}},
+		{Name: "groups", DataType: []string{"text[]"}},
+		{Name: "notes", DataType: []string{"text"}},
+		{Name: "substitutions", DataType: []string{"text[]"}},
+	}
+
+	existing, err := c.wv.Schema().ClassGetter().WithClassName(fodmapCollectionName).Do(ctx)
+	if err != nil {
+		// Class doesn't exist yet — create it.
+		class := &models.Class{
+			Class:      fodmapCollectionName,
+			Vectorizer: "none",
+			Properties: desiredProps,
+		}
+		if createErr := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); createErr != nil {
+			return fmt.Errorf("creating fodmap schema: %w", createErr)
+		}
 		return nil
 	}
 
-	class := &models.Class{
-		Class:      fodmapCollectionName,
-		Vectorizer: "none",
-		Properties: []*models.Property{
-			{Name: "ingredient", DataType: []string{"text"}},
-			{Name: "level", DataType: []string{"text"}},
-			{Name: "groups", DataType: []string{"text[]"}},
-			{Name: "notes", DataType: []string{"text"}},
-			{Name: "substitutions", DataType: []string{"text[]"}},
-		},
+	// Class exists — verify property types match. If any mismatch, drop and
+	// recreate because Weaviate does not support altering property data types.
+	propMap := make(map[string][]string, len(existing.Properties))
+	for _, p := range existing.Properties {
+		propMap[p.Name] = p.DataType
 	}
-	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
-		return fmt.Errorf("creating fodmap schema: %w", err)
+	needsRecreate := false
+	for _, dp := range desiredProps {
+		existingTypes, ok := propMap[dp.Name]
+		if !ok {
+			needsRecreate = true
+			break
+		}
+		if len(existingTypes) != len(dp.DataType) {
+			needsRecreate = true
+			break
+		}
+		for i, t := range dp.DataType {
+			if existingTypes[i] != t {
+				needsRecreate = true
+				break
+			}
+		}
 	}
+	if !needsRecreate && len(existing.Properties) != len(desiredProps) {
+		needsRecreate = true
+	}
+
+	if needsRecreate {
+		slog.Warn("recreating FodmapIngredient class to fix schema", "existing_props", len(existing.Properties), "desired_props", len(desiredProps))
+		if err := c.wv.Schema().ClassDeleter().WithClassName(fodmapCollectionName).Do(ctx); err != nil {
+			return fmt.Errorf("deleting fodmap class for schema fix: %w", err)
+		}
+		class := &models.Class{
+			Class:      fodmapCollectionName,
+			Vectorizer: "none",
+			Properties: desiredProps,
+		}
+		if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
+			return fmt.Errorf("recreating fodmap schema: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -779,6 +828,14 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 	}
 	batcher := c.wv.Batch().ObjectsBatcher()
 	for name, entry := range items {
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
 		vec, err := c.embedder.EmbedSingle(ctx, "search_document: "+name)
 		if err != nil {
 			return fmt.Errorf("embedding fodmap %q: %w", name, err)
@@ -791,9 +848,9 @@ func (c *Client) BatchUpsertFodmap(ctx context.Context, items map[string]data.Fo
 			Properties: map[string]any{
 				"ingredient":    name,
 				"level":         entry.Level,
-				"groups":        entry.Groups,
+				"groups":        groups,
 				"notes":         entry.Notes,
-				"substitutions": entry.Substitutions,
+				"substitutions": subs,
 			},
 		})
 	}
@@ -818,6 +875,14 @@ func (c *Client) UpsertFodmapItem(ctx context.Context, name string, entry data.F
 	if c.embedder == nil {
 		return errors.New("embedder is not configured")
 	}
+	groups := entry.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	subs := entry.Substitutions
+	if subs == nil {
+		subs = []string{}
+	}
 	vec, err := c.embedder.EmbedSingle(ctx, "search_document: "+name)
 	if err != nil {
 		return fmt.Errorf("embedding fodmap %q: %w", name, err)
@@ -830,9 +895,9 @@ func (c *Client) UpsertFodmapItem(ctx context.Context, name string, entry data.F
 		WithProperties(map[string]any{
 			"ingredient":    name,
 			"level":         entry.Level,
-			"groups":        entry.Groups,
+			"groups":        groups,
 			"notes":         entry.Notes,
-			"substitutions": entry.Substitutions,
+			"substitutions": subs,
 		}).Do(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert fodmap item %q: %w", name, err)

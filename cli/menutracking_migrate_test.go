@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func TestParseCronSchedule(t *testing.T) {
@@ -44,5 +48,37 @@ func TestParseCronSchedule(t *testing.T) {
 				t.Errorf("parseCronSchedule(%q) interval: got %v, want %v", tt.expr, got, tt.want)
 			}
 		})
+	}
+}
+
+// newAddSourceTestCmd builds a command with the same flags init() registers on
+// menutrackingAddSourceCmd, so runMenutrackingAddSource can be exercised in
+// isolation without mutating global command state.
+func newAddSourceTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "add-source"}
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("tier", "gov", "")
+	cmd.Flags().String("cron", "@weekly", "")
+	cmd.Flags().Int("max-tokens", 32000, "")
+	return cmd
+}
+
+func TestRunMenutrackingAddSourceRejectsInvalidCron(t *testing.T) {
+	// A parseable DSN that points nowhere: pgxpool.New is lazy, so no
+	// connection is attempted before the cron guard returns.
+	viper.Set("postgres-dsn", "postgres://u:p@127.0.0.1:1/none")
+	t.Cleanup(func() { viper.Set("postgres-dsn", "") })
+
+	cmd := newAddSourceTestCmd()
+	if err := cmd.Flags().Set("cron", "every-tuesday"); err != nil {
+		t.Fatalf("setting cron flag: %v", err)
+	}
+
+	err := runMenutrackingAddSource(cmd, []string{"https://example.gov/rules"})
+	if err == nil {
+		t.Fatal("expected error for invalid cron, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid --cron") {
+		t.Fatalf("expected invalid --cron error, got: %v", err)
 	}
 }

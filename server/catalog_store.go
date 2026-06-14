@@ -150,17 +150,55 @@ func (s *inMemoryCatalogStore) Seed(ctx context.Context, items map[string]data.F
 		if _, exists := s.items[key]; exists {
 			continue
 		}
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
 		s.items[key] = store.CatalogEntry{
 			Ingredient:    key,
 			Level:         entry.Level,
-			Groups:        entry.Groups,
+			Groups:        groups,
 			Notes:         entry.Notes,
-			Substitutions: entry.Substitutions,
+			Substitutions: subs,
 			UpdatedAt:     time.Now().Format(time.RFC3339),
 		}
 	}
 	s.seeded = true
 	return nil
+}
+
+// Reseed upserts the static FodmapDB map into the in-memory store, overwriting
+// entries that already exist. Unlike Seed, it does not skip duplicates and does
+// not touch the seeded marker. It returns the number of items processed.
+func (s *inMemoryCatalogStore) Reseed(ctx context.Context, items map[string]data.FodmapEntry) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for name, entry := range items {
+		key := strings.ToLower(strings.TrimSpace(name))
+		groups := entry.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		subs := entry.Substitutions
+		if subs == nil {
+			subs = []string{}
+		}
+		s.items[key] = store.CatalogEntry{
+			Ingredient:    key,
+			Level:         entry.Level,
+			Groups:        groups,
+			Notes:         entry.Notes,
+			Substitutions: subs,
+			UpdatedAt:     time.Now().Format(time.RFC3339),
+		}
+		count++
+	}
+	return count, nil
 }
 
 // filteredItems returns a copy of the filtered slice. Caller must hold at least a read lock.
