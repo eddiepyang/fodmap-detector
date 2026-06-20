@@ -20,15 +20,15 @@ type DiscardedJob struct {
 	CreatedAt      string          `json:"created_at"`
 }
 
-// MenutrackingAdminHandler returns an HTTP handler that serves menutracking admin
+// AdminHandler returns an HTTP handler that serves menutracking admin
 // endpoints. It requires a pgxpool.Pool to query river and domain tables.
-type MenutrackingAdminHandler struct {
+type AdminHandler struct {
 	Pool         *pgxpool.Pool
 	ReloadSignal chan struct{} // written to on POST /menutracking/reload to trigger periodic job refresh
 }
 
 // ServeHTTP routes menutracking admin requests based on the path.
-func (h *MenutrackingAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/menutracking/sources", "/menutracking/sources/":
 		h.listSources(w, r)
@@ -41,7 +41,7 @@ func (h *MenutrackingAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (h *MenutrackingAdminHandler) listSources(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) listSources(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -59,7 +59,7 @@ func (h *MenutrackingAdminHandler) listSources(w http.ResponseWriter, r *http.Re
 	}
 }
 
-func (h *MenutrackingAdminHandler) listDiscardedJobs(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) listDiscardedJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -100,7 +100,7 @@ func (h *MenutrackingAdminHandler) listDiscardedJobs(w http.ResponseWriter, r *h
 	}
 }
 
-func (h *MenutrackingAdminHandler) reloadSources(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) reloadSources(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

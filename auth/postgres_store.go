@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -86,12 +87,12 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
-// GetDietaryProfile retrieves a user's dietary profile.
-func (s *PostgresStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+// DietaryProfile retrieves a user's dietary profile.
+func (s *PostgresStore) DietaryProfile(ctx context.Context, userID string) ([]byte, error) {
 	var profile []byte
 	query := `SELECT profile FROM user_profiles WHERE user_id = $1`
 	err := s.db.QueryRowContext(ctx, query, userID).Scan(&profile)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // Profile not found, return nil without error
 	}
 	if err != nil {
@@ -110,13 +111,13 @@ func (s *PostgresStore) SaveDietaryProfile(ctx context.Context, userID string, p
 	return nil
 }
 
-// GetUserByEmail retrieves a user by their email address.
-func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+// UserByEmail retrieves a user by their email address.
+func (s *PostgresStore) UserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
 	query := `SELECT id, email, password, role, status, created_at FROM users WHERE email = $1`
 	row := s.db.QueryRowContext(ctx, query, email)
 	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Role, &user.Status, &user.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // User not found
 	}
 	if err != nil {
@@ -125,13 +126,13 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 	return user, nil
 }
 
-// GetUserByID retrieves a user by their ID.
-func (s *PostgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
+// UserByID retrieves a user by their ID.
+func (s *PostgresStore) UserByID(ctx context.Context, id string) (*User, error) {
 	user := &User{}
 	query := `SELECT id, email, password, role, status, created_at FROM users WHERE id = $1`
 	row := s.db.QueryRowContext(ctx, query, id)
 	err := row.Scan(&user.ID, &user.Email, &user.Password, &user.Role, &user.Status, &user.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // User not found
 	}
 	if err != nil {
@@ -214,15 +215,15 @@ func (s *PostgresStore) ListConversations(ctx context.Context, userID string) ([
 	return convs, nil
 }
 
-// GetConversation retrieves a conversation by ID.
-func (s *PostgresStore) GetConversation(ctx context.Context, id string) (*Conversation, error) {
+// Conversation retrieves a conversation by ID.
+func (s *PostgresStore) Conversation(ctx context.Context, id string) (*Conversation, error) {
 	c := &Conversation{}
 	var contextStr sql.NullString
 	query := `SELECT id, user_id, business_id, business_name, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations WHERE id = $1`
 	row := s.db.QueryRowContext(ctx, query, id)
 	var category, city, state, description, businessName sql.NullString
 	err := row.Scan(&c.ID, &c.UserID, &c.BusinessID, &businessName, &c.Title, &c.CreatedAt, &c.UpdatedAt, &contextStr, &category, &city, &state, &description)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -263,8 +264,8 @@ func (s *PostgresStore) AddMessage(ctx context.Context, msg *Message) error {
 	return err
 }
 
-// GetMessages retrieves history for a conversation.
-func (s *PostgresStore) GetMessages(ctx context.Context, conversationID string) ([]*Message, error) {
+// Messages retrieves history for a conversation.
+func (s *PostgresStore) Messages(ctx context.Context, conversationID string) ([]*Message, error) {
 	query := `SELECT id, conversation_id, role, content, sequence, created_at FROM messages WHERE conversation_id = $1 ORDER BY sequence ASC`
 	rows, err := s.db.QueryContext(ctx, query, conversationID)
 	if err != nil {
@@ -329,8 +330,8 @@ func (s *PostgresStore) ListUsers(ctx context.Context, offset, limit int, filter
 	return users, total, nil
 }
 
-// GetUserDetail returns comprehensive statistics and status about a user.
-func (s *PostgresStore) GetUserDetail(ctx context.Context, userID string) (*UserDetail, error) {
+// UserDetail returns comprehensive statistics and status about a user.
+func (s *PostgresStore) UserDetail(ctx context.Context, userID string) (*UserDetail, error) {
 	var u User
 	var conversations int
 	var messages int
@@ -340,7 +341,7 @@ func (s *PostgresStore) GetUserDetail(ctx context.Context, userID string) (*User
 		&u.ID, &u.Email, &u.Role, &u.Status, &u.CreatedAt,
 		&conversations, &messages, &profile,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // User not found
 	}
 	if err != nil {
@@ -418,8 +419,8 @@ func (s *PostgresStore) ListAllConversations(ctx context.Context, offset, limit 
 	return summaries, total, nil
 }
 
-// GetUserAnalytics returns counts of users.
-func (s *PostgresStore) GetUserAnalytics(ctx context.Context) (*UserAnalytics, error) {
+// UserAnalytics returns counts of users.
+func (s *PostgresStore) UserAnalytics(ctx context.Context) (*UserAnalytics, error) {
 	var total, active, suspended int
 	err := s.db.QueryRowContext(ctx, getUserAnalyticsSQL).Scan(&total, &active, &suspended)
 	if err != nil {
@@ -449,8 +450,8 @@ func (s *PostgresStore) GetUserAnalytics(ctx context.Context) (*UserAnalytics, e
 	}, nil
 }
 
-// GetConversationActivity returns day-by-day counts.
-func (s *PostgresStore) GetConversationActivity(ctx context.Context, days int) ([]DailyCount, error) {
+// ConversationActivity returns day-by-day counts.
+func (s *PostgresStore) ConversationActivity(ctx context.Context, days int) ([]DailyCount, error) {
 	rows, err := s.db.QueryContext(ctx, getConversationActivitySQL, days)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query conversation activity: %w", err)
@@ -468,8 +469,8 @@ func (s *PostgresStore) GetConversationActivity(ctx context.Context, days int) (
 	return activity, nil
 }
 
-// GetConversationAnalytics returns total and average conversations.
-func (s *PostgresStore) GetConversationAnalytics(ctx context.Context) (*ConversationAnalytics, error) {
+// ConversationAnalytics returns total and average conversations.
+func (s *PostgresStore) ConversationAnalytics(ctx context.Context) (*ConversationAnalytics, error) {
 	var total int
 	var avg float64
 	err := s.db.QueryRowContext(ctx, getConversationAnalyticsSQL).Scan(&total, &avg)

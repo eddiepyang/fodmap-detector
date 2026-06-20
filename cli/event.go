@@ -3,11 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+
 	"fodmap/data"
 	dataio "fodmap/data/io"
 	"fodmap/data/schemas"
-	"log/slog"
-	"os"
 
 	"github.com/spf13/cobra"
 )

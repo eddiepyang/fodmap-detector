@@ -12,7 +12,7 @@ import (
 )
 
 func TestExportConversationHandler_JSON(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:           "conv-export-1",
 		UserID:       "user-1",
@@ -72,7 +72,7 @@ func TestExportConversationHandler_JSON(t *testing.T) {
 }
 
 func TestExportConversationHandler_Markdown(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:           "conv-export-md",
 		UserID:       "user-1",
@@ -132,7 +132,7 @@ func TestExportConversationHandler_Markdown(t *testing.T) {
 }
 
 func TestExportConversationHandler_UnsupportedFormat(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:        "conv-export-err",
 		UserID:    "user-1",
@@ -161,7 +161,7 @@ func TestExportConversationHandler_UnsupportedFormat(t *testing.T) {
 }
 
 func TestExportConversationHandler_ForbiddenUser(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:        "conv-export-forbid",
 		UserID:    "user-1",
@@ -191,7 +191,7 @@ func TestExportConversationHandler_ForbiddenUser(t *testing.T) {
 }
 
 func TestExportConversationHandler_NotFound(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{userStore: store, jwtSecret: "test-secret"}
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/conversations/{id}/export", jwtAuth(s.jwtSecret)(http.HandlerFunc(s.exportConversationHandler)))
@@ -228,7 +228,7 @@ func TestCapitalize(t *testing.T) {
 }
 
 func TestExportConversationHandler_DefaultFormatIsJSON(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:           "conv-default-fmt",
 		UserID:       "user-1",
@@ -264,7 +264,7 @@ func TestExportConversationHandler_DefaultFormatIsJSON(t *testing.T) {
 }
 
 func TestExportConversationHandler_MarkdownAlias(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:           "conv-md-alias",
 		UserID:       "user-1",
@@ -300,7 +300,7 @@ func TestExportConversationHandler_MarkdownAlias(t *testing.T) {
 }
 
 func TestExportConversationHandler_MarkdownWithToolCalls(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	conv := &auth.Conversation{
 		ID:           "conv-toolcall",
 		UserID:       "user-1",

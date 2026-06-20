@@ -81,11 +81,11 @@ func TestGetArchive_Success(t *testing.T) {
 	}
 }
 
-// ---- GetReviewsByBusiness ----
+// ---- ReviewsByBusiness ----
 
 func TestUnmarshalReview(t *testing.T) {
 	b, _ := json.Marshal(schemas.Review{ReviewID: "r1", BusinessID: "b1", Stars: 4, Text: "tasty"})
-	got, err := UnmarshalReview(nil, b)
+	got, err := UnmarshalReview(b)
 	if err != nil {
 		t.Fatalf("UnmarshalReview: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestUnmarshalReview(t *testing.T) {
 }
 
 func TestUnmarshalReview_InvalidJSON(t *testing.T) {
-	_, err := UnmarshalReview(nil, []byte("not-json"))
+	_, err := UnmarshalReview([]byte("not-json"))
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -159,7 +159,7 @@ func TestListDir_Error(t *testing.T) {
 	}
 }
 
-func TestGetReviewsByBusiness_Success(t *testing.T) {
+func TestReviewsByBusiness_Success(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
 
@@ -172,7 +172,7 @@ func TestGetReviewsByBusiness_Success(t *testing.T) {
 		"yelp_academic_dataset_review.jsonl": content,
 	})
 
-	reviews, err := GetReviewsByBusiness(tarPath, "biz1")
+	reviews, err := ReviewsByBusiness(tarPath, "biz1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestGetReviewsByBusiness_Success(t *testing.T) {
 	}
 }
 
-func TestGetReviewsByBusiness_NoMatchingBusiness(t *testing.T) {
+func TestReviewsByBusiness_NoMatchingBusiness(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
 
@@ -196,7 +196,7 @@ func TestGetReviewsByBusiness_NoMatchingBusiness(t *testing.T) {
 		"yelp_review.jsonl": string(r1) + "\n",
 	})
 
-	reviews, err := GetReviewsByBusiness(tarPath, "nonexistent")
+	reviews, err := ReviewsByBusiness(tarPath, "nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,29 +205,29 @@ func TestGetReviewsByBusiness_NoMatchingBusiness(t *testing.T) {
 	}
 }
 
-func TestGetReviewsByBusiness_NoReviewFile(t *testing.T) {
+func TestReviewsByBusiness_NoReviewFile(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
 	createTestTar(t, tarPath, map[string]string{
 		"business.jsonl": `{"business_id":"b1"}`,
 	})
 
-	_, err := GetReviewsByBusiness(tarPath, "biz1")
+	_, err := ReviewsByBusiness(tarPath, "biz1")
 	if err == nil {
 		t.Error("expected error when review file is not in archive")
 	}
 }
 
-func TestGetReviewsByBusiness_FileNotFound(t *testing.T) {
-	_, err := GetReviewsByBusiness("/nonexistent/path.tar", "biz1")
+func TestReviewsByBusiness_FileNotFound(t *testing.T) {
+	_, err := ReviewsByBusiness("/nonexistent/path.tar", "biz1")
 	if err == nil {
 		t.Error("expected error for nonexistent archive")
 	}
 }
 
-// ---- GetBusinessMap ----
+// ---- BusinessMap ----
 
-func TestGetBusinessMap_Success(t *testing.T) {
+func TestBusinessMap_Success(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
 
@@ -239,7 +239,7 @@ func TestGetBusinessMap_Success(t *testing.T) {
 		"yelp_academic_dataset_business.jsonl": content,
 	})
 
-	businesses, err := GetBusinessMap(tarPath)
+	businesses, err := BusinessMap(tarPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,21 +254,21 @@ func TestGetBusinessMap_Success(t *testing.T) {
 	}
 }
 
-func TestGetBusinessMap_NoBusinessFile(t *testing.T) {
+func TestBusinessMap_NoBusinessFile(t *testing.T) {
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "test.tar")
 	createTestTar(t, tarPath, map[string]string{
 		"review.jsonl": `{"review_id":"r1"}`,
 	})
 
-	_, err := GetBusinessMap(tarPath)
+	_, err := BusinessMap(tarPath)
 	if err == nil {
 		t.Error("expected error when business file is not in archive")
 	}
 }
 
-func TestGetBusinessMap_FileNotFound(t *testing.T) {
-	_, err := GetBusinessMap("/nonexistent/path.tar")
+func TestBusinessMap_FileNotFound(t *testing.T) {
+	_, err := BusinessMap("/nonexistent/path.tar")
 	if err == nil {
 		t.Error("expected error for nonexistent archive")
 	}

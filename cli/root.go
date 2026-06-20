@@ -1,7 +1,8 @@
 package cli
 
 import (
-	"fmt"
+	"errors"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -31,15 +32,17 @@ func initConfig() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			fmt.Printf("Warning: error reading config file: %v\n", err)
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			slog.Warn("error reading config file", "error", err)
 		}
 	}
 }
 
+// Execute runs the root cobra command and exits with a non-zero status on error.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		slog.Error("command failed", "error", err)
 		os.Exit(1)
 	}
 }

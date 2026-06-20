@@ -5,14 +5,12 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"embed"
+	_ "embed"
 	"errors"
 	"fmt"
 	"strings"
-	"text/template"
 
 	"fodmap/data"
 
@@ -29,16 +27,41 @@ var (
 	ErrIngredientExists = errors.New("ingredient already exists")
 )
 
-//go:embed sql/*.sql
-var sqlFS embed.FS
+//go:embed sql/create.sql
+var createSQL string
 
-var sqlTemplates = template.Must(template.ParseFS(sqlFS, "sql/*.sql"))
+//go:embed sql/get.sql
+var getSQL string
 
-type sqlParams struct {
-	Where     string
-	LimitArg  string
-	OffsetArg string
-}
+//go:embed sql/update.sql
+var updateSQL string
+
+//go:embed sql/delete.sql
+var deleteSQL string
+
+//go:embed sql/list.sql
+var listSQL string
+
+//go:embed sql/list_all.sql
+var listAllSQL string
+
+//go:embed sql/count.sql
+var countSQL string
+
+//go:embed sql/stats.sql
+var statsSQL string
+
+//go:embed sql/seed.sql
+var seedSQL string
+
+//go:embed sql/reseed.sql
+var reseedSQL string
+
+//go:embed sql/get_meta.sql
+var getMetaSQL string
+
+//go:embed sql/set_meta.sql
+var setMetaSQL string
 
 // CatalogEntry is a single ingredient row from the canonical catalog.
 type CatalogEntry struct {
@@ -118,10 +141,10 @@ func (s *FodmapCatalogStore) Create(ctx context.Context, entry CatalogEntry) err
 	return nil
 }
 
-// Get retrieves a single ingredient by name. Returns nil when not found.
-func (s *FodmapCatalogStore) Get(ctx context.Context, name string) (*CatalogEntry, error) {
+// Ingredient retrieves a single ingredient by name. Returns nil when not found.
+func (s *FodmapCatalogStore) Ingredient(ctx context.Context, name string) (*CatalogEntry, error) {
 	var entry CatalogEntry
-	var updatedAt interface{}
+	var updatedAt any
 	err := s.db.QueryRowContext(ctx, getSQL, strings.ToLower(name)).Scan(
 		&entry.Ingredient,
 		&entry.Level,
@@ -142,21 +165,8 @@ func (s *FodmapCatalogStore) Get(ctx context.Context, name string) (*CatalogEntr
 
 // List returns a paginated list of ingredients filtered by the provided filter.
 func (s *FodmapCatalogStore) List(ctx context.Context, offset, limit int, filter ListFilter) ([]CatalogEntry, error) {
-	where, args, err := buildListWhere(filter)
-	if err != nil {
-		return nil, err
-	}
-	query, err := renderSQL("list.sql", sqlParams{
-		Where:     where,
-		LimitArg:  fmt.Sprintf("$%d", len(args)+1),
-		OffsetArg: fmt.Sprintf("$%d", len(args)+2),
-	})
-	if err != nil {
-		return nil, err
-	}
-	args = append(args, limit, offset)
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	args := append(buildListArgs(filter), limit, offset)
+	rows, err := s.db.QueryContext(ctx, listSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing ingredients: %w", err)
 	}
@@ -167,16 +177,9 @@ func (s *FodmapCatalogStore) List(ctx context.Context, offset, limit int, filter
 
 // Count returns the total number of ingredients matching the filter.
 func (s *FodmapCatalogStore) Count(ctx context.Context, filter ListFilter) (int, error) {
-	where, args, err := buildListWhere(filter)
-	if err != nil {
-		return 0, err
-	}
-	query, err := renderSQL("count.sql", sqlParams{Where: where})
-	if err != nil {
-		return 0, err
-	}
+	args := buildListArgs(filter)
 	var total int
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
 		return 0, fmt.Errorf("counting ingredients: %w", err)
 	}
 	return total, nil
@@ -351,69 +354,23 @@ func (s *FodmapCatalogStore) Reseed(ctx context.Context, items map[string]data.F
 	return count, nil
 }
 
-// embedded SQL strings
-var (
-	createSQL  = mustRead("sql/create.sql")
-	getSQL     = mustRead("sql/get.sql")
-	updateSQL  = mustRead("sql/update.sql")
-	deleteSQL  = mustRead("sql/delete.sql")
-	listAllSQL = mustRead("sql/list_all.sql")
-	statsSQL   = mustRead("sql/stats.sql")
-	seedSQL    = mustRead("sql/seed.sql")
-	reseedSQL  = mustRead("sql/reseed.sql")
-	getMetaSQL = mustRead("sql/get_meta.sql")
-	setMetaSQL = mustRead("sql/set_meta.sql")
-)
-
-func mustRead(name string) string {
-	b, err := sqlFS.ReadFile(name)
-	if err != nil {
-		panic(fmt.Sprintf("failed to read embedded sql %q: %v", name, err))
-	}
-	return string(b)
-}
-
-func renderSQL(name string, p sqlParams) (string, error) {
-	var buf bytes.Buffer
-	if err := sqlTemplates.ExecuteTemplate(&buf, name, p); err != nil {
-		return "", fmt.Errorf("render sql %s: %w", name, err)
-	}
-	return buf.String(), nil
-}
-
-func buildListWhere(filter ListFilter) (string, []any, error) {
-	var clauses []string
-	var args []any
-	argID := 1
-
+func buildListArgs(filter ListFilter) []any {
 	search := strings.TrimSpace(filter.Search)
-	if search != "" {
-		clauses = append(clauses, fmt.Sprintf("(ingredient ILIKE $%d OR notes ILIKE $%d)", argID, argID))
-		args = append(args, "%"+search+"%")
-		argID++
+	if search == "" {
+		search = "%%"
+	} else {
+		search = "%" + search + "%"
 	}
-	if filter.Level != "" {
-		clauses = append(clauses, fmt.Sprintf("level = $%d", argID))
-		args = append(args, filter.Level)
-		argID++
-	}
-	if filter.Group != "" {
-		clauses = append(clauses, fmt.Sprintf("$%d = ANY(groups)", argID))
-		args = append(args, filter.Group)
-	}
-
-	where := ""
-	if len(clauses) > 0 {
-		where = "WHERE " + strings.Join(clauses, " AND ")
-	}
-	return where, args, nil
+	level := filter.Level
+	group := filter.Group
+	return []any{search, level, group}
 }
 
 func scanEntries(rows *sql.Rows) ([]CatalogEntry, error) {
 	var entries []CatalogEntry
 	for rows.Next() {
 		var entry CatalogEntry
-		var updatedAt interface{}
+		var updatedAt any
 		if err := rows.Scan(
 			&entry.Ingredient,
 			&entry.Level,

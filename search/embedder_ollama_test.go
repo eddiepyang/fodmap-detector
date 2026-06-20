@@ -51,7 +51,7 @@ func TestOllamaEmbedder_EmbedBatch(t *testing.T) {
 			t.Fatalf("failed to decode req: %v", err)
 		}
 
-		inputs, ok := req.Input.([]interface{})
+		inputs, ok := req.Input.([]any)
 		if !ok || len(inputs) != 2 {
 			t.Fatalf("expected 2 inputs, got %v", req.Input)
 		}

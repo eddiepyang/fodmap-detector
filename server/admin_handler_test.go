@@ -13,7 +13,7 @@ import (
 )
 
 func TestAdminRequiredMiddleware(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	secret := "test-secret"
 	s := &Server{
 		userStore: store,
@@ -68,7 +68,7 @@ func TestAdminRequiredMiddleware(t *testing.T) {
 }
 
 func TestAdminUserHandlers(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	secret := "test-secret"
 	adminID := "admin-1"
 	s := &Server{
@@ -163,7 +163,7 @@ func TestAdminUserHandlers(t *testing.T) {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 
-		user, _ := store.GetUserByID(context.Background(), "u1")
+		user, _ := store.UserByID(context.Background(), "u1")
 		if user.Status != "suspended" {
 			t.Errorf("status = %q, want %q", user.Status, "suspended")
 		}
@@ -205,7 +205,7 @@ func TestAdminUserHandlers(t *testing.T) {
 		}
 
 		// Verify bcrypt hash is correct in store
-		user, _ := store.GetUserByID(context.Background(), "u1")
+		user, _ := store.UserByID(context.Background(), "u1")
 		if !user.CheckPassword(resp.TemporaryPassword) {
 			t.Error("stored password hash does not match temporary password")
 		}
@@ -222,7 +222,7 @@ func TestAdminUserHandlers(t *testing.T) {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 
-		user, _ := store.GetUserByID(context.Background(), "u2")
+		user, _ := store.UserByID(context.Background(), "u2")
 		if user != nil {
 			t.Error("expected user to be permanently deleted")
 		}
@@ -242,7 +242,7 @@ func TestAdminUserHandlers(t *testing.T) {
 }
 
 func TestAdminAnalyticsAndConversationHandlers(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	secret := "test-secret"
 	adminID := "admin-1"
 	s := &Server{
@@ -345,7 +345,7 @@ func TestAdminAnalyticsAndConversationHandlers(t *testing.T) {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
 
-		var resp map[string]interface{}
+		var resp map[string]any
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -381,7 +381,7 @@ func TestAdminAnalyticsAndConversationHandlers(t *testing.T) {
 }
 
 func TestAdminPaginationAndValidation(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	secret := "test-secret"
 	adminID := "admin-1"
 	s := &Server{
@@ -476,7 +476,7 @@ func TestAdminHandlers_ErrorPaths(t *testing.T) {
 	errStore := &mockErrorStore{}
 
 	s := &Server{userStore: errStore, jwtSecret: secret}
-	mockStore := newMockStore()
+	mockStore := newStubStore()
 	mockStore.users["admin@example.com"] = &auth.User{
 		ID:     adminID,
 		Email:  "admin@example.com",

@@ -6,23 +6,23 @@ import "context"
 type ChatStore interface {
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
-	GetUserByID(ctx context.Context, id string) (*User, error)
+	UserByEmail(ctx context.Context, email string) (*User, error)
+	UserByID(ctx context.Context, id string) (*User, error)
 	UpdateUserStatus(ctx context.Context, userID string, status string) error
 
 	// Dietary Profile operations
-	GetDietaryProfile(ctx context.Context, userID string) ([]byte, error)
+	DietaryProfile(ctx context.Context, userID string) ([]byte, error)
 	SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error
 
 	// Conversation operations
 	CreateConversation(ctx context.Context, conv *Conversation) error
 	ListConversations(ctx context.Context, userID string) ([]*Conversation, error)
-	GetConversation(ctx context.Context, id string) (*Conversation, error)
+	Conversation(ctx context.Context, id string) (*Conversation, error)
 	DeleteConversation(ctx context.Context, id string) error
 
 	// Message operations
 	AddMessage(ctx context.Context, msg *Message) error
-	GetMessages(ctx context.Context, conversationID string) ([]*Message, error)
+	Messages(ctx context.Context, conversationID string) ([]*Message, error)
 
 	Close() error
 }

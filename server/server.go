@@ -20,8 +20,8 @@ import (
 // Searcher is the interface satisfied by search.Client. Extracted so the server
 // can be constructed with a stub in tests.
 type Searcher interface {
-	GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
-	GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
+	Businesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error)
+	Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error)
 	SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error)
 	EnsureSchema(ctx context.Context) error
 	EnsureFodmapSchema(ctx context.Context) error
@@ -29,9 +29,12 @@ type Searcher interface {
 	BatchUpsert(ctx context.Context, items []search.IndexItem) error
 }
 
-// FodmapWriter is a narrow capability interface for syncing a single ingredient
-// change to the vector search index. Search backends implement this separately
-// from Searcher so existing Searcher test stubs stay untouched.
+// FodmapWriter is a capability interface for syncing a single ingredient
+// change to the vector search index. It is used via type assertion on
+// Searcher (e.g. fw, ok := s.searcher.(FodmapWriter)) to narrow the searcher
+// to its write capability when handling admin ingredient edits. Search
+// backends implement this separately from Searcher so existing Searcher test
+// stubs stay untouched.
 type FodmapWriter interface {
 	UpsertFodmapItem(ctx context.Context, name string, entry data.FodmapEntry) error
 	DeleteFodmapItem(ctx context.Context, name string) error
@@ -40,10 +43,17 @@ type FodmapWriter interface {
 // CatalogStore is the canonical store for FODMAP ingredient metadata. It is
 // implemented by *store.FodmapCatalogStore in production and by in-memory
 // stubs in tests.
+//
+// This interface is intentionally large (16 methods) because it represents
+// the full CRUD + seeding lifecycle of the catalog. Splitting it into
+// reader/writer/admin triples was considered but rejected: every caller that
+// constructs a CatalogStore needs all capabilities, and partial implementations
+// would just be reassembled at the call site. Per .rules/interfaces.md, the
+// "keep interfaces small" guidance yields to genuine need.
 type CatalogStore interface {
 	EnsureSchema(ctx context.Context) error
 	Create(ctx context.Context, entry store.CatalogEntry) error
-	Get(ctx context.Context, name string) (*store.CatalogEntry, error)
+	Ingredient(ctx context.Context, name string) (*store.CatalogEntry, error)
 	List(ctx context.Context, offset, limit int, filter store.ListFilter) ([]store.CatalogEntry, error)
 	Count(ctx context.Context, filter store.ListFilter) (int, error)
 	Stats(ctx context.Context) (*store.Stats, error)
@@ -59,8 +69,9 @@ type CatalogStore interface {
 
 // MenuStore manages the RestaurantMenu collection. It is defined separately
 // from Searcher so the same Weaviate/Postgres/Pinecone backend types can
-// satisfy both interfaces independently. DeleteStaleMenu is deferred to a
-// follow-up PR (YAGNI — no --purge-stale flag yet).
+// satisfy both interfaces independently. Currently only *search.Client
+// (Weaviate) implements it; DeleteStaleMenu is deferred to a follow-up PR
+// when a --purge-stale flag is added.
 type MenuStore interface {
 	EnsureMenuSchema(ctx context.Context) error
 	BatchUpsertMenu(ctx context.Context, items []search.MenuItem) error
@@ -72,7 +83,7 @@ type Server struct {
 	catalogStore       CatalogStore
 	port               int
 	chatBackend        chat.ChatBackend // nil when chat is not configured
-	geminiApiKey       string           // for manual session creation
+	geminiAPIKey       string           // for manual session creation
 	chatModel          string           // for manual session creation
 	filterModel        string           // for topic screening
 	chatAPIKey         string           // bearer token for /chat route
@@ -84,6 +95,8 @@ type Server struct {
 	jwtSecret          string
 	adminEmail         string
 	menutrackingAdmin  http.Handler // nil when menutracking is not configured
+	ctx                context.Context
+	cancel             context.CancelFunc
 }
 
 type Config struct {
@@ -118,6 +131,7 @@ type Config struct {
 
 // New initialises the server and Searcher client.
 func New(ctx context.Context, cfg Config) (*Server, error) {
+	serverCtx, cancel := context.WithCancel(ctx)
 	s := &Server{
 		port:               cfg.Port,
 		corsAllowedOrigins: cfg.CORSAllowedOrigins,
@@ -126,6 +140,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		jwtSecret:          cfg.JWTSecret,
 		adminEmail:         cfg.AdminEmail,
 		menutrackingAdmin:  cfg.MenutrackingAdmin,
+		ctx:                serverCtx,
+		cancel:             cancel,
 	}
 
 	if cfg.PostgresSearch && cfg.PostgresDSN != "" {
@@ -186,7 +202,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if filterModel == "" {
 			filterModel = "gemini-3.1-flash-lite-preview"
 		}
-		s.geminiApiKey = cfg.GeminiAPIKey
+		s.geminiAPIKey = cfg.GeminiAPIKey
 		s.chatModel = chatModel
 		s.filterModel = filterModel
 		s.chatAPIKey = cfg.ChatAPIKey
@@ -253,14 +269,17 @@ func (s *Server) seedAndReload(ctx context.Context) error {
 // where the real LLM and Weaviate clients should not be initialised. Pass nil for searcher
 // to disable the search endpoint.
 func NewServer(searcher Searcher, port int) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
 		searcher:          searcher,
 		catalogStore:      newInMemoryCatalogStore(),
 		port:              port,
 		jwtSecret:         "test-secret", // default for tests
-		userStore:         newMockStore(),
+		userStore:         newStubStore(),
 		chatRateLimiter:   newIPRateLimiter(100, 100),
 		chatMaxConcurrent: 10,
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 }
 
@@ -287,6 +306,7 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 	if maxConc <= 0 {
 		maxConc = 10
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
 		searcher:          searcher,
 		catalogStore:      newInMemoryCatalogStore(),
@@ -296,7 +316,9 @@ func NewServerWithChat(searcher Searcher, port int, cfg ChatConfig) *Server {
 		chatRateLimiter:   newIPRateLimiter(rl, burst),
 		chatMaxConcurrent: maxConc,
 		genaiClient:       nil, // tests inject their own backend or mock
-		userStore:         newMockStore(),
+		userStore:         newStubStore(),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 }
 
@@ -410,9 +432,28 @@ func (s *Server) Searcher() Searcher {
 	return s.searcher
 }
 
-// Start registers routes and begins serving HTTP requests.
+// Start registers routes and begins serving HTTP requests. It blocks until
+// the server stops via Stop, SIGTERM, or an error.
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
 	slog.Info("server listening", "addr", addr)
-	return http.ListenAndServe(addr, s.Handler())
+	srv := &http.Server{Addr: addr, Handler: s.Handler()}
+	go func() {
+		<-s.ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx) // best-effort during shutdown
+	}()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+// Stop cancels the server's lifecycle context, which shuts down the HTTP
+// server and any background goroutines that derive from it.
+func (s *Server) Stop() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 }

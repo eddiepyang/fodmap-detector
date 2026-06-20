@@ -153,7 +153,7 @@ func (s *stubBackend) Generate(ctx context.Context, opts GenerateOpts) (Message,
 }
 
 func TestSession_SendWithToolCalls(t *testing.T) {
-	mockFodmap := &mockFodmapClient{}
+	mockFodmap := &stubFodmapClient{}
 	backend := &stubBackend{
 		messages: []Message{
 			{Role: "model", FunctionCalls: []FunctionCall{{Name: "lookup_fodmap", Args: map[string]any{"ingredient": "garlic"}}}},
@@ -569,7 +569,7 @@ func TestFetchChatReviews_ForwardsParams(t *testing.T) {
 	}
 }
 
-func TestLookupFODMAP_Found(t *testing.T) {
+func TestLookupFodmap_Found(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -579,7 +579,7 @@ func TestLookupFODMAP_Found(t *testing.T) {
 	defer srv.Close()
 
 	client := NewHTTPFodmapServerClient(srv.URL)
-	result, err := client.LookupFODMAP(t.Context(), "garlic")
+	result, err := client.LookupFodmap(t.Context(), "garlic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,14 +588,14 @@ func TestLookupFODMAP_Found(t *testing.T) {
 	}
 }
 
-func TestLookupFODMAP_NotFound(t *testing.T) {
+func TestLookupFodmap_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
 	client := NewHTTPFodmapServerClient(srv.URL)
-	result, err := client.LookupFODMAP(t.Context(), "unobtainium")
+	result, err := client.LookupFodmap(t.Context(), "unobtainium")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,22 +604,22 @@ func TestLookupFODMAP_NotFound(t *testing.T) {
 	}
 }
 
-func TestLookupFODMAP_ServerError(t *testing.T) {
+func TestLookupFodmap_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
 	client := NewHTTPFodmapServerClient(srv.URL)
-	_, err := client.LookupFODMAP(t.Context(), "garlic")
+	_, err := client.LookupFodmap(t.Context(), "garlic")
 	if err == nil {
 		t.Error("expected error for 500")
 	}
 }
 
-func TestLookupFODMAP_ConnectionRefused(t *testing.T) {
+func TestLookupFodmap_ConnectionRefused(t *testing.T) {
 	client := NewHTTPFodmapServerClient("http://localhost:1") // nothing listening
-	_, err := client.LookupFODMAP(context.Background(), "garlic")
+	_, err := client.LookupFodmap(context.Background(), "garlic")
 	if err == nil {
 		t.Error("expected error for connection refused")
 	}
@@ -659,15 +659,15 @@ func TestFodmapAllergenTools_HasAllDeclarations(t *testing.T) {
 
 // --- Mocks ---
 
-type mockFodmapClient struct{}
+type stubFodmapClient struct{}
 
-func (m *mockFodmapClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
+func (m *stubFodmapClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
 	return &Business{ID: "b1", Name: "Mock Biz"}, nil
 }
-func (m *mockFodmapClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
+func (m *stubFodmapClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
 	return []Review{{ReviewID: "r1", Text: "Mock Review"}}, nil
 }
-func (m *mockFodmapClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
+func (m *stubFodmapClient) LookupFodmap(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
 	return FodmapToolResponse{Ingredient: ingredient, Found: true, FodmapLevel: "high"}, nil
 }
 
@@ -723,7 +723,7 @@ type stubFodmapLookup struct {
 	byName map[string]FodmapToolResponse
 }
 
-func (s stubFodmapLookup) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
+func (s stubFodmapLookup) LookupFodmap(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
 	if r, ok := s.byName[ingredient]; ok {
 		return r, nil
 	}

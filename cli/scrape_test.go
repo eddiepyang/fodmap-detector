@@ -55,7 +55,7 @@ func sampleResult() scraper.MenuExtractionResult {
 
 func TestToMenuItems(t *testing.T) {
 	rawURL := "https://example.com/menu"
-	items, err := toMenuItems(sampleResult(), rawURL, stubEmbedder{}, context.Background())
+	items, err := toMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems: %v", err)
 	}
@@ -98,11 +98,11 @@ func TestToMenuItems(t *testing.T) {
 
 func TestToMenuItems_Deterministic(t *testing.T) {
 	rawURL := "https://example.com/menu"
-	a, err := toMenuItems(sampleResult(), rawURL, stubEmbedder{}, context.Background())
+	a, err := toMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems (a): %v", err)
 	}
-	b, err := toMenuItems(sampleResult(), rawURL, stubEmbedder{}, context.Background())
+	b, err := toMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems (b): %v", err)
 	}
@@ -112,7 +112,7 @@ func TestToMenuItems_Deterministic(t *testing.T) {
 }
 
 func TestToMenuItems_EmbedError(t *testing.T) {
-	items, err := toMenuItems(sampleResult(), "https://example.com/menu", stubEmbedder{err: errors.New("boom")}, context.Background())
+	items, err := toMenuItems(context.Background(), sampleResult(), "https://example.com/menu", stubEmbedder{err: errors.New("boom")})
 	if err == nil {
 		t.Fatal("expected error from embedder, got nil")
 	}

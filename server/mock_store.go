@@ -10,15 +10,15 @@ import (
 	"fodmap/auth"
 )
 
-type mockUserStore struct {
+type stubUserStore struct {
 	users         map[string]*auth.User
 	conversations map[string]*auth.Conversation
 	messages      map[string][]*auth.Message
 	profiles      map[string][]byte
 }
 
-func newMockStore() *mockUserStore {
-	return &mockUserStore{
+func newStubStore() *stubUserStore {
+	return &stubUserStore{
 		users:         make(map[string]*auth.User),
 		conversations: make(map[string]*auth.Conversation),
 		messages:      make(map[string][]*auth.Message),
@@ -26,7 +26,7 @@ func newMockStore() *mockUserStore {
 	}
 }
 
-func (m *mockUserStore) CreateUser(ctx context.Context, user *auth.User) error {
+func (m *stubUserStore) CreateUser(ctx context.Context, user *auth.User) error {
 	if _, ok := m.users[user.Email]; ok {
 		return fmt.Errorf("user already exists")
 	}
@@ -40,19 +40,19 @@ func (m *mockUserStore) CreateUser(ctx context.Context, user *auth.User) error {
 	return nil
 }
 
-func (m *mockUserStore) GetDietaryProfile(ctx context.Context, userID string) ([]byte, error) {
+func (m *stubUserStore) DietaryProfile(ctx context.Context, userID string) ([]byte, error) {
 	if profile, ok := m.profiles[userID]; ok {
 		return profile, nil
 	}
 	return nil, nil
 }
 
-func (m *mockUserStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
+func (m *stubUserStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
 	m.profiles[userID] = profile
 	return nil
 }
 
-func (m *mockUserStore) GetUserByEmail(ctx context.Context, email string) (*auth.User, error) {
+func (m *stubUserStore) UserByEmail(ctx context.Context, email string) (*auth.User, error) {
 	user, ok := m.users[email]
 	if !ok {
 		return nil, nil
@@ -60,7 +60,7 @@ func (m *mockUserStore) GetUserByEmail(ctx context.Context, email string) (*auth
 	return user, nil
 }
 
-func (m *mockUserStore) GetUserByID(ctx context.Context, id string) (*auth.User, error) {
+func (m *stubUserStore) UserByID(ctx context.Context, id string) (*auth.User, error) {
 	for _, u := range m.users {
 		if u.ID == id {
 			return u, nil
@@ -69,7 +69,7 @@ func (m *mockUserStore) GetUserByID(ctx context.Context, id string) (*auth.User,
 	return nil, nil
 }
 
-func (m *mockUserStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
+func (m *stubUserStore) UpdateUserStatus(ctx context.Context, userID string, status string) error {
 	for _, u := range m.users {
 		if u.ID == userID {
 			u.Status = status
@@ -79,12 +79,12 @@ func (m *mockUserStore) UpdateUserStatus(ctx context.Context, userID string, sta
 	return fmt.Errorf("not found")
 }
 
-func (m *mockUserStore) CreateConversation(ctx context.Context, conv *auth.Conversation) error {
+func (m *stubUserStore) CreateConversation(ctx context.Context, conv *auth.Conversation) error {
 	m.conversations[conv.ID] = conv
 	return nil
 }
 
-func (m *mockUserStore) ListConversations(ctx context.Context, userID string) ([]*auth.Conversation, error) {
+func (m *stubUserStore) ListConversations(ctx context.Context, userID string) ([]*auth.Conversation, error) {
 	var results []*auth.Conversation
 	for _, c := range m.conversations {
 		if c.UserID == userID {
@@ -94,7 +94,7 @@ func (m *mockUserStore) ListConversations(ctx context.Context, userID string) ([
 	return results, nil
 }
 
-func (m *mockUserStore) GetConversation(ctx context.Context, id string) (*auth.Conversation, error) {
+func (m *stubUserStore) Conversation(ctx context.Context, id string) (*auth.Conversation, error) {
 	c, ok := m.conversations[id]
 	if !ok {
 		return nil, nil
@@ -102,24 +102,24 @@ func (m *mockUserStore) GetConversation(ctx context.Context, id string) (*auth.C
 	return c, nil
 }
 
-func (m *mockUserStore) DeleteConversation(ctx context.Context, id string) error {
+func (m *stubUserStore) DeleteConversation(ctx context.Context, id string) error {
 	delete(m.conversations, id)
 	delete(m.messages, id)
 	return nil
 }
 
-func (m *mockUserStore) AddMessage(ctx context.Context, msg *auth.Message) error {
+func (m *stubUserStore) AddMessage(ctx context.Context, msg *auth.Message) error {
 	m.messages[msg.ConversationID] = append(m.messages[msg.ConversationID], msg)
 	return nil
 }
 
-func (m *mockUserStore) GetMessages(ctx context.Context, conversationID string) ([]*auth.Message, error) {
+func (m *stubUserStore) Messages(ctx context.Context, conversationID string) ([]*auth.Message, error) {
 	return m.messages[conversationID], nil
 }
 
-func (m *mockUserStore) Close() error { return nil }
+func (m *stubUserStore) Close() error { return nil }
 
-func (m *mockUserStore) SetUserRole(ctx context.Context, userID string, role string) error {
+func (m *stubUserStore) SetUserRole(ctx context.Context, userID string, role string) error {
 	for _, u := range m.users {
 		if u.ID == userID {
 			u.Role = role
@@ -129,7 +129,7 @@ func (m *mockUserStore) SetUserRole(ctx context.Context, userID string, role str
 	return fmt.Errorf("user not found")
 }
 
-func (m *mockUserStore) ListUsers(ctx context.Context, offset, limit int, filter auth.UserFilter) ([]*auth.User, int, error) {
+func (m *stubUserStore) ListUsers(ctx context.Context, offset, limit int, filter auth.UserFilter) ([]*auth.User, int, error) {
 	var filtered []*auth.User
 	for _, u := range m.users {
 		if u.Status == "deleted" {
@@ -162,7 +162,7 @@ func (m *mockUserStore) ListUsers(ctx context.Context, offset, limit int, filter
 	return filtered[offset:end], total, nil
 }
 
-func (m *mockUserStore) GetUserDetail(ctx context.Context, userID string) (*auth.UserDetail, error) {
+func (m *stubUserStore) UserDetail(ctx context.Context, userID string) (*auth.UserDetail, error) {
 	var user *auth.User
 	for _, u := range m.users {
 		if u.ID == userID {
@@ -196,7 +196,7 @@ func (m *mockUserStore) GetUserDetail(ctx context.Context, userID string) (*auth
 	}, nil
 }
 
-func (m *mockUserStore) DeleteUserPermanently(ctx context.Context, userID string) error {
+func (m *stubUserStore) DeleteUserPermanently(ctx context.Context, userID string) error {
 	var targetUser *auth.User
 	var targetEmail string
 	for email, u := range m.users {
@@ -223,7 +223,7 @@ func (m *mockUserStore) DeleteUserPermanently(ctx context.Context, userID string
 	return nil
 }
 
-func (m *mockUserStore) ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error {
+func (m *stubUserStore) ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error {
 	for _, u := range m.users {
 		if u.ID == userID {
 			u.Password = hashedPassword
@@ -233,10 +233,10 @@ func (m *mockUserStore) ResetUserPassword(ctx context.Context, userID string, ha
 	return fmt.Errorf("user not found")
 }
 
-func (m *mockUserStore) ListAllConversations(ctx context.Context, offset, limit int, search string) ([]*auth.ConversationSummary, int, error) {
+func (m *stubUserStore) ListAllConversations(ctx context.Context, offset, limit int, search string) ([]*auth.ConversationSummary, int, error) {
 	var filtered []*auth.Conversation
 	for _, c := range m.conversations {
-		user, err := m.GetUserByID(ctx, c.UserID)
+		user, err := m.UserByID(ctx, c.UserID)
 		userEmail := ""
 		if err == nil && user != nil {
 			userEmail = user.Email
@@ -269,7 +269,7 @@ func (m *mockUserStore) ListAllConversations(ctx context.Context, offset, limit 
 	}
 
 	for _, c := range filtered[start:end] {
-		user, _ := m.GetUserByID(ctx, c.UserID)
+		user, _ := m.UserByID(ctx, c.UserID)
 		email := ""
 		if user != nil {
 			email = user.Email
@@ -290,7 +290,7 @@ func (m *mockUserStore) ListAllConversations(ctx context.Context, offset, limit 
 	return summaries, total, nil
 }
 
-func (m *mockUserStore) GetUserAnalytics(ctx context.Context) (*auth.UserAnalytics, error) {
+func (m *stubUserStore) UserAnalytics(ctx context.Context) (*auth.UserAnalytics, error) {
 	total := 0
 	active := 0
 	suspended := 0
@@ -326,7 +326,7 @@ func (m *mockUserStore) GetUserAnalytics(ctx context.Context) (*auth.UserAnalyti
 	}, nil
 }
 
-func (m *mockUserStore) GetConversationActivity(ctx context.Context, days int) ([]auth.DailyCount, error) {
+func (m *stubUserStore) ConversationActivity(ctx context.Context, days int) ([]auth.DailyCount, error) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	counts := make(map[string]int)
 
@@ -352,7 +352,7 @@ func (m *mockUserStore) GetConversationActivity(ctx context.Context, days int) (
 	return activity, nil
 }
 
-func (m *mockUserStore) GetConversationAnalytics(ctx context.Context) (*auth.ConversationAnalytics, error) {
+func (m *stubUserStore) ConversationAnalytics(ctx context.Context) (*auth.ConversationAnalytics, error) {
 	totalConvs := len(m.conversations)
 	userCount := 0
 	for _, u := range m.users {

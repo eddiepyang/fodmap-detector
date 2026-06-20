@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -62,7 +63,7 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 	rawURL := args[0]
 
 	if _, err := parseCronSchedule(cron); err != nil {
-		return fmt.Errorf("invalid --cron: %w", err)
+		return err
 	}
 
 	parsedURL, err := url.Parse(rawURL)
@@ -231,6 +232,9 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	}, nil
 }
 
+// ErrInvalidCron is returned when a cron schedule expression is not supported.
+var ErrInvalidCron = errors.New("invalid --cron")
+
 // parseCronSchedule converts common cron expressions to river.PeriodicSchedule.
 // Phase 1 supports simple interval-based schedules. Full robfig/cron parsing
 // will be added in a later phase.
@@ -243,6 +247,6 @@ func parseCronSchedule(cronExpr string) (river.PeriodicSchedule, error) {
 	case "@weekly", "0 0 * * 0":
 		return river.PeriodicInterval(7 * 24 * time.Hour), nil
 	default:
-		return nil, fmt.Errorf("unsupported cron schedule %q: only @daily, @hourly, @weekly supported in phase 1", cronExpr)
+		return nil, fmt.Errorf("%w: unsupported schedule %q: only @daily, @hourly, @weekly supported in phase 1", ErrInvalidCron, cronExpr)
 	}
 }

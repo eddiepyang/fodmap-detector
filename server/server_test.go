@@ -74,7 +74,7 @@ func TestServerNew(t *testing.T) {
 }
 
 func TestServerMockStoreClose(t *testing.T) {
-	ms := newMockStore()
+	ms := newStubStore()
 	err := ms.Close()
 	if err != nil {
 		t.Errorf("Close returned error: %v", err)

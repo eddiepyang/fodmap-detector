@@ -228,7 +228,7 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 	}
 }
 
-func TestPostgresClient_GetBusinesses(t *testing.T) {
+func TestPostgresClient_Businesses(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
@@ -247,13 +247,13 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "categories", "avg_stars", "avg_certainty"}).
 			AddRow("bus1", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
 
-	res, err := client.GetBusinesses(context.Background(), "good pizza", 10, SearchFilter{
+	res, err := client.Businesses(context.Background(), "good pizza", 10, SearchFilter{
 		Category: "Pizza",
 		City:     "New York",
 		State:    "NY",
 	})
 	if err != nil {
-		t.Fatalf("GetBusinesses returned error: %v", err)
+		t.Fatalf("Businesses returned error: %v", err)
 	}
 
 	if len(res.Businesses) != 1 || res.Businesses[0].ID != "bus1" {
@@ -265,7 +265,7 @@ func TestPostgresClient_GetBusinesses(t *testing.T) {
 	}
 }
 
-func TestPostgresClient_GetReviews(t *testing.T) {
+func TestPostgresClient_Reviews(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
@@ -284,12 +284,12 @@ func TestPostgresClient_GetReviews(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"review_id", "business_id", "business_name", "city", "state", "text", "chunk_text", "certainty"}).
 			AddRow("rev1", "bus1", "Joe's Pizza", "New York", "NY", "Great pizza!", "Great pizza chunk", 0.95))
 
-	res, err := client.GetReviews(context.Background(), "good pizza", 5, SearchFilter{
+	res, err := client.Reviews(context.Background(), "good pizza", 5, SearchFilter{
 		BusinessID: "bus1",
 		ReviewIDs:  []string{"rev1"},
 	})
 	if err != nil {
-		t.Fatalf("GetReviews returned error: %v", err)
+		t.Fatalf("Reviews returned error: %v", err)
 	}
 
 	if len(res.BusinessReviews) != 1 || res.BusinessReviews[0].Review.Review.ReviewID != "rev1" {
@@ -394,7 +394,7 @@ func TestPostgresClient_BatchUpsert_ExecError(t *testing.T) {
 	}
 }
 
-func TestPostgresClient_GetBusinesses_QueryError(t *testing.T) {
+func TestPostgresClient_Businesses_QueryError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
@@ -404,13 +404,13 @@ func TestPostgresClient_GetBusinesses_QueryError(t *testing.T) {
 
 	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
 
-	_, err = client.GetBusinesses(context.Background(), "pizza", 10, SearchFilter{})
+	_, err = client.Businesses(context.Background(), "pizza", 10, SearchFilter{})
 	if err == nil || !strings.Contains(err.Error(), "query error") {
 		t.Errorf("Expected query error, got: %v", err)
 	}
 }
 
-func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
+func TestPostgresClient_Reviews_QueryError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("Failed to open mock db: %v", err)
@@ -420,7 +420,7 @@ func TestPostgresClient_GetReviews_QueryError(t *testing.T) {
 
 	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("query error"))
 
-	_, err = client.GetReviews(context.Background(), "pizza", 10, SearchFilter{})
+	_, err = client.Reviews(context.Background(), "pizza", 10, SearchFilter{})
 	if err == nil || !strings.Contains(err.Error(), "query error") {
 		t.Errorf("Expected query error, got: %v", err)
 	}

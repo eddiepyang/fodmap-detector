@@ -17,6 +17,8 @@ type inferredEndpoint struct {
 	Headers map[string]string `json:"headers"`
 }
 
+// FetchInferredEndpoint validates rawJSON as an inferred API endpoint descriptor
+// and fetches it, returning the response body as a string.
 func FetchInferredEndpoint(ctx context.Context, rawJSON, originalURL string) (string, error) {
 	var ep inferredEndpoint
 	if err := json.Unmarshal([]byte(rawJSON), &ep); err != nil || ep.URL == "" {

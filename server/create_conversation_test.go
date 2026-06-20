@@ -15,7 +15,7 @@ import (
 )
 
 func TestCreateConversationHandler_Metadata(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	mockSearcher := &chatMockSearcher{}
 	s := &Server{
 		userStore: store,
@@ -59,7 +59,7 @@ func TestCreateConversationHandler_Metadata(t *testing.T) {
 }
 
 func TestCreateConversationHandler_ReviewLimit(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	mockSearcher := &limitMockSearcher{}
 	s := &Server{
 		userStore: store,
@@ -76,7 +76,7 @@ func TestCreateConversationHandler_ReviewLimit(t *testing.T) {
 	s.createConversationHandler(rec, req)
 
 	if mockSearcher.FirstLimit != 10 {
-		t.Errorf("GetReviews limit = %d, want 10", mockSearcher.FirstLimit)
+		t.Errorf("Reviews limit = %d, want 10", mockSearcher.FirstLimit)
 	}
 }
 
@@ -86,12 +86,12 @@ type limitMockSearcher struct {
 	calls      int
 }
 
-func (m *limitMockSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *limitMockSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	m.calls++
 	if m.calls == 1 {
 		m.FirstLimit = limit
 	}
-	return m.chatMockSearcher.GetReviews(ctx, query, limit, filter)
+	return m.chatMockSearcher.Reviews(ctx, query, limit, filter)
 }
 
 // reviewMockSearcher returns reviews with ReviewIDs so that
@@ -100,7 +100,7 @@ type reviewMockSearcher struct {
 	chatMockSearcher
 }
 
-func (m *reviewMockSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *reviewMockSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	return search.SearchReviews{
 		BusinessReviews: []search.RankedReview{
 			{
@@ -120,7 +120,7 @@ func (m *reviewMockSearcher) GetReviews(ctx context.Context, query string, limit
 }
 
 func TestCreateConversationHandler_SummaryPending(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		searcher:  &reviewMockSearcher{},
@@ -156,9 +156,9 @@ func TestCreateConversationHandler_SummaryPending(t *testing.T) {
 	// Wait briefly for the background goroutine to finish.
 	time.Sleep(200 * time.Millisecond)
 
-	msgs, err := store.GetMessages(context.Background(), resp.Conversation.ID)
+	msgs, err := store.Messages(context.Background(), resp.Conversation.ID)
 	if err != nil {
-		t.Fatalf("GetMessages: %v", err)
+		t.Fatalf("Messages: %v", err)
 	}
 	if len(msgs) != 1 {
 		t.Fatalf("stored messages = %d, want 1", len(msgs))
@@ -169,7 +169,7 @@ func TestCreateConversationHandler_SummaryPending(t *testing.T) {
 }
 
 func TestCreateConversationHandler_NoReviews_NoSummary(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		searcher:  &emptyReviewSearcher{},
@@ -200,7 +200,7 @@ func TestCreateConversationHandler_NoReviews_NoSummary(t *testing.T) {
 		t.Error("expected summary_pending=false when no reviews")
 	}
 
-	msgs, _ := store.GetMessages(context.Background(), resp.Conversation.ID)
+	msgs, _ := store.Messages(context.Background(), resp.Conversation.ID)
 	if len(msgs) != 0 {
 		t.Errorf("stored messages = %d, want 0", len(msgs))
 	}
@@ -211,6 +211,6 @@ type emptyReviewSearcher struct {
 	chatMockSearcher
 }
 
-func (m *emptyReviewSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *emptyReviewSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	return search.SearchReviews{}, nil
 }

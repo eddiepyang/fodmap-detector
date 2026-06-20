@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestInsertAndGetProposedRule(t *testing.T) {
+func TestInsertAndProposedRule(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 
@@ -29,9 +29,9 @@ func TestInsertAndGetProposedRule(t *testing.T) {
 		t.Error("expected ProposedAt and CreatedAt set")
 	}
 
-	got, err := GetProposedRule(ctx, pool, r.ID)
+	got, err := ProposedRule(ctx, pool, r.ID)
 	if err != nil {
-		t.Fatalf("GetProposedRule: %v", err)
+		t.Fatalf("ProposedRule: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected non-nil proposed rule")
@@ -41,13 +41,13 @@ func TestInsertAndGetProposedRule(t *testing.T) {
 	}
 }
 
-func TestGetActiveRule_NotFound(t *testing.T) {
+func TestActiveRule_NotFound(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 
-	got, err := GetActiveRule(context.Background(), pool, "no-such-domain.example")
+	got, err := ActiveRule(context.Background(), pool, "no-such-domain.example")
 	if err != nil {
-		t.Fatalf("GetActiveRule: %v", err)
+		t.Fatalf("ActiveRule: %v", err)
 	}
 	if got != nil {
 		t.Errorf("expected nil rule, got %+v", got)
@@ -73,9 +73,9 @@ func TestPromoteAndRejectRule(t *testing.T) {
 		t.Fatalf("PromoteRule: %v", err)
 	}
 
-	active, err := GetActiveRule(ctx, pool, "fda.gov")
+	active, err := ActiveRule(ctx, pool, "fda.gov")
 	if err != nil {
-		t.Fatalf("GetActiveRule: %v", err)
+		t.Fatalf("ActiveRule: %v", err)
 	}
 	if active == nil {
 		t.Fatal("expected active rule after promotion")

@@ -8,11 +8,14 @@ import (
 	"github.com/hamba/avro/v2/ocf"
 )
 
+// EventWriter writes Avro OCF records to an underlying write closer.
 type EventWriter struct {
 	encoder *ocf.Encoder
 	closer  io.Closer
 }
 
+// NewEventWriter creates an EventWriter that encodes records using the given
+// Avro schema string.
 func NewEventWriter(w io.WriteCloser, outputSchema string) (*EventWriter, error) {
 	enc, err := ocf.NewEncoder(outputSchema, w)
 	if err != nil {
@@ -23,6 +26,7 @@ func NewEventWriter(w io.WriteCloser, outputSchema string) (*EventWriter, error)
 	return &EventWriter{encoder: enc, closer: w}, nil
 }
 
+// Write encodes a single record into the Avro OCF stream.
 func (w *EventWriter) Write(record map[string]any) error {
 	for k, v := range record {
 		if f, ok := v.(float64); ok {
@@ -33,10 +37,12 @@ func (w *EventWriter) Write(record map[string]any) error {
 	return w.encoder.Encode(record)
 }
 
+// Close closes the underlying writer.
 func (w *EventWriter) Close() error {
 	return w.closer.Close()
 }
 
+// ReadFile decodes all records from an Avro OCF file for inspection.
 func ReadFile(filePath string) error {
 	avroFile, err := os.Open(filePath)
 	if err != nil {

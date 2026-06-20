@@ -23,13 +23,13 @@ const userContextKey contextKey = "user_id"
 func bearerAuth(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			auth := r.Header.Get("Authorization")
+			authHdr := r.Header.Get("Authorization")
 			const prefix = "Bearer "
-			if !strings.HasPrefix(auth, prefix) {
+			if !strings.HasPrefix(authHdr, prefix) {
 				http.Error(w, `{"error":"missing or invalid Authorization header"}`, http.StatusUnauthorized)
 				return
 			}
-			got := auth[len(prefix):]
+			got := authHdr[len(prefix):]
 			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 				return

@@ -15,11 +15,6 @@ import (
 	"google.golang.org/genai"
 )
 
-// chatGeminiModel is unused or replaced by server config.
-const (
-	_ = iota
-)
-
 var chatCmd = &cobra.Command{
 	Use:   "chat <query>",
 	Short: "Start an interactive FODMAP/allergen chat for a restaurant query.",
@@ -66,12 +61,12 @@ func runChat(cmd *cobra.Command, args []string) error {
 		var err error
 		biz, err = fodmapClient.FetchTopBusiness(ctx, query, category, city, state)
 		if err != nil {
-			fmt.Printf("Warning: searching businesses failed: %v\n", err)
+			slog.Warn("searching businesses failed", "error", err)
 		} else {
 			fmt.Printf("Found: %s (%s, %s)\n", biz.Name, biz.City, biz.State)
 			reviews, err = fodmapClient.FetchChatReviews(ctx, biz.ID, query, limit)
 			if err != nil {
-				fmt.Printf("Warning: fetching reviews failed: %v\n", err)
+				slog.Warn("fetching reviews failed", "error", err)
 			} else {
 				fmt.Printf("Fetched %d reviews.\n", len(reviews))
 			}
