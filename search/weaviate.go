@@ -303,10 +303,10 @@ func (c *Client) BatchUpsert(ctx context.Context, items []IndexItem) error {
 	return nil
 }
 
-// GetBusinesses performs a nearText vector query and returns restaurant IDs ranked by
+// Businesses performs a nearText vector query and returns restaurant IDs ranked by
 // Top-K average certainty score (K=topKReviews). Optional filters narrow results
 // by category (substring), city (exact), and state (exact).
-func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
+func (c *Client) Businesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	fields := []graphql.Field{
 		{Name: "chunkText"},
 		{
@@ -384,8 +384,8 @@ func (c *Client) GetBusinesses(ctx context.Context, query string, limit int, fil
 	return aggregateTopK(resp.Data, limit), nil
 }
 
-// GetReviews returns the top reviews from a nearText vector query, sorted by certainty score (descending).
-func (c *Client) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
+// Reviews returns the top reviews from a nearText vector query, sorted by certainty score (descending).
+func (c *Client) Reviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
 	fields := []graphql.Field{
 		{Name: "chunkText"},
 		{
@@ -1129,17 +1129,17 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 	if resp.Errors != nil {
 		return nil, fmt.Errorf("menu search graphql: %s", formatGraphQLErrors(resp.Errors))
 	}
-	raw, ok := resp.Data["Get"].(map[string]interface{})
+	raw, ok := resp.Data["Get"].(map[string]any)
 	if !ok {
 		return nil, nil
 	}
-	rawItems, ok := raw[menuCollectionName].([]interface{})
+	rawItems, ok := raw[menuCollectionName].([]any)
 	if !ok {
 		return nil, nil
 	}
 	var results []MenuItem
 	for _, ri := range rawItems {
-		m, ok := ri.(map[string]interface{})
+		m, ok := ri.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -1159,7 +1159,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 	return results, nil
 }
 
-func stringField(m map[string]interface{}, key string) string {
+func stringField(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
 }
@@ -1255,8 +1255,8 @@ func (c *Client) BatchUpsertRegulatory(ctx context.Context, items []RegulatoryUp
 	return nil
 }
 
-func stringSliceField(m map[string]interface{}, key string) []string {
-	raw, ok := m[key].([]interface{})
+func stringSliceField(m map[string]any, key string) []string {
+	raw, ok := m[key].([]any)
 	if !ok {
 		return nil
 	}
@@ -1269,7 +1269,7 @@ func stringSliceField(m map[string]interface{}, key string) []string {
 	return out
 }
 
-func boolField(m map[string]interface{}, key string) bool {
+func boolField(m map[string]any, key string) bool {
 	v, _ := m[key].(bool)
 	return v
 }

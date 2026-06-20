@@ -23,7 +23,7 @@ type FastPathResult struct {
 // conforming to StructuredUpdate, it returns the parsed result. Otherwise it
 // returns a nil Extracted, signalling the caller to use the agent path.
 func ApplyRule(ctx context.Context, pool *pgxpool.Pool, domain, pageContent string) (*FastPathResult, error) {
-	rule, err := GetActiveRule(ctx, pool, domain)
+	rule, err := ActiveRule(ctx, pool, domain)
 	if err != nil {
 		return nil, fmt.Errorf("fast path: %w", err)
 	}

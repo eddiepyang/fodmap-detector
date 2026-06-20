@@ -106,7 +106,7 @@ func ExtractWithAgent(ctx context.Context, backend chat.ChatBackend, url, domain
 	// Check for tool calls containing the extraction result.
 	for _, fc := range msg.FunctionCalls {
 		if fc.Name == "extract_regulatory_update" {
-			argsBytes, _ := json.Marshal(fc.Args)
+			argsBytes, _ := json.Marshal(fc.Args) // map[string]any from genai is always serializable
 			var update StructuredUpdate
 			if err := json.Unmarshal(argsBytes, &update); err == nil && update.SubstanceName != "" {
 				result.Update = &update

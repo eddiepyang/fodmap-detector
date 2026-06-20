@@ -10,7 +10,6 @@ import (
 	goio "io"
 	"log/slog"
 	"os"
-	"regexp"
 	"strings"
 
 	"fodmap/data/schemas"
@@ -20,7 +19,7 @@ import (
 const DefaultArchivePath = "../data/yelp_dataset.tar"
 
 // UnmarshalReview parses a single JSONL review record from inputBytes.
-func UnmarshalReview(pattern *regexp.Regexp, inputBytes []byte) (schemas.Review, error) {
+func UnmarshalReview(inputBytes []byte) (schemas.Review, error) {
 	jsonl := &schemas.Review{}
 	if err := json.Unmarshal(inputBytes, jsonl); err != nil {
 		return schemas.Review{}, err
@@ -50,6 +49,8 @@ func getTarReader(f *os.File) (*tar.Reader, goio.Closer, error) {
 	return nil, nil, fmt.Errorf("opening gzip stream: %w", err)
 }
 
+// GetArchive opens a file within a gzipped tar archive and returns a line
+// scanner plus a closer that the caller must defer-close.
 func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, error) {
 	files, err := os.Open(archivePath)
 	if err != nil {
@@ -79,9 +80,9 @@ func GetArchive(archivePath, fileName string) (*bufio.Scanner, goio.Closer, erro
 	}
 }
 
-// GetReviewsByBusiness returns all reviews in the archive for the given businessID.
+// ReviewsByBusiness returns all reviews in the archive for the given businessID.
 // If archivePath is empty, DefaultArchivePath is used.
-func GetReviewsByBusiness(archivePath, businessID string) ([]schemas.Review, error) {
+func ReviewsByBusiness(archivePath, businessID string) ([]schemas.Review, error) {
 	if archivePath == "" {
 		archivePath = DefaultArchivePath
 	}
@@ -130,10 +131,10 @@ func GetReviewsByBusiness(archivePath, businessID string) ([]schemas.Review, err
 	return nil, fmt.Errorf("review file not found in archive")
 }
 
-// GetBusinessMap reads the business file from the archive and returns a map keyed by business_id.
+// BusinessMap reads the business file from the archive and returns a map keyed by business_id.
 // The caller can use the map for O(1) lookups when joining reviews with business metadata.
 // If archivePath is empty, DefaultArchivePath is used.
-func GetBusinessMap(archivePath string) (map[string]schemas.Business, error) {
+func BusinessMap(archivePath string) (map[string]schemas.Business, error) {
 	if archivePath == "" {
 		archivePath = DefaultArchivePath
 	}

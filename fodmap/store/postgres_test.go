@@ -70,7 +70,7 @@ func TestFodmapCatalogStore_Get(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"ingredient", "level", "groups", "notes", "substitutions", "updated_at"}).
 			AddRow("garlic", "high", "{fructans}", "Strong", "{garlic oil}", now))
 
-	entry, err := store.Get(context.Background(), "Garlic")
+	entry, err := store.Ingredient(context.Background(), "Garlic")
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, "garlic", entry.Ingredient)
@@ -86,7 +86,7 @@ func TestFodmapCatalogStore_GetNotFound(t *testing.T) {
 		WithArgs("garlic").
 		WillReturnError(sql.ErrNoRows)
 
-	entry, err := store.Get(context.Background(), "Garlic")
+	entry, err := store.Ingredient(context.Background(), "Garlic")
 	assert.NoError(t, err)
 	assert.Nil(t, entry)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -115,7 +115,7 @@ func TestFodmapCatalogStore_Count(t *testing.T) {
 
 	filter := ListFilter{Level: "high"}
 	mock.ExpectQuery("SELECT COUNT").
-		WithArgs("high").
+		WithArgs("%%", "high", "").
 		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(42))
 
 	total, err := store.Count(context.Background(), filter)

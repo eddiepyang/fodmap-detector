@@ -35,16 +35,16 @@ func ExtractJSONLD(r io.Reader) ([]MenuEntry, JSONLDMeta, bool) {
 	var meta JSONLDMeta
 
 	for _, block := range blocks {
-		var raw interface{}
+		var raw any
 		if err := json.Unmarshal([]byte(block), &raw); err != nil {
 			continue
 		}
 
 		// Handle @graph arrays.
-		if m, ok := raw.(map[string]interface{}); ok {
-			if graph, ok := m["@graph"].([]interface{}); ok {
+		if m, ok := raw.(map[string]any); ok {
+			if graph, ok := m["@graph"].([]any); ok {
 				for _, node := range graph {
-					if nm, ok := node.(map[string]interface{}); ok {
+					if nm, ok := node.(map[string]any); ok {
 						items, m2 := processNode(nm)
 						allItems = append(allItems, items...)
 						if meta.RestaurantName == "" {
@@ -57,9 +57,9 @@ func ExtractJSONLD(r io.Reader) ([]MenuEntry, JSONLDMeta, bool) {
 		}
 
 		// Handle top-level array.
-		if arr, ok := raw.([]interface{}); ok {
+		if arr, ok := raw.([]any); ok {
 			for _, node := range arr {
-				if nm, ok := node.(map[string]interface{}); ok {
+				if nm, ok := node.(map[string]any); ok {
 					items, m2 := processNode(nm)
 					allItems = append(allItems, items...)
 					if meta.RestaurantName == "" {
@@ -71,7 +71,7 @@ func ExtractJSONLD(r io.Reader) ([]MenuEntry, JSONLDMeta, bool) {
 		}
 
 		// Handle single object.
-		if m, ok := raw.(map[string]interface{}); ok {
+		if m, ok := raw.(map[string]any); ok {
 			items, m2 := processNode(m)
 			allItems = append(allItems, items...)
 			if meta.RestaurantName == "" {
@@ -103,7 +103,7 @@ func collectJSONLD(n *html.Node, blocks *[]string) {
 
 // processNode extracts menu items and restaurant metadata from a single JSON-LD
 // object.
-func processNode(m map[string]interface{}) ([]MenuEntry, JSONLDMeta) {
+func processNode(m map[string]any) ([]MenuEntry, JSONLDMeta) {
 	t, _ := m["@type"].(string)
 	var items []MenuEntry
 	var meta JSONLDMeta
@@ -112,7 +112,7 @@ func processNode(m map[string]interface{}) ([]MenuEntry, JSONLDMeta) {
 	case "Restaurant", "FoodEstablishment", "CafeOrCoffeeShop", "FastFoodRestaurant",
 		"BarOrPub", "Bakery", "Brewery", "Winery":
 		meta = extractRestaurantMeta(m)
-		if hasMenu, ok := m["hasMenu"].(map[string]interface{}); ok {
+		if hasMenu, ok := m["hasMenu"].(map[string]any); ok {
 			items = extractMenuItems(hasMenu)
 		}
 		if menuURL, ok := m["menu"].(string); ok && menuURL != "" && len(items) == 0 {
@@ -134,12 +134,12 @@ func processNode(m map[string]interface{}) ([]MenuEntry, JSONLDMeta) {
 
 // extractRestaurantMeta reads name, address.addressLocality and
 // address.addressRegion from a Restaurant-type node.
-func extractRestaurantMeta(m map[string]interface{}) JSONLDMeta {
+func extractRestaurantMeta(m map[string]any) JSONLDMeta {
 	var meta JSONLDMeta
 	if name, ok := m["name"].(string); ok {
 		meta.RestaurantName = name
 	}
-	if addr, ok := m["address"].(map[string]interface{}); ok {
+	if addr, ok := m["address"].(map[string]any); ok {
 		if city, ok := addr["addressLocality"].(string); ok {
 			meta.City = city
 		}
@@ -151,18 +151,18 @@ func extractRestaurantMeta(m map[string]interface{}) JSONLDMeta {
 }
 
 // extractMenuItems walks hasMenuSection[].hasMenuItem[] and collects entries.
-func extractMenuItems(menu map[string]interface{}) []MenuEntry {
+func extractMenuItems(menu map[string]any) []MenuEntry {
 	var items []MenuEntry
 
-	sections, _ := menu["hasMenuSection"].([]interface{})
+	sections, _ := menu["hasMenuSection"].([]any)
 	for _, s := range sections {
-		sec, ok := s.(map[string]interface{})
+		sec, ok := s.(map[string]any)
 		if !ok {
 			continue
 		}
-		menuItems, _ := sec["hasMenuItem"].([]interface{})
+		menuItems, _ := sec["hasMenuItem"].([]any)
 		for _, mi := range menuItems {
-			mim, ok := mi.(map[string]interface{})
+			mim, ok := mi.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -173,9 +173,9 @@ func extractMenuItems(menu map[string]interface{}) []MenuEntry {
 	}
 
 	// Also handle direct hasMenuItem at the Menu level.
-	direct, _ := menu["hasMenuItem"].([]interface{})
+	direct, _ := menu["hasMenuItem"].([]any)
 	for _, mi := range direct {
-		mim, ok := mi.(map[string]interface{})
+		mim, ok := mi.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -188,7 +188,7 @@ func extractMenuItems(menu map[string]interface{}) []MenuEntry {
 }
 
 // menuItemToEntry converts a MenuItem JSON-LD object to a MenuEntry.
-func menuItemToEntry(m map[string]interface{}) (MenuEntry, bool) {
+func menuItemToEntry(m map[string]any) (MenuEntry, bool) {
 	name, _ := m["name"].(string)
 	if name == "" {
 		return MenuEntry{}, false
@@ -212,11 +212,11 @@ func menuItemToEntry(m map[string]interface{}) (MenuEntry, bool) {
 	}, true
 }
 
-// toStringSlice converts an interface{} that is either a []interface{} of
+// toStringSlice converts an any that is either a []any of
 // strings or a plain string into a []string.
-func toStringSlice(v interface{}) []string {
+func toStringSlice(v any) []string {
 	switch tv := v.(type) {
-	case []interface{}:
+	case []any:
 		var out []string
 		for _, item := range tv {
 			if s, ok := item.(string); ok {

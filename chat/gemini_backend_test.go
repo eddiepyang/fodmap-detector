@@ -11,16 +11,16 @@ import (
 	"google.golang.org/genai"
 )
 
-type mockRoundTripper struct {
+type stubRoundTripper struct {
 	roundTripFunc func(*http.Request) (*http.Response, error)
 }
 
-func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+func (m *stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return m.roundTripFunc(req)
 }
 
 func TestGeminiBackend_Generate(t *testing.T) {
-	mockRT := &mockRoundTripper{
+	mockRT := &stubRoundTripper{
 		roundTripFunc: func(req *http.Request) (*http.Response, error) {
 			body := `data: {"candidates": [{"content": {"parts": [{"text": "Hello from Gemini mock"},{"functionCall": {"name": "lookup_fodmap", "args": {"food": "onion"}}}]}}]}
 ` + "\n"
@@ -74,7 +74,7 @@ func TestGeminiBackend_Generate(t *testing.T) {
 }
 
 func TestGeminiBackend_Generate_Error(t *testing.T) {
-	mockRT := &mockRoundTripper{
+	mockRT := &stubRoundTripper{
 		roundTripFunc: func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusInternalServerError,

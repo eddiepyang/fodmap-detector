@@ -21,7 +21,7 @@ func TestProfileHandler_Update(t *testing.T) {
 	}))
 	defer geminiServer.Close()
 
-	store := newMockStore()
+	store := newStubStore()
 	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
 
 	s := &Server{
@@ -53,7 +53,7 @@ func TestProfileHandler_Update(t *testing.T) {
 	}
 
 	// Verify profile is stored
-	profile, err := store.GetDietaryProfile(context.Background(), "u1")
+	profile, err := store.DietaryProfile(context.Background(), "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestProfileHandler_Update_Unauthorized(t *testing.T) {
 }
 
 func TestProfileHandler_Get(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	store.profiles["u1"] = []byte(`{"preferences": ["vegan"]}`)
 
 	s := &Server{
@@ -100,7 +100,7 @@ func TestProfileHandler_Get(t *testing.T) {
 }
 
 func TestProfileHandler_Get_Empty(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 	}
@@ -134,7 +134,7 @@ func TestProfileHandler_Get_Unauthorized(t *testing.T) {
 }
 
 func TestProfileHandler_Update_EmptyInput(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
 
 	s := &Server{userStore: store}
@@ -151,7 +151,7 @@ func TestProfileHandler_Update_EmptyInput(t *testing.T) {
 }
 
 func TestProfileHandler_Update_InvalidJSON(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
 
 	s := &Server{userStore: store}
@@ -168,7 +168,7 @@ func TestProfileHandler_Update_InvalidJSON(t *testing.T) {
 }
 
 func TestProfileHandler_Update_UserNotFound(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	// No user with ID "u-missing" in the store
 
 	s := &Server{userStore: store}
@@ -185,7 +185,7 @@ func TestProfileHandler_Update_UserNotFound(t *testing.T) {
 }
 
 func TestProfileHandler_Update_ChatServiceNotConfigured(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
 
 	// genaiClient is nil — simulates missing GOOGLE_API_KEY

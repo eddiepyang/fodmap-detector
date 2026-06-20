@@ -68,20 +68,20 @@ func TestInsertSource_Idempotent(t *testing.T) {
 		t.Errorf("idempotent insert changed ID: %q vs %q", src.ID, firstID)
 	}
 
-	got, err := GetSourceByID(ctx, pool, firstID)
+	got, err := SourceByID(ctx, pool, firstID)
 	if err != nil {
-		t.Fatalf("GetSourceByID: %v", err)
+		t.Fatalf("SourceByID: %v", err)
 	}
 	if got.Name != "FDA Updated" {
 		t.Errorf("expected updated name, got %q", got.Name)
 	}
 }
 
-func TestGetSourceByID_NotFound(t *testing.T) {
+func TestSourceByID_NotFound(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 
-	_, err := GetSourceByID(context.Background(), pool, "00000000-0000-0000-0000-000000000000")
+	_, err := SourceByID(context.Background(), pool, "00000000-0000-0000-0000-000000000000")
 	if err == nil {
 		t.Fatal("expected error for missing source")
 	}

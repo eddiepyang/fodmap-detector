@@ -40,7 +40,7 @@ func TestPostgresStore_CreateUser(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserByEmail(t *testing.T) {
+func TestPostgresStore_UserByEmail(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -52,7 +52,7 @@ func TestPostgresStore_GetUserByEmail(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "role", "status", "created_at"}).
 			AddRow("u1", email, "hash", "user", "active", now))
 
-	user, err := store.GetUserByEmail(context.Background(), email)
+	user, err := store.UserByEmail(context.Background(), email)
 	assert.NoError(t, err)
 	require.NotNil(t, user)
 	assert.Equal(t, "u1", user.ID)
@@ -61,7 +61,7 @@ func TestPostgresStore_GetUserByEmail(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
+func TestPostgresStore_UserByEmail_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -69,13 +69,13 @@ func TestPostgresStore_GetUserByEmail_NotFound(t *testing.T) {
 		WithArgs("missing@example.com").
 		WillReturnError(sql.ErrNoRows)
 
-	user, err := store.GetUserByEmail(context.Background(), "missing@example.com")
+	user, err := store.UserByEmail(context.Background(), "missing@example.com")
 	assert.NoError(t, err)
 	assert.Nil(t, user)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserByID(t *testing.T) {
+func TestPostgresStore_UserByID(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -87,7 +87,7 @@ func TestPostgresStore_GetUserByID(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password", "role", "status", "created_at"}).
 			AddRow(id, "test@example.com", "hash", "user", "active", now))
 
-	user, err := store.GetUserByID(context.Background(), id)
+	user, err := store.UserByID(context.Background(), id)
 	assert.NoError(t, err)
 	require.NotNil(t, user)
 	assert.Equal(t, id, user.ID)
@@ -95,7 +95,7 @@ func TestPostgresStore_GetUserByID(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
+func TestPostgresStore_UserByID_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -103,7 +103,7 @@ func TestPostgresStore_GetUserByID_NotFound(t *testing.T) {
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
-	user, err := store.GetUserByID(context.Background(), "missing")
+	user, err := store.UserByID(context.Background(), "missing")
 	assert.NoError(t, err)
 	assert.Nil(t, user)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -191,7 +191,7 @@ func TestPostgresStore_ListConversations(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversation(t *testing.T) {
+func TestPostgresStore_Conversation(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -203,7 +203,7 @@ func TestPostgresStore_GetConversation(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "business_id", "business_name", "title", "created_at", "updated_at", "review_context", "search_category", "search_city", "search_state", "search_description"}).
 			AddRow(id, "u1", "b1", "Biz1", "Title", now, now, nil, "p", "a", "t", "d"))
 
-	conv, err := store.GetConversation(context.Background(), id)
+	conv, err := store.Conversation(context.Background(), id)
 	assert.NoError(t, err)
 	require.NotNil(t, conv)
 	assert.Equal(t, id, conv.ID)
@@ -211,7 +211,7 @@ func TestPostgresStore_GetConversation(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversation_NotFound(t *testing.T) {
+func TestPostgresStore_Conversation_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -219,7 +219,7 @@ func TestPostgresStore_GetConversation_NotFound(t *testing.T) {
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
-	conv, err := store.GetConversation(context.Background(), "missing")
+	conv, err := store.Conversation(context.Background(), "missing")
 	assert.NoError(t, err)
 	assert.Nil(t, conv)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -265,7 +265,7 @@ func TestPostgresStore_AddMessage(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetMessages(t *testing.T) {
+func TestPostgresStore_Messages(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -278,7 +278,7 @@ func TestPostgresStore_GetMessages(t *testing.T) {
 			AddRow("m1", conversationID, "user", "hello", 1, now).
 			AddRow("m2", conversationID, "assistant", "world", 2, now))
 
-	msgs, err := store.GetMessages(context.Background(), conversationID)
+	msgs, err := store.Messages(context.Background(), conversationID)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 2)
 	assert.Equal(t, "m1", msgs[0].ID)
@@ -306,7 +306,7 @@ func TestPostgresStore_DietaryProfile(t *testing.T) {
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"profile"}).AddRow(profileData))
 
-	got, err := store.GetDietaryProfile(context.Background(), userID)
+	got, err := store.DietaryProfile(context.Background(), userID)
 	assert.NoError(t, err)
 	assert.Equal(t, profileData, got)
 
@@ -315,7 +315,7 @@ func TestPostgresStore_DietaryProfile(t *testing.T) {
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
-	got, err = store.GetDietaryProfile(context.Background(), "missing")
+	got, err = store.DietaryProfile(context.Background(), "missing")
 	assert.NoError(t, err)
 	assert.Nil(t, got)
 

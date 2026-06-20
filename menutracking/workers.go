@@ -42,6 +42,7 @@ type ScrapeJobArgs struct {
 	Domain   string `json:"domain" jsonschema:"required"`
 }
 
+// Kind returns the river job kind identifier for scrape jobs.
 func (ScrapeJobArgs) Kind() string { return "menutracking.scrape" }
 
 // RulePromotionJobArgs are the arguments for a RulePromotionWorker job.
@@ -51,6 +52,7 @@ type RulePromotionJobArgs struct {
 	URL      string `json:"url" jsonschema:"required"`
 }
 
+// Kind returns the river job kind identifier for rule promotion jobs.
 func (RulePromotionJobArgs) Kind() string { return "menutracking.rule_promotion" }
 
 // DefaultScrapeMaxAttempts overrides river's default of 25 retries for
@@ -210,7 +212,7 @@ func (w *RulePromotionWorker) Work(ctx context.Context, job *river.Job[RulePromo
 	slog.Info("menutracking rule promotion", "rule_id", args.RuleID, "source_id", args.SourceID)
 
 	// Verify the proposed rule by re-running it against fetched content.
-	rule, err := GetProposedRule(ctx, w.Pool, args.RuleID)
+	rule, err := ProposedRule(ctx, w.Pool, args.RuleID)
 	if err != nil {
 		return fmt.Errorf("fetching proposed rule %s for verification: %w", args.RuleID, err)
 	}
@@ -256,7 +258,7 @@ func (w *RulePromotionWorker) Work(ctx context.Context, job *river.Job[RulePromo
 	return nil
 }
 
-// writeBronzenFile writes raw content to the bronze layer at the given path.
+// writeBronzeFile writes raw content to the bronze layer at the given path.
 // It creates intermediate directories as needed.
 func writeBronzeFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -286,9 +288,7 @@ func upsertUpdate(ctx context.Context, pool *pgxpool.Pool, sourceID, bronzePath 
 // table for long-term audit. Install as river's ErrorHandler or call from a
 // periodic cleanup job.
 func DeadLetterHandler(ctx context.Context, pool *pgxpool.Pool, jobKind string, jobArgs json.RawMessage, errMsg string) error {
-	_, err := pool.Exec(ctx,
-		"INSERT INTO menutracking_dead_letter (job_kind, job_args, error) VALUES ($1, $2, $3)",
-		jobKind, jobArgs, errMsg)
+	_, err := pool.Exec(ctx, store.InsertDeadLetterSQL, jobKind, jobArgs, errMsg)
 	if err != nil {
 		return fmt.Errorf("writing to dead letter: %w", err)
 	}

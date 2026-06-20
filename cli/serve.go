@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"fodmap/auth"
 	"fodmap/chat"
@@ -91,7 +92,7 @@ var serveCmd = &cobra.Command{
 
 		adminEmail := viper.GetString("admin-email")
 		if adminEmail != "" {
-			user, err := userStore.GetUserByEmail(context.Background(), adminEmail)
+			user, err := userStore.UserByEmail(context.Background(), adminEmail)
 			if err != nil {
 				slog.Warn("failed to fetch bootstrap admin user on startup", "email", adminEmail, "error", err)
 			} else if user != nil {
@@ -160,7 +161,7 @@ var serveCmd = &cobra.Command{
 			}
 
 			var pipelineErr error
-			pipelineResult, pipelineErr = StartMenutrackingPipeline(context.Background(), PipelineConfig{
+			pipelineResult, pipelineErr = StartMenutrackingPipeline(cmd.Context(), PipelineConfig{
 				DSN:         postgresDSN,
 				Fetcher:     fetcher,
 				VectorSink:  vectorSink,
@@ -171,25 +172,25 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Wire menutracking admin endpoints using the pipeline's pool.
-			srv.SetMenutrackingAdmin(&menutracking.MenutrackingAdminHandler{Pool: pipelineResult.Pool})
+			srv.SetMenutrackingAdmin(&menutracking.AdminHandler{Pool: pipelineResult.Pool})
 		}
 
 		// Start the HTTP server (blocks until SIGTERM or error).
 		if err := srv.Start(); err != nil {
 			if pipelineResult != nil {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 30)
+				stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				_ = pipelineResult.Stop(stopCtx)
+				_ = pipelineResult.Stop(stopCtx) // best-effort during error shutdown
 			}
 			return fmt.Errorf("server error: %w", err)
 		}
 
 		// Drain the pipeline on server shutdown.
 		if pipelineResult != nil {
-			stopCtx, cancel := context.WithTimeout(context.Background(), 30)
+			stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := pipelineResult.Stop(stopCtx); err != nil {
-				slog.Error("menutracking pipeline shutdown error", "err", err)
+				slog.Error("menutracking pipeline shutdown error", "error", err)
 			}
 		}
 

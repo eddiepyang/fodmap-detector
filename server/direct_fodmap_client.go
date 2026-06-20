@@ -16,9 +16,9 @@ func NewDirectFodmapClient(s *Server) *DirectFodmapClient {
 	return &DirectFodmapClient{s: s}
 }
 
-// LookupFODMAP implements the FodmapSessionClient interface by calling the
+// LookupFodmap implements the FodmapSessionClient interface by calling the
 // server's searcher directly.
-func (c *DirectFodmapClient) LookupFODMAP(ctx context.Context, ingredient string) (chat.FodmapToolResponse, error) {
+func (c *DirectFodmapClient) LookupFodmap(ctx context.Context, ingredient string) (chat.FodmapToolResponse, error) {
 	res, _, err := c.s.searcher.SearchFodmap(ctx, ingredient)
 	if err != nil {
 		return chat.FodmapToolResponse{}, err

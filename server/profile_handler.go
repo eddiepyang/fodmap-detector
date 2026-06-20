@@ -2,9 +2,10 @@ package server
 
 import (
 	"encoding/json"
-	"fodmap/chat"
 	"log/slog"
 	"net/http"
+
+	"fodmap/chat"
 )
 
 type profileRequest struct {
@@ -28,7 +29,7 @@ func (s *Server) updateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.userStore.GetUserByID(r.Context(), userID)
+	user, err := s.userStore.UserByID(r.Context(), userID)
 	if err != nil || user == nil {
 		respondError(w, "user not found", http.StatusNotFound)
 		return
@@ -67,7 +68,7 @@ func (s *Server) getProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, err := s.userStore.GetDietaryProfile(r.Context(), userID)
+	profile, err := s.userStore.DietaryProfile(r.Context(), userID)
 	if err != nil {
 		respondError(w, "user profile fetch failed", http.StatusInternalServerError)
 		return

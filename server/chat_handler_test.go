@@ -45,9 +45,9 @@ func TestChatHandler_Streaming(t *testing.T) {
 
 	// Setup mock server for our application
 	s := NewServer(mockSearcher, 8081)
-	s.userStore = newMockStore()
+	s.userStore = newStubStore()
 	s.chatAPIKey = "test-key"
-	s.geminiApiKey = "test-key"
+	s.geminiAPIKey = "test-key"
 	s.chatRateLimiter = newIPRateLimiter(100, 100)
 	s.chatMaxConcurrent = 10
 
@@ -97,7 +97,7 @@ func TestChatHandler_Streaming(t *testing.T) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var event map[string]interface{}
+			var event map[string]any
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
 				t.Fatalf("failed to unmarshal event: %v", err)
 			}
@@ -128,14 +128,14 @@ type chatMockSearcher struct {
 	emptyBusinesses bool
 }
 
-func (m *chatMockSearcher) GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
+func (m *chatMockSearcher) Businesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
 	if m.emptyBusinesses {
 		return search.SearchResult{}, nil
 	}
 	return search.SearchResult{Businesses: []search.BusinessResult{{ID: "1", Name: "Test Biz"}}}, nil
 }
 
-func (m *chatMockSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *chatMockSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	return search.SearchReviews{
 		BusinessReviews: []search.RankedReview{
 			{
@@ -242,7 +242,7 @@ func TestMessagesToHistory_Empty(t *testing.T) {
 // ---- saveModelResponse ----
 
 func TestSaveModelResponse(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	convID := "conv-save-test"
 	_ = store.CreateConversation(context.Background(), &auth.Conversation{
 		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
@@ -251,7 +251,7 @@ func TestSaveModelResponse(t *testing.T) {
 	result := chat.SendResult{Text: "Model says hello", ToolCalls: []string{"lookup_fodmap(garlic)"}}
 	saveModelResponse(context.Background(), store, convID, result, 1)
 
-	msgs, err := store.GetMessages(context.Background(), convID)
+	msgs, err := store.Messages(context.Background(), convID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	}))
 	defer geminiServer.Close()
 
-	store := newMockStore()
+	store := newStubStore()
 	convID := "ctx-test-1"
 	_ = store.CreateConversation(context.Background(), &auth.Conversation{
 		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
@@ -313,7 +313,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	}
 
 	// Verify messages in store.
-	msgs, _ := store.GetMessages(context.Background(), convID)
+	msgs, _ := store.Messages(context.Background(), convID)
 	// We expect 2 messages:
 	// 1. Context message (role: model, seq: 0)
 	// 2. User message (role: user, seq: 1)

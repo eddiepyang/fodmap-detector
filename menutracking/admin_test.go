@@ -111,7 +111,7 @@ func TestAdminHandler_ListSources(t *testing.T) {
 		t.Fatalf("InsertSource: %v", err)
 	}
 
-	h := &MenutrackingAdminHandler{Pool: pool}
+	h := &AdminHandler{Pool: pool}
 	req := httptest.NewRequest(http.MethodGet, "/menutracking/sources", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -133,7 +133,7 @@ func TestAdminHandler_ListSources(t *testing.T) {
 }
 
 func TestAdminHandler_ListSources_MethodNotAllowed(t *testing.T) {
-	h := &MenutrackingAdminHandler{}
+	h := &AdminHandler{}
 	req := httptest.NewRequest(http.MethodPost, "/menutracking/sources", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -161,7 +161,7 @@ func TestAdminHandler_ListDiscardedJobs_Empty(t *testing.T) {
 		t.Fatalf("create river_job stub: %v", err)
 	}
 
-	h := &MenutrackingAdminHandler{Pool: pool}
+	h := &AdminHandler{Pool: pool}
 	req := httptest.NewRequest(http.MethodGet, "/menutracking/jobs", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -184,7 +184,7 @@ func TestAdminHandler_ReloadSources(t *testing.T) {
 	defer pool.Close()
 
 	ch := make(chan struct{}, 1)
-	h := &MenutrackingAdminHandler{Pool: pool, ReloadSignal: ch}
+	h := &AdminHandler{Pool: pool, ReloadSignal: ch}
 	req := httptest.NewRequest(http.MethodPost, "/menutracking/reload", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -202,7 +202,7 @@ func TestAdminHandler_ReloadSources(t *testing.T) {
 }
 
 func TestAdminHandler_ReloadSources_MethodNotAllowed(t *testing.T) {
-	h := &MenutrackingAdminHandler{}
+	h := &AdminHandler{}
 	req := httptest.NewRequest(http.MethodGet, "/menutracking/reload", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -212,7 +212,7 @@ func TestAdminHandler_ReloadSources_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAdminHandler_NotFound(t *testing.T) {
-	h := &MenutrackingAdminHandler{}
+	h := &AdminHandler{}
 	req := httptest.NewRequest(http.MethodGet, "/menutracking/unknown", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

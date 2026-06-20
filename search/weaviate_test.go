@@ -317,7 +317,7 @@ func makeReviewData(items []struct {
 	}
 }
 
-func TestGetReviews_HappyPath(t *testing.T) {
+func TestReviews_HappyPath(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
 		reviewID     string
@@ -339,14 +339,14 @@ func TestGetReviews_HappyPath(t *testing.T) {
 	}
 }
 
-func TestGetReviews_EmptyData(t *testing.T) {
+func TestReviews_EmptyData(t *testing.T) {
 	result := getReviews(map[string]models.JSONObject{}, 10)
 	if len(result.BusinessReviews) != 0 {
 		t.Errorf("expected 0 reviews for empty data, got %d", len(result.BusinessReviews))
 	}
 }
 
-func TestGetReviews_LimitTruncation(t *testing.T) {
+func TestReviews_LimitTruncation(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
 		reviewID     string
@@ -366,7 +366,7 @@ func TestGetReviews_LimitTruncation(t *testing.T) {
 	}
 }
 
-func TestGetReviews_SortedByScore(t *testing.T) {
+func TestReviews_SortedByScore(t *testing.T) {
 	data := makeReviewData([]struct {
 		businessID   string
 		reviewID     string
@@ -392,7 +392,7 @@ func TestGetReviews_SortedByScore(t *testing.T) {
 	}
 }
 
-func TestGetReviews_MissingGetKey(t *testing.T) {
+func TestReviews_MissingGetKey(t *testing.T) {
 	data := map[string]models.JSONObject{
 		"NotGet": map[string]any{},
 	}
@@ -402,7 +402,7 @@ func TestGetReviews_MissingGetKey(t *testing.T) {
 	}
 }
 
-func TestGetReviews_SkipsEmptyBusinessID(t *testing.T) {
+func TestReviews_SkipsEmptyBusinessID(t *testing.T) {
 	rawItems := []any{
 		map[string]any{
 			"hasParent": []any{
@@ -511,7 +511,7 @@ func TestClient_BatchUpsert(t *testing.T) {
 	}
 }
 
-func TestClient_GetBusinesses(t *testing.T) {
+func TestClient_Businesses(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
 			data := makeData([]struct {
@@ -529,9 +529,9 @@ func TestClient_GetBusinesses(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
-	res, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
+	res, err := client.Businesses(context.Background(), "pizza", 1, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 	if len(res.Businesses) != 1 || res.Businesses[0].ID != "biz1" {
 		t.Errorf("got %v", res)
@@ -571,7 +571,7 @@ func TestClient_SearchFodmap(t *testing.T) {
 
 // --- Hybrid query tests ---
 
-func TestClient_GetBusinesses_HybridQuery(t *testing.T) {
+func TestClient_Businesses_HybridQuery(t *testing.T) {
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
@@ -590,9 +590,9 @@ func TestClient_GetBusinesses_HybridQuery(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
-	_, err := client.GetBusinesses(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
+	_, err := client.Businesses(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 	if !strings.Contains(body, "hybrid:") {
 		t.Errorf("expected hybrid query in GraphQL body, got: %s", body)
@@ -602,7 +602,7 @@ func TestClient_GetBusinesses_HybridQuery(t *testing.T) {
 	}
 }
 
-func TestClient_GetBusinesses_HybridAlphaValue(t *testing.T) {
+func TestClient_Businesses_HybridAlphaValue(t *testing.T) {
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
@@ -616,13 +616,13 @@ func TestClient_GetBusinesses_HybridAlphaValue(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
-	_, _ = client.GetBusinesses(context.Background(), "ramen", 5, SearchFilter{Alpha: 0.6})
+	_, _ = client.Businesses(context.Background(), "ramen", 5, SearchFilter{Alpha: 0.6})
 	if !strings.Contains(body, "0.6") {
 		t.Errorf("expected alpha value 0.6 in GraphQL body, got: %s", body)
 	}
 }
 
-func TestClient_GetBusinesses_NearVectorFallback(t *testing.T) {
+func TestClient_Businesses_NearVectorFallback(t *testing.T) {
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
@@ -642,9 +642,9 @@ func TestClient_GetBusinesses_NearVectorFallback(t *testing.T) {
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
 	// Alpha=0 (default zero value) → should use nearVector (not hybrid)
-	_, err := client.GetBusinesses(context.Background(), "pizza", 1, SearchFilter{})
+	_, err := client.Businesses(context.Background(), "pizza", 1, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 	if strings.Contains(body, "hybrid:") {
 		t.Errorf("expected nearVector query (not hybrid) when Alpha=0, got hybrid in body: %s", body)
@@ -654,7 +654,7 @@ func TestClient_GetBusinesses_NearVectorFallback(t *testing.T) {
 	}
 }
 
-func TestClient_GetReviews_HybridQuery(t *testing.T) {
+func TestClient_Reviews_HybridQuery(t *testing.T) {
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
@@ -677,9 +677,9 @@ func TestClient_GetReviews_HybridQuery(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
-	_, err := client.GetReviews(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
+	_, err := client.Reviews(context.Background(), "gluten free", 5, SearchFilter{Alpha: 0.75})
 	if err != nil {
-		t.Fatalf("GetReviews failed: %v", err)
+		t.Fatalf("Reviews failed: %v", err)
 	}
 	if !strings.Contains(body, "hybrid:") {
 		t.Errorf("expected hybrid query in GraphQL body, got: %s", body)
@@ -900,17 +900,17 @@ func TestClient_SearchFodmap_NoEmbedder(t *testing.T) {
 	}
 }
 
-func TestClient_GetReviews_NoEmbedder(t *testing.T) {
+func TestClient_Reviews_NoEmbedder(t *testing.T) {
 	client, _ := NewClient("localhost:8090", "http", "", nil)
-	_, err := client.GetReviews(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
+	_, err := client.Reviews(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
 	if err == nil {
 		t.Error("expected error when embedder is nil for hybrid search")
 	}
 }
 
-func TestClient_GetReviews_NoEmbedderPureVector(t *testing.T) {
+func TestClient_Reviews_NoEmbedderPureVector(t *testing.T) {
 	client, _ := NewClient("localhost:8090", "http", "", nil)
-	_, err := client.GetReviews(context.Background(), "pizza", 5, SearchFilter{})
+	_, err := client.Reviews(context.Background(), "pizza", 5, SearchFilter{})
 	if err == nil {
 		t.Error("expected error when embedder is nil for pure vector search")
 	}
@@ -933,7 +933,7 @@ func TestClient_NewClient_DefaultScheme(t *testing.T) {
 	}
 }
 
-func TestClient_GetBusinesses_NoQuery(t *testing.T) {
+func TestClient_Businesses_NoQuery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
 			data := makeData([]struct {
@@ -952,32 +952,32 @@ func TestClient_GetBusinesses_NoQuery(t *testing.T) {
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
 	// Empty query should use the no-query path (limit=100)
-	res, err := client.GetBusinesses(context.Background(), "", 5, SearchFilter{})
+	res, err := client.Businesses(context.Background(), "", 5, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses with empty query failed: %v", err)
+		t.Fatalf("Businesses with empty query failed: %v", err)
 	}
 	if len(res.Businesses) != 1 {
 		t.Errorf("got %d businesses, want 1", len(res.Businesses))
 	}
 }
 
-func TestClient_GetBusinesses_NoEmbedder(t *testing.T) {
+func TestClient_Businesses_NoEmbedder(t *testing.T) {
 	client, _ := NewClient("localhost:8090", "http", "", nil)
-	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
+	_, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{Alpha: 0.5})
 	if err == nil {
 		t.Error("expected error when embedder is nil for hybrid search")
 	}
 }
 
-func TestClient_GetBusinesses_NoEmbedderPureVector(t *testing.T) {
+func TestClient_Businesses_NoEmbedderPureVector(t *testing.T) {
 	client, _ := NewClient("localhost:8090", "http", "", nil)
-	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	_, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{})
 	if err == nil {
 		t.Error("expected error when embedder is nil for pure vector search")
 	}
 }
 
-func TestClient_GetReviews_NoQuery(t *testing.T) {
+func TestClient_Reviews_NoQuery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/v1/graphql" {
 			data := makeReviewData([]struct {
@@ -998,9 +998,9 @@ func TestClient_GetReviews_NoQuery(t *testing.T) {
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
 	// Empty query should use the no-query path (limit*10)
-	res, err := client.GetReviews(context.Background(), "", 5, SearchFilter{})
+	res, err := client.Reviews(context.Background(), "", 5, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetReviews with empty query failed: %v", err)
+		t.Fatalf("Reviews with empty query failed: %v", err)
 	}
 	if len(res.BusinessReviews) != 1 {
 		t.Errorf("got %d reviews, want 1", len(res.BusinessReviews))

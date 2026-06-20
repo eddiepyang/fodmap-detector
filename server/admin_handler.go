@@ -19,7 +19,7 @@ func (s *Server) adminRequired(next http.Handler) http.Handler {
 			return
 		}
 
-		user, err := s.userStore.GetUserByID(r.Context(), userID)
+		user, err := s.userStore.UserByID(r.Context(), userID)
 		if err != nil || user == nil || user.Role != "admin" {
 			respondError(w, "forbidden: admin access required", http.StatusForbidden)
 			return
@@ -68,7 +68,7 @@ func (s *Server) adminListUsersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"users": users,
 		"total": total,
 		"page":  page,
@@ -84,7 +84,7 @@ func (s *Server) adminGetUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := s.userStore.GetUserDetail(r.Context(), id)
+	detail, err := s.userStore.UserDetail(r.Context(), id)
 	if err != nil {
 		slog.Error("failed to get user detail", "user_id", id, "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)
@@ -243,7 +243,7 @@ func (s *Server) adminListConversationsHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"conversations": convs,
 		"total":         total,
 		"page":          page,
@@ -259,7 +259,7 @@ func (s *Server) adminGetConversationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	conv, err := s.userStore.GetConversation(r.Context(), id)
+	conv, err := s.userStore.Conversation(r.Context(), id)
 	if err != nil {
 		slog.Error("failed to get conversation", "conv_id", id, "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)
@@ -270,7 +270,7 @@ func (s *Server) adminGetConversationHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	messages, err := s.userStore.GetMessages(r.Context(), id)
+	messages, err := s.userStore.Messages(r.Context(), id)
 	if err != nil {
 		slog.Error("failed to get messages", "conv_id", id, "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)
@@ -278,7 +278,7 @@ func (s *Server) adminGetConversationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"conversation": conv,
 		"messages":     messages,
 	})
@@ -286,14 +286,14 @@ func (s *Server) adminGetConversationHandler(w http.ResponseWriter, r *http.Requ
 
 // adminAnalyticsOverviewHandler aggregates counts and recent signups.
 func (s *Server) adminAnalyticsOverviewHandler(w http.ResponseWriter, r *http.Request) {
-	userAnalytics, err := s.userStore.GetUserAnalytics(r.Context())
+	userAnalytics, err := s.userStore.UserAnalytics(r.Context())
 	if err != nil {
 		slog.Error("failed to get user analytics", "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	convAnalytics, err := s.userStore.GetConversationAnalytics(r.Context())
+	convAnalytics, err := s.userStore.ConversationAnalytics(r.Context())
 	if err != nil {
 		slog.Error("failed to get conversation analytics", "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)
@@ -301,7 +301,7 @@ func (s *Server) adminAnalyticsOverviewHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"total_users":         userAnalytics.TotalUsers,
 		"active_users":        userAnalytics.ActiveUsers,
 		"suspended_users":     userAnalytics.SuspendedUsers,
@@ -324,7 +324,7 @@ func (s *Server) adminConversationActivityHandler(w http.ResponseWriter, r *http
 		days = 90
 	}
 
-	activity, err := s.userStore.GetConversationActivity(r.Context(), days)
+	activity, err := s.userStore.ConversationActivity(r.Context(), days)
 	if err != nil {
 		slog.Error("failed to get conversation activity", "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)

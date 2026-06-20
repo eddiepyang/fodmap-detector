@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -219,7 +220,7 @@ func runScrapeWith(
 	slog.Info("extracted menu items", "count", len(result.Items), "restaurant", result.RestaurantName)
 
 	// ── Embed + upsert ────────────────────────────────────────────────────────
-	items, err := toMenuItems(result, rawURL, embedder, ctx)
+	items, err := toMenuItems(ctx, result, rawURL, embedder)
 	if err != nil {
 		return fmt.Errorf("embedding menu items: %w", err)
 	}
@@ -240,7 +241,7 @@ func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision
 	if err == nil {
 		return text, nil
 	}
-	if err != scraper.ErrNeedVision {
+	if !errors.Is(err, scraper.ErrNeedVision) {
 		return "", err
 	}
 	if !enableVision {
@@ -269,7 +270,7 @@ var menuCollectionNS = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 // toMenuItems converts a MenuExtractionResult to []search.MenuItem, embedding
 // each item's text vector.
-func toMenuItems(result scraper.MenuExtractionResult, rawURL string, embedder search.Embedder, ctx context.Context) ([]search.MenuItem, error) {
+func toMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawURL string, embedder search.Embedder) ([]search.MenuItem, error) {
 	businessID := scraper.BusinessID(rawURL)
 	section := scraper.MenuSection(rawURL)
 	now := result.ScrapedAtUTC
