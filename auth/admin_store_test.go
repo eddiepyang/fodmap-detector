@@ -94,7 +94,7 @@ func TestPostgresStore_ListUsers_CountError(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserDetail(t *testing.T) {
+func TestPostgresStore_UserDetail(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -106,7 +106,7 @@ func TestPostgresStore_GetUserDetail(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "conversation_count", "message_count", "profile"}).
 			AddRow("u1", "a@example.com", "user", "active", now, 3, 7, profile))
 
-	detail, err := store.GetUserDetail(context.Background(), "u1")
+	detail, err := store.UserDetail(context.Background(), "u1")
 	assert.NoError(t, err)
 	require.NotNil(t, detail)
 	assert.Equal(t, "u1", detail.User.ID)
@@ -116,7 +116,7 @@ func TestPostgresStore_GetUserDetail(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserDetail_NotFound(t *testing.T) {
+func TestPostgresStore_UserDetail_NotFound(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -124,7 +124,7 @@ func TestPostgresStore_GetUserDetail_NotFound(t *testing.T) {
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
-	detail, err := store.GetUserDetail(context.Background(), "missing")
+	detail, err := store.UserDetail(context.Background(), "missing")
 	assert.NoError(t, err)
 	assert.Nil(t, detail)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -226,7 +226,7 @@ func TestPostgresStore_ListAllConversations_CountError(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserAnalytics(t *testing.T) {
+func TestPostgresStore_UserAnalytics(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -239,7 +239,7 @@ func TestPostgresStore_GetUserAnalytics(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at"}).
 			AddRow("u1", "a@example.com", "user", "active", now))
 
-	analytics, err := store.GetUserAnalytics(context.Background())
+	analytics, err := store.UserAnalytics(context.Background())
 	assert.NoError(t, err)
 	require.NotNil(t, analytics)
 	assert.Equal(t, 10, analytics.TotalUsers)
@@ -250,20 +250,20 @@ func TestPostgresStore_GetUserAnalytics(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetUserAnalytics_Error(t *testing.T) {
+func TestPostgresStore_UserAnalytics_Error(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("FROM users\\s+WHERE status != 'deleted'").
 		WillReturnError(errors.New("db down"))
 
-	analytics, err := store.GetUserAnalytics(context.Background())
+	analytics, err := store.UserAnalytics(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, analytics)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversationActivity(t *testing.T) {
+func TestPostgresStore_ConversationActivity(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -273,7 +273,7 @@ func TestPostgresStore_GetConversationActivity(t *testing.T) {
 			AddRow("2026-06-12", 3).
 			AddRow("2026-06-13", 5))
 
-	activity, err := store.GetConversationActivity(context.Background(), 7)
+	activity, err := store.ConversationActivity(context.Background(), 7)
 	assert.NoError(t, err)
 	require.Len(t, activity, 2)
 	assert.Equal(t, "2026-06-12", activity[0].Date)
@@ -282,7 +282,7 @@ func TestPostgresStore_GetConversationActivity(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversationActivity_Error(t *testing.T) {
+func TestPostgresStore_ConversationActivity_Error(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
@@ -290,20 +290,20 @@ func TestPostgresStore_GetConversationActivity_Error(t *testing.T) {
 		WithArgs(7).
 		WillReturnError(errors.New("db down"))
 
-	activity, err := store.GetConversationActivity(context.Background(), 7)
+	activity, err := store.ConversationActivity(context.Background(), 7)
 	assert.Error(t, err)
 	assert.Nil(t, activity)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversationAnalytics(t *testing.T) {
+func TestPostgresStore_ConversationAnalytics(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("FROM conversations").
 		WillReturnRows(sqlmock.NewRows([]string{"total", "avg"}).AddRow(20, 2.5))
 
-	analytics, err := store.GetConversationAnalytics(context.Background())
+	analytics, err := store.ConversationAnalytics(context.Background())
 	assert.NoError(t, err)
 	require.NotNil(t, analytics)
 	assert.Equal(t, 20, analytics.TotalConversations)
@@ -311,14 +311,14 @@ func TestPostgresStore_GetConversationAnalytics(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPostgresStore_GetConversationAnalytics_Error(t *testing.T) {
+func TestPostgresStore_ConversationAnalytics_Error(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
 	mock.ExpectQuery("FROM conversations").
 		WillReturnError(errors.New("db down"))
 
-	analytics, err := store.GetConversationAnalytics(context.Background())
+	analytics, err := store.ConversationAnalytics(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, analytics)
 	assert.NoError(t, mock.ExpectationsWereMet())

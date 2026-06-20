@@ -21,7 +21,7 @@ import (
 
 // stubFodmapWriter tracks upsert/delete/batch-upsert calls for assertion.
 type stubFodmapWriter struct {
-	*MockSearcher
+	*StubSearcher
 	upserts        map[string]data.FodmapEntry
 	deletes        []string
 	batchUpserts   []map[string]data.FodmapEntry
@@ -74,10 +74,10 @@ type noOpSearcher struct{}
 
 var _ Searcher = (*noOpSearcher)(nil)
 
-func (n *noOpSearcher) GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
+func (n *noOpSearcher) Businesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }
-func (n *noOpSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (n *noOpSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	return search.SearchReviews{}, nil
 }
 func (n *noOpSearcher) SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error) {
@@ -94,7 +94,7 @@ func adminIngredientTestServer(t *testing.T) (*Server, *stubCatalogStore, string
 	t.Helper()
 	secret := "test-secret"
 	adminID := "admin-1"
-	us := newMockStore()
+	us := newStubStore()
 	us.users["admin@example.com"] = &auth.User{
 		ID:     adminID,
 		Email:  "admin@example.com",
@@ -280,7 +280,7 @@ func TestAdminIngredientHandlers_Update(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	item, err := cs.Get(context.Background(), "garlic")
+	item, err := cs.Ingredient(context.Background(), "garlic")
 	require.NoError(t, err)
 	assert.Equal(t, "low", item.Level)
 	entry, ok := fw.upserts["garlic"]
@@ -340,7 +340,7 @@ func TestAdminIngredientHandlers_Delete(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	item, err := cs.Get(context.Background(), "garlic")
+	item, err := cs.Ingredient(context.Background(), "garlic")
 	require.NoError(t, err)
 	assert.Nil(t, item)
 	assert.Contains(t, fw.deletes, "garlic")
@@ -466,12 +466,12 @@ func TestAdminIngredientHandlers_Reseed(t *testing.T) {
 	assert.GreaterOrEqual(t, int(resp["count"].(float64)), 1)
 
 	// Verify that the static entry was reset
-	entry, err := cs.Get(context.Background(), "garlic")
+	entry, err := cs.Ingredient(context.Background(), "garlic")
 	require.NoError(t, err)
 	assert.Equal(t, "high", entry.Level, "garlic should have been reset to its static level")
 
 	// Verify that the admin-added entry still exists
-	customEntry, err := cs.Get(context.Background(), "custom spice")
+	customEntry, err := cs.Ingredient(context.Background(), "custom spice")
 	require.NoError(t, err)
 	require.NotNil(t, customEntry, "admin-added entry should be preserved")
 	assert.Equal(t, "low", customEntry.Level)
@@ -528,7 +528,7 @@ func TestInMemoryCatalogStore_ReseedNormalizesNilSlices(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	entry, err := cs.Get(context.Background(), "tofu")
+	entry, err := cs.Ingredient(context.Background(), "tofu")
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, []string{}, entry.Groups, "nil Groups should be normalized to empty slice")
@@ -544,7 +544,7 @@ func TestInMemoryCatalogStore_SeedNormalizesNilSlices(t *testing.T) {
 	err := cs.Seed(context.Background(), items)
 	require.NoError(t, err)
 
-	entry, err := cs.Get(context.Background(), "rice")
+	entry, err := cs.Ingredient(context.Background(), "rice")
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, []string{}, entry.Groups, "nil Groups should be normalized to empty slice")
@@ -564,7 +564,7 @@ func TestInMemoryCatalogStore_ReseedOverwritesExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	entry, err := cs.Get(context.Background(), "garlic")
+	entry, err := cs.Ingredient(context.Background(), "garlic")
 	require.NoError(t, err)
 	assert.Equal(t, "high", entry.Level, "reseed should overwrite existing entry")
 	assert.Equal(t, []string{"fructans"}, entry.Groups)

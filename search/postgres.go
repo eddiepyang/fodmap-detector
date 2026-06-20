@@ -311,8 +311,8 @@ func (a *pgxStringArray) Scan(src any) error {
 	}
 }
 
-// GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
-func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
+// Businesses performs an aggregation-like search by querying reviews and grouping by business.
+func (c *PostgresClient) Businesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("vectorize query: %w", err)
@@ -376,8 +376,8 @@ func (c *PostgresClient) GetBusinesses(ctx context.Context, query string, limit 
 	return SearchResult{Businesses: businesses}, nil
 }
 
-// GetReviews retrieves top reviews for a query, filtered by business if specified.
-func (c *PostgresClient) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
+// Reviews retrieves top reviews for a query, filtered by business if specified.
+func (c *PostgresClient) Reviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
 	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchReviews{}, fmt.Errorf("vectorize query: %w", err)

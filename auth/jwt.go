@@ -62,7 +62,7 @@ func GenerateTokensWithRole(userID, role, secret string) (string, string, error)
 
 // ValidateToken parses and validates a JWT token string with the provided secret.
 func ValidateToken(tokenStr, secret string) (*UserClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (any, error) {
 		// Validating the algorithm
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

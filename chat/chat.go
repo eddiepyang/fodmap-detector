@@ -20,12 +20,16 @@ import (
 	"google.golang.org/genai"
 )
 
+// Gemini model and length limit constants for the chat session.
 const (
 	ScreenGeminiModel = "gemini-3.1-flash-lite-preview"
 	MaxInputLen       = 2000
 	MaxResponseLen    = 4000
 )
 
+// DefaultChatInstruction is the default system prompt template, embedded from
+// chat-instruction.txt. Callers may override it via RenderChatSystemPrompt.
+//
 //go:embed chat-instruction.txt
 var DefaultChatInstruction string
 
@@ -48,6 +52,7 @@ var offBaseURL = "https://world.openfoodfacts.org/cgi/search.pl"
 
 // ---- domain types ----
 
+// Business is a restaurant or food business returned by the search server.
 type Business struct {
 	ID    string
 	Name  string
@@ -55,6 +60,7 @@ type Business struct {
 	State string
 }
 
+// Review is a single restaurant review fetched for chat context.
 type Review struct {
 	ReviewID string  `json:"review_id"`
 	Stars    float32 `json:"Stars"`
@@ -66,7 +72,7 @@ type Review struct {
 // FodmapSessionClient is the minimal interface required by Session to dispatch
 // FODMAP tool calls during a chat turn.
 type FodmapSessionClient interface {
-	LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error)
+	LookupFodmap(ctx context.Context, ingredient string) (FodmapToolResponse, error)
 }
 
 // FodmapServerClient is the full client interface used by CLI pre-chat setup
@@ -77,6 +83,7 @@ type FodmapServerClient interface {
 	FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error)
 }
 
+// AllergenClient provides allergen information for a given ingredient.
 type AllergenClient interface {
 	LookupAllergens(ctx context.Context, ingredient string) (AllergenToolResponse, error)
 }
@@ -89,6 +96,7 @@ type ProductIngredientClient interface {
 
 // ---- tool response types ----
 
+// FodmapToolResponse is the result of a FODMAP lookup tool call.
 type FodmapToolResponse struct {
 	Ingredient    string   `json:"ingredient"`
 	Found         bool     `json:"found"`
@@ -100,6 +108,7 @@ type FodmapToolResponse struct {
 	Error         string   `json:"error,omitempty"`
 }
 
+// AllergenToolResponse is the result of an allergen lookup tool call.
 type AllergenToolResponse struct {
 	Ingredient string   `json:"ingredient"`
 	Allergens  []string `json:"allergens,omitempty"`
@@ -130,6 +139,7 @@ type ProductFodmapResponse struct {
 
 // ---- guardrails ----
 
+// ValidateChatInput checks user input against length limits and injection patterns.
 func ValidateChatInput(input string) error {
 	if len(input) > MaxInputLen {
 		return fmt.Errorf("message too long (max %d characters)", MaxInputLen)
@@ -278,11 +288,13 @@ func (s *Session) SendWithToolCalls(ctx context.Context, input string, onText fu
 	return result, nil
 }
 
+// DispatchTool invokes a named tool with the given arguments and returns the
+// tool's response to be included in the chat turn.
 func (s *Session) DispatchTool(ctx context.Context, name string, args map[string]any) any {
 	ingredient, _ := args["ingredient"].(string)
 	switch name {
 	case "lookup_fodmap":
-		result, err := s.FodmapClient.LookupFODMAP(ctx, ingredient)
+		result, err := s.FodmapClient.LookupFodmap(ctx, ingredient)
 		if err != nil {
 			slog.Warn("fodmap lookup failed", "ingredient", ingredient, "error", err)
 			return FodmapToolResponse{Ingredient: ingredient, Found: false, Error: err.Error()}
@@ -306,6 +318,10 @@ func (s *Session) DispatchTool(ctx context.Context, name string, args map[string
 	}
 }
 
+// ToMap converts a value to a map[string]any via JSON round-trip. This is
+// used to normalize tool response structs for Gemini's function-calling API.
+// Marshal/unmarshal errors are ignored because the input is always a struct
+// with JSON-tagged fields.
 func ToMap(v any) map[string]any {
 	b, _ := json.Marshal(v)
 	var m map[string]any
@@ -349,7 +365,7 @@ func AnalyzeProductFodmap(ctx context.Context, products ProductIngredientClient,
 	worst := 0
 	seenGroup := make(map[string]bool)
 	for _, ing := range ingredients {
-		res, err := fodmap.LookupFODMAP(ctx, ing)
+		res, err := fodmap.LookupFodmap(ctx, ing)
 		if err != nil || !res.Found {
 			resp.Unknown = append(resp.Unknown, ing)
 			continue
@@ -386,6 +402,8 @@ func AnalyzeProductFodmap(ctx context.Context, products ProductIngredientClient,
 
 // ---- tool declarations ----
 
+// FodmapAllergenTools returns the tool declarations for FODMAP and allergen
+// lookups, suitable for passing to Gemini's function-calling API.
 func FodmapAllergenTools() []ToolDeclaration {
 	return []ToolDeclaration{
 		{
@@ -408,6 +426,7 @@ func FodmapAllergenTools() []ToolDeclaration {
 
 // ---- system prompt rendering ----
 
+// PromptData holds the values injected into the chat system prompt template.
 type PromptData struct {
 	BusinessName   string
 	City           string
@@ -415,6 +434,8 @@ type PromptData struct {
 	DietaryProfile string
 }
 
+// RenderChatSystemPrompt renders the system prompt template with business and
+// dietary profile data.
 func RenderChatSystemPrompt(tmplStr string, biz *Business, dietaryProfile string) (string, error) {
 	tmpl, err := template.New("chat").Parse(tmplStr)
 	if err != nil {
@@ -489,11 +510,15 @@ func SummarizeReviews(ctx context.Context, client *genai.Client, model, bizName 
 
 // ---- HTTP Clients ----
 
+// HTTPFodmapServerClient is an HTTP-based implementation of FodmapServerClient
+// that calls the FODMAP detector server's search and lookup endpoints.
 type HTTPFodmapServerClient struct {
 	serverURL string
 	client    *http.Client
 }
 
+// NewHTTPFodmapServerClient creates an HTTPFodmapServerClient targeting the
+// given server base URL.
 func NewHTTPFodmapServerClient(serverURL string) *HTTPFodmapServerClient {
 	return &HTTPFodmapServerClient{
 		serverURL: serverURL,
@@ -501,6 +526,8 @@ func NewHTTPFodmapServerClient(serverURL string) *HTTPFodmapServerClient {
 	}
 }
 
+// FetchTopBusiness searches for the top business matching the query and
+// location filters.
 func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, category, city, state string) (*Business, error) {
 	u := c.serverURL + "/api/v1/search/businesses/" + url.PathEscape(query) + "?limit=1"
 	if category != "" {
@@ -545,6 +572,7 @@ func (c *HTTPFodmapServerClient) FetchTopBusiness(ctx context.Context, query, ca
 	return &Business{ID: b.ID, Name: b.Name, City: b.City, State: b.State}, nil
 }
 
+// FetchChatReviews fetches reviews for a business to use as chat context.
 func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessID, query string, limit int) ([]Review, error) {
 	u := c.serverURL + "/api/v1/search/reviews/" + url.PathEscape(query) + "?business_id=" + url.QueryEscape(businessID) + "&limit=" + strconv.Itoa(limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -571,7 +599,8 @@ func (c *HTTPFodmapServerClient) FetchChatReviews(ctx context.Context, businessI
 	return data.Reviews, nil
 }
 
-func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
+// LookupFodmap looks up the FODMAP classification for a single ingredient.
+func (c *HTTPFodmapServerClient) LookupFodmap(ctx context.Context, ingredient string) (FodmapToolResponse, error) {
 	u := c.serverURL + "/api/v1/search/fodmap/" + url.PathEscape(ingredient)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -614,6 +643,7 @@ func (c *HTTPFodmapServerClient) LookupFODMAP(ctx context.Context, ingredient st
 	}, nil
 }
 
+// OpenFoodFactsClient queries the Open Food Facts API for product allergens.
 type OpenFoodFactsClient struct {
 	baseURL   string
 	client    *http.Client
@@ -635,6 +665,8 @@ func (c *OpenFoodFactsClient) throttle() {
 	c.lastCall = time.Now()
 }
 
+// NewOpenFoodFactsClient creates an OpenFoodFactsClient. Pass an empty baseURL
+// to use the default public endpoint.
 func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
 	if baseURL == "" {
 		baseURL = offBaseURL
@@ -646,6 +678,8 @@ func NewOpenFoodFactsClient(baseURL string) *OpenFoodFactsClient {
 	}
 }
 
+// LookupAllergens returns the allergens associated with the given ingredient
+// via the Open Food Facts API.
 func (c *OpenFoodFactsClient) LookupAllergens(ctx context.Context, ingredient string) (AllergenToolResponse, error) {
 	if cached, ok := c.cache.Load(ingredient); ok {
 		return cached.(AllergenToolResponse), nil

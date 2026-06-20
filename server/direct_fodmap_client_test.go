@@ -9,41 +9,41 @@ import (
 	"fodmap/search"
 )
 
-// MockSearcher is a mock implementation of the Searcher interface for testing.
-type MockSearcher struct {
+// StubSearcher is a stub implementation of the Searcher interface for testing.
+type StubSearcher struct {
 	FodmapResult *search.FodmapResult
 	Err          error
 }
 
-func (m *MockSearcher) GetBusinesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
+func (m *StubSearcher) Businesses(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchResult, error) {
 	return search.SearchResult{}, m.Err
 }
-func (m *MockSearcher) GetReviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *StubSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
 	return search.SearchReviews{}, m.Err
 }
-func (m *MockSearcher) SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error) {
+func (m *StubSearcher) SearchFodmap(ctx context.Context, ingredient string) (search.FodmapResult, float64, error) {
 	if m.FodmapResult != nil {
 		return *m.FodmapResult, 1.0, m.Err
 	}
 	return search.FodmapResult{}, 0, m.Err
 }
-func (m *MockSearcher) EnsureSchema(ctx context.Context) error {
+func (m *StubSearcher) EnsureSchema(ctx context.Context) error {
 	return nil
 }
-func (m *MockSearcher) EnsureFodmapSchema(ctx context.Context) error {
+func (m *StubSearcher) EnsureFodmapSchema(ctx context.Context) error {
 	return nil
 }
-func (m *MockSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
+func (m *StubSearcher) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	return m.Err
 }
-func (m *MockSearcher) BatchUpsert(ctx context.Context, items []search.IndexItem) error {
+func (m *StubSearcher) BatchUpsert(ctx context.Context, items []search.IndexItem) error {
 	return m.Err
 }
 
-func TestDirectFodmapClient_LookupFODMAP(t *testing.T) {
+func TestDirectFodmapClient_LookupFodmap(t *testing.T) {
 	testCases := []struct {
 		name          string
-		searcher      *MockSearcher
+		searcher      *StubSearcher
 		ingredient    string
 		expectedFound bool
 		expectedLevel string
@@ -51,7 +51,7 @@ func TestDirectFodmapClient_LookupFODMAP(t *testing.T) {
 	}{
 		{
 			name: "FODMAP found",
-			searcher: &MockSearcher{
+			searcher: &StubSearcher{
 				FodmapResult: &search.FodmapResult{
 					Ingredient: "garlic",
 					Level:      "High",
@@ -64,14 +64,14 @@ func TestDirectFodmapClient_LookupFODMAP(t *testing.T) {
 		},
 		{
 			name:          "FODMAP not found",
-			searcher:      &MockSearcher{},
+			searcher:      &StubSearcher{},
 			ingredient:    "unknown",
 			expectedFound: false,
 			expectedErr:   false,
 		},
 		{
 			name:          "Search error",
-			searcher:      &MockSearcher{Err: errors.New("search unavailable")},
+			searcher:      &StubSearcher{Err: errors.New("search unavailable")},
 			ingredient:    "garlic",
 			expectedFound: false,
 			expectedErr:   true,
@@ -83,7 +83,7 @@ func TestDirectFodmapClient_LookupFODMAP(t *testing.T) {
 			s := &Server{searcher: tc.searcher}
 			client := NewDirectFodmapClient(s)
 
-			result, err := client.LookupFODMAP(context.Background(), tc.ingredient)
+			result, err := client.LookupFodmap(context.Background(), tc.ingredient)
 
 			if (err != nil) != tc.expectedErr {
 				t.Fatalf("expected error: %v, got: %v", tc.expectedErr, err)

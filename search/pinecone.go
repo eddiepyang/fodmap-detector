@@ -56,8 +56,8 @@ func (c *PineconeClient) EnsureFodmapSchema(ctx context.Context) error {
 	return nil
 }
 
-// GetBusinesses performs an aggregation-like search by querying reviews and grouping by business.
-func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
+// Businesses performs an aggregation-like search by querying reviews and grouping by business.
+func (c *PineconeClient) Businesses(ctx context.Context, query string, limit int, filter SearchFilter) (SearchResult, error) {
 	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("vectorizing query: %w", err)
@@ -117,8 +117,8 @@ func (c *PineconeClient) GetBusinesses(ctx context.Context, query string, limit 
 	return SearchResult{Businesses: businesses}, nil
 }
 
-// GetReviews retrieves top reviews for a query, filtered by business if specified.
-func (c *PineconeClient) GetReviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
+// Reviews retrieves top reviews for a query, filtered by business if specified.
+func (c *PineconeClient) Reviews(ctx context.Context, query string, limit int, filter SearchFilter) (SearchReviews, error) {
 	vec, err := c.embedder.EmbedSingle(ctx, query)
 	if err != nil {
 		return SearchReviews{}, fmt.Errorf("vectorizing query: %w", err)
@@ -269,6 +269,7 @@ func (c *PineconeClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	return c.doUpsert(ctx, pineconeVectors, pineconeReviewNamespace)
 }
 
+// BatchUpsertFodmap upserts a batch of FODMAP entries into the Pinecone fodmap namespace.
 func (c *PineconeClient) BatchUpsertFodmap(ctx context.Context, items map[string]data.FodmapEntry) error {
 	if len(items) == 0 {
 		return nil
@@ -327,19 +328,12 @@ func (c *PineconeClient) UpsertFodmapItem(ctx context.Context, name string, entr
 	if groups == nil {
 		groups = []string{}
 	}
-	subs := entry.Substitutions
-	if subs == nil {
-		subs = []string{}
-	}
 
 	meta := map[string]any{
 		"ingredient": name,
 		"level":      entry.Level,
 		"groups":     groups,
 		"notes":      entry.Notes,
-	}
-	if len(subs) > 0 {
-		meta["substitutions"] = subs
 	}
 	if len(entry.Substitutions) > 0 {
 		meta["substitutions"] = entry.Substitutions

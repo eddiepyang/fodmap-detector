@@ -12,6 +12,7 @@ import (
 // ChangeType describes the kind of regulatory change observed.
 type ChangeType string
 
+// ChangeType values describe the kind of regulatory change observed.
 const (
 	ChangeTypeAddition    ChangeType = "addition"
 	ChangeTypeRestriction ChangeType = "restriction"
@@ -35,6 +36,12 @@ type StructuredUpdate struct {
 // map suitable for passing to Gemini's ResponseSchema. ExpandedStruct is
 // enabled to flatten any $ref — Gemini's structured output does not support
 // $ref.
+//
+// The panics on marshal/unmarshal errors are safe because the input is a
+// reflection-generated schema from a static Go struct — json.Marshal of a
+// *jsonschema.Schema always produces valid JSON, and the round-trip through
+// map[string]any is infallible for that output. This follows the same
+// convention as regexp.MustCompile on a compile-time constant.
 func StructuredUpdateSchema() map[string]any {
 	r := &jsonschema.Reflector{
 		ExpandedStruct: true,

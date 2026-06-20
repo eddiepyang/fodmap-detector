@@ -15,6 +15,7 @@ import (
 // RuleStatus represents the lifecycle of an extraction rule.
 type RuleStatus string
 
+// Extraction rule lifecycle statuses.
 const (
 	RuleStatusProposed RuleStatus = "proposed"
 	RuleStatusActive   RuleStatus = "active"
@@ -56,12 +57,12 @@ func InsertProposedRule(ctx context.Context, pool *pgxpool.Pool, r *ExtractionRu
 	return nil
 }
 
-// GetActiveRule returns the active extraction rule for the given domain, or
+// ActiveRule returns the active extraction rule for the given domain, or
 // (nil, nil) if no active rule exists. This allows callers to distinguish
 // between "no rule found" (normal fast-path miss) and a real database error.
-func GetActiveRule(ctx context.Context, pool *pgxpool.Pool, domain string) (*ExtractionRule, error) {
+func ActiveRule(ctx context.Context, pool *pgxpool.Pool, domain string) (*ExtractionRule, error) {
 	var r ExtractionRule
-	err := pool.QueryRow(ctx, store.GetActiveRuleSQL, domain).
+	err := pool.QueryRow(ctx, store.ActiveRuleSQL, domain).
 		Scan(&r.ID, &r.Domain, &r.Selector, &r.Fields, &r.Status, &r.Provenance, &r.ProposedAt, &r.ActivatedAt, &r.CreatedAt)
 	if err == nil {
 		return &r, nil
@@ -72,11 +73,11 @@ func GetActiveRule(ctx context.Context, pool *pgxpool.Pool, domain string) (*Ext
 	return nil, fmt.Errorf("getting active rule for %s: %w", domain, err)
 }
 
-// GetProposedRule returns a proposed extraction rule by its ID, or (nil, nil) if
+// ProposedRule returns a proposed extraction rule by its ID, or (nil, nil) if
 // no proposed rule exists with that ID.
-func GetProposedRule(ctx context.Context, pool *pgxpool.Pool, ruleID string) (*ExtractionRule, error) {
+func ProposedRule(ctx context.Context, pool *pgxpool.Pool, ruleID string) (*ExtractionRule, error) {
 	var r ExtractionRule
-	err := pool.QueryRow(ctx, store.GetProposedRuleSQL, ruleID).
+	err := pool.QueryRow(ctx, store.ProposedRuleSQL, ruleID).
 		Scan(&r.ID, &r.Domain, &r.Selector, &r.Fields, &r.Status, &r.Provenance, &r.ProposedAt, &r.ActivatedAt, &r.CreatedAt)
 	if err == nil {
 		return &r, nil

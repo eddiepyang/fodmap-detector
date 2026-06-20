@@ -44,7 +44,7 @@ func (s *inMemoryCatalogStore) Create(ctx context.Context, entry store.CatalogEn
 }
 
 // Get retrieves a single ingredient by name.
-func (s *inMemoryCatalogStore) Get(ctx context.Context, name string) (*store.CatalogEntry, error) {
+func (s *inMemoryCatalogStore) Ingredient(ctx context.Context, name string) (*store.CatalogEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, ok := s.items[strings.ToLower(strings.TrimSpace(name))]

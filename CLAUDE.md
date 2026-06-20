@@ -2,18 +2,44 @@
 
 Project-level rules for this codebase.
 
-## Go Style
+## Rules
 
-- Follow the [Google Go Style Guide](https://google.github.io/styleguide/go/)
-- No `os.Exit` or `panic` in library code — only CLI entry points may call `os.Exit`
-- No logging inside functions that also return errors — let callers decide whether to log
-- Initialism casing: `ID` not `Id`, `URL` not `Url`
-- Remove dead code — no commented-out code, TODO stubs, or unused types
-- Use `errors.Is` for sentinel errors (`errors.Is(err, io.EOF)` not `err == io.EOF`)
-- Import grouping: stdlib, then project packages, then third-party, each separated by a blank line
-- Doc comments on all exported identifiers — must begin with the exported name
+Codestyle and convention rules live in `.rules/` as one file per topic. Read the
+relevant file(s) before implementing — do not rely on the Google Go Style Guide
+URL inline; the canonical content is already extracted there.
+
+- `.rules/go-style.md` — top-level: follow Google Go Style Guide, initialism
+  casing, library `panic`/`os.Exit` ban, `errors.Is`, dead code, import grouping,
+  doc comments, CLI `RunE`/`SilenceErrors`/`SilenceUsage`, `_ = x.Close()` in
+  error cleanup, errcheck on defers
+- `.rules/naming.md` — packages, receivers, constants, getters, variables, repetition
+- `.rules/imports.md` — renaming, grouping, blank imports, dot imports, proto conventions
+- `.rules/comments.md` — line length, doc comments, sentences, examples, named
+  results, package comments, documentation conventions
+- `.rules/errors.md` — returning, strings, handling, in-band errors, indent flow,
+  `%w`/`%v` placement, sentinel placement, structure, logging
+- `.rules/literals.md` — field names, matching/cuddled braces, repeated types, zero-value fields
+- `.rules/formatting.md` — function signatures, conditionals, indentation confusion, string literals
+- `.rules/language.md` — generics, `any` over `interface{}`, unnecessary pointers, equality, time formats
+- `.rules/context.md` — first-arg, no struct field, no custom context types
+- `.rules/concurrency.md` — goroutine lifetimes
+- `.rules/channels.md` — `for range chan`, close-to-signal, buffered producer/consumer
+- `.rules/interfaces.md` — ownership, when to create, signatures (accept interfaces /
+  return concrete types), design
+- `.rules/resources.md` — streaming returns `(result, io.Closer, error)`; constructor interface types
+- `.rules/logging.md` — `slog` throughout, structured key/value
+- `.rules/static-assets.md` — `//go:embed` for text/prompts/templates
+- `.rules/sql.md` — SQL in `.sql` files, `//go:embed`, golang-migrate, River tables
+- `.rules/api.md` — Go 1.22+ method+path routing, plan before changing contracts
+- `.rules/testing.md` — TDD, `make check`, stubs not mocks, per-feature tests, external-HTTP base URL var
+- `.rules/testing-extras.md` — test double naming, shadowing, package size
+- `.rules/usage.md` — usage messages
+
+When a rule is needed but missing from `.rules/`, add it there (one file per topic)
+rather than inlining it in this file.
 
 ## UI & API Mapping
+
 - **Main Chat Logic**: `chat/chat.go` (Server) -> `POST /chat`
 - **Conversation CRUD**: `server/handlers.go` -> `/conversations` (List, Create, Get, Delete)
 - **Restaurant Search**: `server/handlers.go` -> used by `NewChatWorkflow.tsx` for initial selection
@@ -31,59 +57,10 @@ Project-level rules for this codebase.
 
 - Always pull the latest changes from `main` (`git pull origin main`) before starting a new task or creating a branch.
 
-## Testing
-
-- Always use Test-Driven Development (TDD). Write tests before writing the implementation.
-- Running the golang linter is not optional. It is now bound to the `make test` pipeline. (install: `GOTOOLCHAIN=go1.26.2 go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8`)
-- **Always run `make check`** (which runs lint, test, and build) instead of relying on raw `go test ./...` in isolation. This guarantees local `golangci-lint` passes and the project builds successfully before regressions are accepted. You should strictly enforce this local rule as an AI agent.
-- Do not mock — use stub types that implement interfaces (see `integration/handlers_test.go` for the pattern)
-- Always write tests for new functionality — every new exported function, HTTP handler, or CLI helper must have accompanying tests in a `_test.go` file in the same package
-- For functions that call external HTTP endpoints, extract the base URL to a package-level `var` (e.g. `var offBaseURL = "https://..."`) so tests can redirect to an `httptest.NewServer` without mocking
-
-## Go channel patterns
-
-- Use `for range chan` to consume channels; do not use `select` with a separate done channel
-- Closing a channel signals completion — ranging over it drains all buffered items automatically
-- Prefer buffered channels in producer/consumer pipelines: `make(chan T, N)`
-
-## API / routing changes
-
-- Show a plan and get approval before changing any HTTP route pattern or query parameter contract
-- Route patterns use Go 1.22+ method+path syntax: `"GET /path/{param}"` or `"GET /path/{wildcard...}"`
-- Query strings are for optional filters; required inputs belong in the path
-
 ## Go version upgrades
 
 - Run `go fix ./...` after bumping the Go version — it applies automated modernizations
 - Keep `go.mod` at a single `go X.Y.Z` line; no `toolchain` directive needed when the installed version matches
-
-## Error handling
-
-- CLI commands use `RunE` (not `Run`) and return `fmt.Errorf("context: %w", err)` — no `slog.Error` + `os.Exit` in command handlers
-- Root command sets `SilenceErrors: true` and `SilenceUsage: true`; `Execute()` in `root.go` handles printing
-- Use `_ = x.Close()` when closing in an error cleanup path (primary error already captured)
-- `defer x.Close()` is fine for deferred cleanup — errcheck is configured to ignore `.Close` on defers (see `.golangci.yml`)
-
-## Resource lifecycle
-
-- Functions that open files for streaming (e.g. `GetArchive`) return `(result, io.Closer, error)` — the caller owns the lifecycle and must `defer closer.Close()`
-- Accept interfaces, return structs: constructor parameters should use interface types (`io.WriteCloser`, `io.Reader`) so callers can pass any implementation
-
-## Logging
-
-- Use `slog` throughout — not `log` or `fmt.Println`
-- Structured key/value pairs: `slog.Error("msg", "key", value)` — never bare string concatenation
-
-## Static Assets
-
-- Always use `//go:embed` for static text files, prompts, and templates instead of reading from disk with `os.ReadFile`. This bundles assets directly into the Go binary and guarantees they are present at deployment.
-
-## SQL
-
-- Never inline SQL queries in Go code. Put all SQL in `.sql` files under a `sql/` subdirectory of the package (e.g. `menutracking/store/sql/`, `search/sql/`) and embed them with `//go:embed sql/*.sql` as exported `var` constants (e.g. `var ListSourcesSQL string`).
-- Parameterized queries use `$1`, `$2`, etc. in the `.sql` files — never interpolate values with `fmt.Sprintf` or string concatenation.
-- DDL (CREATE TABLE, ALTER TABLE) lives in versioned, timestamped files under `internal/db/migrations/`, embedded via `//go:embed` and applied by `golang-migrate`. Per-package `sql/` directories hold runtime queries only. Never add `CREATE TABLE` to Go source or to a constructor's startup path.
-- River's own tables (river_job, river_leader, etc.) are managed separately by `river migrate-up` and must NOT be included in `internal/db/migrations/`.
 
 ## Documentation & Scripts
 

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
@@ -83,7 +83,7 @@ func TestRunMenutrackingAddSourceRejectsInvalidCron(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid cron, got nil")
 	}
-	if !strings.Contains(err.Error(), "invalid --cron") {
-		t.Fatalf("expected invalid --cron error, got: %v", err)
+	if !errors.Is(err, ErrInvalidCron) {
+		t.Fatalf("expected ErrInvalidCron, got: %v", err)
 	}
 }

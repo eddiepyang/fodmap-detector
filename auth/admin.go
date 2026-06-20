@@ -60,7 +60,7 @@ type AdminStore interface {
 
 	// User admin
 	ListUsers(ctx context.Context, offset, limit int, filter UserFilter) ([]*User, int, error)
-	GetUserDetail(ctx context.Context, userID string) (*UserDetail, error)
+	UserDetail(ctx context.Context, userID string) (*UserDetail, error)
 	DeleteUserPermanently(ctx context.Context, userID string) error
 	ResetUserPassword(ctx context.Context, userID string, hashedPassword string) error
 
@@ -68,7 +68,7 @@ type AdminStore interface {
 	ListAllConversations(ctx context.Context, offset, limit int, search string) ([]*ConversationSummary, int, error)
 
 	// Analytics aggregates
-	GetUserAnalytics(ctx context.Context) (*UserAnalytics, error)
-	GetConversationActivity(ctx context.Context, days int) ([]DailyCount, error)
-	GetConversationAnalytics(ctx context.Context) (*ConversationAnalytics, error)
+	UserAnalytics(ctx context.Context) (*UserAnalytics, error)
+	ConversationActivity(ctx context.Context, days int) ([]DailyCount, error)
+	ConversationAnalytics(ctx context.Context) (*ConversationAnalytics, error)
 }

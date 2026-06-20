@@ -48,11 +48,7 @@ func (s *Server) adminIngredientSearchTestHandler(w http.ResponseWriter, r *http
 
 	res, cert, err := s.searcher.SearchFodmap(r.Context(), q)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"match":     nil,
-			"certainty": 0,
-		})
+		respondError(w, "search failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -115,7 +111,7 @@ func (s *Server) adminGetIngredientHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	item, err := s.catalogStore.Get(r.Context(), name)
+	item, err := s.catalogStore.Ingredient(r.Context(), name)
 	if err != nil {
 		slog.Error("failed to get ingredient", "name", name, "error", err)
 		respondError(w, "internal server error", http.StatusInternalServerError)

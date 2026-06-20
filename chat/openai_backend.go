@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+// OpenAICompatBackend implements ChatBackend against an OpenAI-compatible
+// API (e.g. Ollama's OpenAI shim, vLLM, or OpenAI itself).
 type OpenAICompatBackend struct {
 	baseURL string
 	model   string
@@ -18,6 +20,8 @@ type OpenAICompatBackend struct {
 	client  *http.Client
 }
 
+// NewOpenAICompatBackend creates a backend targeting the given OpenAI-compatible
+// API base URL.
 func NewOpenAICompatBackend(baseURL, model, apiKey string) *OpenAICompatBackend {
 	return &OpenAICompatBackend{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
@@ -83,6 +87,7 @@ type oaiStreamResponse struct {
 	} `json:"choices"`
 }
 
+// Generate sends a chat completion request and returns the assistant's reply.
 func (b *OpenAICompatBackend) Generate(ctx context.Context, opts GenerateOpts) (Message, error) {
 	var msgs []oaiMessage
 	if opts.SystemPrompt != "" {

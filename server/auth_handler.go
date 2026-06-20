@@ -87,7 +87,9 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate tokens for automatic initial login after registration
 	access, refresh, err := auth.GenerateTokensWithRole(user.ID, user.Role, s.jwtSecret)
 	if err != nil {
-		slog.Warn("user created but token generation failed", "user_id", user.ID, "error", err)
+		slog.Error("user created but token generation failed", "user_id", user.ID, "error", err)
+		respondError(w, "account created but login failed; please sign in manually", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -117,7 +119,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.userStore.GetUserByEmail(r.Context(), req.Email)
+	user, err := s.userStore.UserByEmail(r.Context(), req.Email)
 	if err != nil || user == nil {
 		respondError(w, "no account found for this email", http.StatusUnauthorized)
 		return
@@ -173,7 +175,7 @@ func (s *Server) refreshHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user *auth.User
 	if s.userStore != nil {
-		user, err = s.userStore.GetUserByID(r.Context(), claims.UserID)
+		user, err = s.userStore.UserByID(r.Context(), claims.UserID)
 		if err != nil || user == nil {
 			respondError(w, "user not found", http.StatusUnauthorized)
 			return
@@ -242,7 +244,7 @@ func (s *Server) meHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.userStore.GetUserByID(r.Context(), userID)
+	user, err := s.userStore.UserByID(r.Context(), userID)
 	if err != nil || user == nil || user.Status == "deleted" {
 		respondError(w, "user not found", http.StatusUnauthorized)
 		return

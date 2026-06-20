@@ -1,5 +1,6 @@
 package data
 
+// YelpSchema is the Parquet schema string for the Yelp reviews dataset.
 const (
 	YelpSchema = `{
 	"Tag":"name=yelp-reviews",

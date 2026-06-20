@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../fodmap-chat"
+		}
+	],
+	"settings": {
+		"telemetry.feedback.enabled": false
+	}
+}

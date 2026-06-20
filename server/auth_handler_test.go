@@ -11,9 +11,9 @@ import (
 	"fodmap/auth"
 )
 
-// TestAuthHandlers uses the centralized mockUserStore from mock_store.go
+// TestAuthHandlers uses the centralized stubUserStore from mock_store.go
 func TestAuthHandlers(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -107,7 +107,7 @@ func TestAuthHandlers(t *testing.T) {
 }
 
 func TestAuthHandler_RegisterMissingFields(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -139,7 +139,7 @@ func TestAuthHandler_RegisterMissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_RegisterInvalidJSON(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -184,7 +184,7 @@ func TestAuthHandler_LoginNoStore(t *testing.T) {
 }
 
 func TestAuthHandler_LoginInvalidJSON(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{userStore: store, jwtSecret: "test-secret"}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader([]byte("{bad")))
@@ -257,7 +257,7 @@ func TestAuthHandler_Logout(t *testing.T) {
 }
 
 func TestAuthHandler_RefreshUserNotFound(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -278,7 +278,7 @@ func TestAuthHandler_RefreshUserNotFound(t *testing.T) {
 }
 
 func TestAuthHandler_LoginDeletedUser(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -307,7 +307,7 @@ func TestAuthHandler_LoginDeletedUser(t *testing.T) {
 }
 
 func TestAuthHandler_RefreshDeletedUser(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -333,7 +333,7 @@ func TestAuthHandler_RefreshDeletedUser(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteUser(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",
@@ -354,14 +354,14 @@ func TestAuthHandler_DeleteUser(t *testing.T) {
 	}
 
 	// Verify the user is now deleted.
-	updated, _ := store.GetUserByID(context.Background(), user.ID)
+	updated, _ := store.UserByID(context.Background(), user.ID)
 	if updated.Status != "deleted" {
 		t.Errorf("user status = %q, want %q", updated.Status, "deleted")
 	}
 }
 
 func TestAuthHandler_DeleteUserNoAuth(t *testing.T) {
-	store := newMockStore()
+	store := newStubStore()
 	s := &Server{
 		userStore: store,
 		jwtSecret: "test-secret",

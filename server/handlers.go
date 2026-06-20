@@ -18,7 +18,7 @@ func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reviews, err := data.GetReviewsByBusiness("", businessID)
+	reviews, err := data.ReviewsByBusiness("", businessID)
 	if err != nil {
 		slog.Error("reviewsHandler error", "error", err)
 		http.Error(w, `{"error":"failed to read archive"}`, http.StatusInternalServerError)
@@ -67,7 +67,7 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 		filter.Alpha = float32(f)
 	}
 
-	result, err := s.searcher.GetBusinesses(r.Context(), q, limit, filter)
+	result, err := s.searcher.Businesses(r.Context(), q, limit, filter)
 	if err != nil {
 		slog.Error("Search error in getBusinessesHandler", "error", err, "query", q, "filter", filter)
 		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
@@ -135,7 +135,7 @@ func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
 		filter.Alpha = float32(f)
 	}
 
-	result, err := s.searcher.GetReviews(r.Context(), q, limit, filter)
+	result, err := s.searcher.Reviews(r.Context(), q, limit, filter)
 	if err != nil {
 		slog.Error("search error", "error", err)
 		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)

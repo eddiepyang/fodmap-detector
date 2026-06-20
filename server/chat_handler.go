@@ -100,7 +100,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 
 		dietaryProfile := ""
 		if userID != "" && userID != "anonymous" {
-			if profile, err := s.userStore.GetDietaryProfile(ctx, userID); err == nil && len(profile) > 0 {
+			if profile, err := s.userStore.DietaryProfile(ctx, userID); err == nil && len(profile) > 0 {
 				if string(profile) != "{}" {
 					dietaryProfile = string(profile)
 				}
@@ -109,7 +109,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 
 		if req.ConversationID != "" {
 			var err error
-			conv, err = s.userStore.GetConversation(ctx, req.ConversationID)
+			conv, err = s.userStore.Conversation(ctx, req.ConversationID)
 			if err != nil || conv == nil {
 				respondError(w, "conversation not found", http.StatusNotFound)
 				return
@@ -120,7 +120,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 			}
 
 			// Load history.
-			dbMessages, err := s.userStore.GetMessages(ctx, conv.ID)
+			dbMessages, err := s.userStore.Messages(ctx, conv.ID)
 			if err != nil {
 				respondError(w, "failed to load history", http.StatusInternalServerError)
 				return
@@ -135,7 +135,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 			// Legacy fallback: if no conversation was found, but we have a query (from legacy path),
 			// try to create a new one on the fly.
 			if query != "" {
-				bizResult, err := s.searcher.GetBusinesses(ctx, query, 1, search.SearchFilter{})
+				bizResult, err := s.searcher.Businesses(ctx, query, 1, search.SearchFilter{})
 				if err != nil || len(bizResult.Businesses) == 0 {
 					respondError(w, "business search failed or no businesses found", http.StatusNotFound)
 					return
@@ -171,7 +171,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 		if conv.BusinessID != "" && conv.BusinessID != "general" {
 			// Existing conversation: rebuild system prompt from business ID.
 			slog.Info("chat: reloading business context", "business_id", conv.BusinessID, "id", conv.ID)
-			b, err := s.searcher.GetBusinesses(ctx, "", 1, search.SearchFilter{BusinessID: conv.BusinessID})
+			b, err := s.searcher.Businesses(ctx, "", 1, search.SearchFilter{BusinessID: conv.BusinessID})
 			if err != nil || len(b.Businesses) == 0 {
 				slog.Warn("chat: failed to reload business context, using formatted fallback", "error", err)
 				biz = chatBusinessResponse{Name: "this restaurant", City: "local area"}
@@ -191,7 +191,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 					for i, rc := range conv.ReviewContext {
 						ids[i] = rc.ID
 					}
-					reviewResult, err = s.searcher.GetReviews(ctx, "", len(ids), search.SearchFilter{ReviewIDs: ids})
+					reviewResult, err = s.searcher.Reviews(ctx, "", len(ids), search.SearchFilter{ReviewIDs: ids})
 
 					// Re-apply original scores if found
 					if err == nil {
@@ -207,7 +207,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 					}
 				} else {
 					slog.Info("chat: reloading general business reviews (legacy)", "business_id", conv.BusinessID)
-					reviewResult, err = s.searcher.GetReviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
+					reviewResult, err = s.searcher.Reviews(ctx, "", limit, search.SearchFilter{BusinessID: conv.BusinessID})
 				}
 
 				if err == nil {

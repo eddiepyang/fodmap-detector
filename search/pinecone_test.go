@@ -103,7 +103,7 @@ func mockVecEmbedder() *mockEmbedder {
 	return &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
 }
 
-func TestPineconeClient_GetBusinesses(t *testing.T) {
+func TestPineconeClient_Businesses(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,9 +148,9 @@ func TestPineconeClient_GetBusinesses(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	result, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 
 	if len(result.Businesses) != 2 {
@@ -167,7 +167,7 @@ func TestPineconeClient_GetBusinesses(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetBusinesses_LimitRespected(t *testing.T) {
+func TestPineconeClient_Businesses_LimitRespected(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,16 +188,16 @@ func TestPineconeClient_GetBusinesses_LimitRespected(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.GetBusinesses(context.Background(), "food", 2, SearchFilter{})
+	result, err := client.Businesses(context.Background(), "food", 2, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 	if len(result.Businesses) != 2 {
 		t.Errorf("got %d businesses, want 2 (limit=2)", len(result.Businesses))
 	}
 }
 
-func TestPineconeClient_GetReviews(t *testing.T) {
+func TestPineconeClient_Reviews(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,9 +237,9 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.GetReviews(context.Background(), "pizza", 10, SearchFilter{BusinessID: "biz-1"})
+	result, err := client.Reviews(context.Background(), "pizza", 10, SearchFilter{BusinessID: "biz-1"})
 	if err != nil {
-		t.Fatalf("GetReviews failed: %v", err)
+		t.Fatalf("Reviews failed: %v", err)
 	}
 
 	if len(result.BusinessReviews) != 2 {
@@ -253,7 +253,7 @@ func TestPineconeClient_GetReviews(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
+func TestPineconeClient_Reviews_NoMatches(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,21 +263,21 @@ func TestPineconeClient_GetReviews_NoMatches(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.GetReviews(context.Background(), "xyz", 10, SearchFilter{})
+	result, err := client.Reviews(context.Background(), "xyz", 10, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetReviews failed: %v", err)
+		t.Fatalf("Reviews failed: %v", err)
 	}
 	if len(result.BusinessReviews) != 0 {
 		t.Errorf("got %d reviews, want 0", len(result.BusinessReviews))
 	}
 }
 
-// TestPineconeClient_GetReviews_HybridBlend verifies that when Alpha<1, returned scores
+// TestPineconeClient_Reviews_HybridBlend verifies that when Alpha<1, returned scores
 // are blended between the dense score and BM25 keyword score.
 // Match A: high dense score (0.95) but text doesn't match query.
 // Match B: low dense score (0.50) but text perfectly matches query.
 // With Alpha=0.0 (pure BM25), B should rank above A.
-func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
+func TestPineconeClient_Reviews_HybridBlend(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -318,9 +318,9 @@ func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
 	// Pure BM25 (alpha=0): B should rank above A because B's text matches "gluten free".
-	result, err := client.GetReviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 0.01})
+	result, err := client.Reviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 0.01})
 	if err != nil {
-		t.Fatalf("GetReviews failed: %v", err)
+		t.Fatalf("Reviews failed: %v", err)
 	}
 	if len(result.BusinessReviews) != 2 {
 		t.Fatalf("got %d reviews, want 2", len(result.BusinessReviews))
@@ -330,9 +330,9 @@ func TestPineconeClient_GetReviews_HybridBlend(t *testing.T) {
 	}
 
 	// Pure vector (alpha=1): A should rank first due to higher dense score.
-	result2, err := client.GetReviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 1.0})
+	result2, err := client.Reviews(context.Background(), "gluten free", 10, SearchFilter{Alpha: 1.0})
 	if err != nil {
-		t.Fatalf("GetReviews (alpha=1) failed: %v", err)
+		t.Fatalf("Reviews (alpha=1) failed: %v", err)
 	}
 	if result2.BusinessReviews[0].Review.Review.ReviewID != "rA" {
 		t.Errorf("expected dense-score review A to rank first with alpha=1, got %q", result2.BusinessReviews[0].Review.Review.ReviewID)
@@ -347,7 +347,7 @@ func TestPineconeClient_EnsureSchema(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetBusinesses_WithFilters(t *testing.T) {
+func TestPineconeClient_Businesses_WithFilters(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	var requestPayload map[string]any
@@ -373,9 +373,9 @@ func TestPineconeClient_GetBusinesses_WithFilters(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{City: "Las Vegas", State: "NV"})
+	_, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{City: "Las Vegas", State: "NV"})
 	if err != nil {
-		t.Fatalf("GetBusinesses with filters failed: %v", err)
+		t.Fatalf("Businesses with filters failed: %v", err)
 	}
 
 	filter, ok := requestPayload["filter"].(map[string]any)
@@ -392,7 +392,7 @@ func TestPineconeClient_GetBusinesses_WithFilters(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetBusinesses_EmptyResult(t *testing.T) {
+func TestPineconeClient_Businesses_EmptyResult(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -402,9 +402,9 @@ func TestPineconeClient_GetBusinesses_EmptyResult(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.GetBusinesses(context.Background(), "nonexistent", 5, SearchFilter{})
+	result, err := client.Businesses(context.Background(), "nonexistent", 5, SearchFilter{})
 	if err != nil {
-		t.Fatalf("GetBusinesses failed: %v", err)
+		t.Fatalf("Businesses failed: %v", err)
 	}
 	if len(result.Businesses) != 0 {
 		t.Errorf("expected 0 businesses, got %d", len(result.Businesses))
@@ -579,11 +579,11 @@ func TestPineconeClient_BatchUpsert_Empty(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetBusinesses_EmbedError(t *testing.T) {
+func TestPineconeClient_Businesses_EmbedError(t *testing.T) {
 	mockEmb := &mockEmbedder{err: fmt.Errorf("embed failed")}
 	client := NewPineconeClient("test-key", "http://localhost:1234", mockEmb)
 
-	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	_, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{})
 	if err == nil {
 		t.Error("expected error when embedder fails")
 	}
@@ -599,7 +599,7 @@ func TestPineconeClient_SearchFodmap_EmbedError(t *testing.T) {
 	}
 }
 
-func TestPineconeClient_GetBusinesses_ServerError(t *testing.T) {
+func TestPineconeClient_Businesses_ServerError(t *testing.T) {
 	mockEmb := mockVecEmbedder()
 
 	pineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -610,7 +610,7 @@ func TestPineconeClient_GetBusinesses_ServerError(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	_, err := client.GetBusinesses(context.Background(), "pizza", 5, SearchFilter{})
+	_, err := client.Businesses(context.Background(), "pizza", 5, SearchFilter{})
 	if err == nil {
 		t.Error("expected error when server returns 500")
 	}

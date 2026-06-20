@@ -43,10 +43,10 @@ func ListSources(ctx context.Context, pool *pgxpool.Pool) ([]Source, error) {
 	return sources, rows.Err()
 }
 
-// GetSourceByID returns a source by its ID.
-func GetSourceByID(ctx context.Context, pool *pgxpool.Pool, id string) (Source, error) {
+// SourceByID returns a source by its ID.
+func SourceByID(ctx context.Context, pool *pgxpool.Pool, id string) (Source, error) {
 	var s Source
-	err := pool.QueryRow(ctx, store.GetSourceByIDSQL, id).
+	err := pool.QueryRow(ctx, store.SourceByIDSQL, id).
 		Scan(&s.ID, &s.Name, &s.URL, &s.Domain, &s.Tier, &s.CronSchedule, &s.MaxTokens, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return s, fmt.Errorf("getting source %s: %w", id, err)

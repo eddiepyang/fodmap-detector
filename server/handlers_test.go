@@ -26,12 +26,12 @@ type handlersTestSearcher struct {
 	lastReviewFilter   search.SearchFilter
 }
 
-func (m *handlersTestSearcher) GetBusinesses(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchResult, error) {
+func (m *handlersTestSearcher) Businesses(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchResult, error) {
 	m.lastBusinessFilter = filter
 	return m.businessResult, m.businessErr
 }
 
-func (m *handlersTestSearcher) GetReviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
+func (m *handlersTestSearcher) Reviews(_ context.Context, _ string, _ int, filter search.SearchFilter) (search.SearchReviews, error) {
 	m.lastReviewFilter = filter
 	return m.reviewResult, m.reviewErr
 }
@@ -57,7 +57,7 @@ func (m *handlersTestSearcher) BatchUpsert(_ context.Context, _ []search.IndexIt
 }
 
 // ---- reviewsHandler (backed by data package, harder to mock fully) ----
-// reviewsHandler calls data.GetReviewsByBusiness directly, so we only test
+// reviewsHandler calls data.ReviewsByBusiness directly, so we only test
 // the "missing business_id" path which doesn't touch the filesystem.
 
 func TestReviewsHandler_MissingBusinessID(t *testing.T) {
@@ -74,7 +74,7 @@ func TestReviewsHandler_MissingBusinessID(t *testing.T) {
 
 // ---- getBusinessesHandler ----
 
-func TestGetBusinessesHandler_Success(t *testing.T) {
+func TestBusinessesHandler_Success(t *testing.T) {
 	mock := &handlersTestSearcher{
 		businessResult: search.SearchResult{
 			Businesses: []search.BusinessResult{
@@ -114,7 +114,7 @@ func TestGetBusinessesHandler_Success(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_NoSearcher(t *testing.T) {
+func TestBusinessesHandler_NoSearcher(t *testing.T) {
 	s := &Server{searcher: nil}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search/businesses/{query...}", s.getBusinessesHandler)
@@ -128,7 +128,7 @@ func TestGetBusinessesHandler_NoSearcher(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_EmptyQuery(t *testing.T) {
+func TestBusinessesHandler_EmptyQuery(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -143,7 +143,7 @@ func TestGetBusinessesHandler_EmptyQuery(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_InvalidLimit(t *testing.T) {
+func TestBusinessesHandler_InvalidLimit(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -158,7 +158,7 @@ func TestGetBusinessesHandler_InvalidLimit(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_NegativeLimit(t *testing.T) {
+func TestBusinessesHandler_NegativeLimit(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -173,7 +173,7 @@ func TestGetBusinessesHandler_NegativeLimit(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_EmptyResults(t *testing.T) {
+func TestBusinessesHandler_EmptyResults(t *testing.T) {
 	mock := &handlersTestSearcher{
 		businessResult: search.SearchResult{Businesses: nil},
 	}
@@ -201,7 +201,7 @@ func TestGetBusinessesHandler_EmptyResults(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_SearchError(t *testing.T) {
+func TestBusinessesHandler_SearchError(t *testing.T) {
 	mock := &handlersTestSearcher{businessErr: errors.New("search down")}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -216,7 +216,7 @@ func TestGetBusinessesHandler_SearchError(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_WithFilters(t *testing.T) {
+func TestBusinessesHandler_WithFilters(t *testing.T) {
 	mock := &handlersTestSearcher{
 		businessResult: search.SearchResult{
 			Businesses: []search.BusinessResult{{ID: "biz1", Name: "Biz"}},
@@ -237,7 +237,7 @@ func TestGetBusinessesHandler_WithFilters(t *testing.T) {
 
 // ---- getReviewsHandler ----
 
-func TestGetReviewsHandler_Success(t *testing.T) {
+func TestReviewsHandler_Success(t *testing.T) {
 	mock := &handlersTestSearcher{
 		reviewResult: search.SearchReviews{
 			BusinessReviews: []search.RankedReview{
@@ -284,7 +284,7 @@ func TestGetReviewsHandler_Success(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_NoSearcher(t *testing.T) {
+func TestReviewsHandler_NoSearcher(t *testing.T) {
 	s := &Server{searcher: nil}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
@@ -298,7 +298,7 @@ func TestGetReviewsHandler_NoSearcher(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_EmptyQuery(t *testing.T) {
+func TestReviewsHandler_EmptyQuery(t *testing.T) {
 	s := &Server{searcher: &handlersTestSearcher{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
@@ -312,7 +312,7 @@ func TestGetReviewsHandler_EmptyQuery(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_InvalidLimit(t *testing.T) {
+func TestReviewsHandler_InvalidLimit(t *testing.T) {
 	s := &Server{searcher: &handlersTestSearcher{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
@@ -326,7 +326,7 @@ func TestGetReviewsHandler_InvalidLimit(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_EmptyResults(t *testing.T) {
+func TestReviewsHandler_EmptyResults(t *testing.T) {
 	mock := &handlersTestSearcher{
 		reviewResult: search.SearchReviews{BusinessReviews: nil},
 	}
@@ -353,7 +353,7 @@ func TestGetReviewsHandler_EmptyResults(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_SearchError(t *testing.T) {
+func TestReviewsHandler_SearchError(t *testing.T) {
 	mock := &handlersTestSearcher{reviewErr: errors.New("search down")}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -474,7 +474,7 @@ func TestReviewsHandler_ArchiveMissing(t *testing.T) {
 
 // ---- filter pass-through ----
 
-func TestGetBusinessesHandler_PassesCityStateFilters(t *testing.T) {
+func TestBusinessesHandler_PassesCityStateFilters(t *testing.T) {
 	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -495,7 +495,7 @@ func TestGetBusinessesHandler_PassesCityStateFilters(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_PassesAllFilters(t *testing.T) {
+func TestBusinessesHandler_PassesAllFilters(t *testing.T) {
 	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -519,7 +519,7 @@ func TestGetBusinessesHandler_PassesAllFilters(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_ParsesBusinessID(t *testing.T) {
+func TestReviewsHandler_ParsesBusinessID(t *testing.T) {
 	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -537,7 +537,7 @@ func TestGetReviewsHandler_ParsesBusinessID(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
+func TestReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
 	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -561,7 +561,7 @@ func TestGetReviewsHandler_EmptyResultIsNotNull(t *testing.T) {
 
 // ---- alpha query parameter ----
 
-func TestGetBusinessesHandler_AlphaQueryParam(t *testing.T) {
+func TestBusinessesHandler_AlphaQueryParam(t *testing.T) {
 	mock := &handlersTestSearcher{businessResult: search.SearchResult{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -579,7 +579,7 @@ func TestGetBusinessesHandler_AlphaQueryParam(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_InvalidAlpha(t *testing.T) {
+func TestBusinessesHandler_InvalidAlpha(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -594,7 +594,7 @@ func TestGetBusinessesHandler_InvalidAlpha(t *testing.T) {
 	}
 }
 
-func TestGetBusinessesHandler_NegativeAlpha(t *testing.T) {
+func TestBusinessesHandler_NegativeAlpha(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -609,7 +609,7 @@ func TestGetBusinessesHandler_NegativeAlpha(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_AlphaPassthrough(t *testing.T) {
+func TestReviewsHandler_AlphaPassthrough(t *testing.T) {
 	mock := &handlersTestSearcher{reviewResult: search.SearchReviews{}}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
@@ -627,7 +627,7 @@ func TestGetReviewsHandler_AlphaPassthrough(t *testing.T) {
 	}
 }
 
-func TestGetReviewsHandler_InvalidAlpha(t *testing.T) {
+func TestReviewsHandler_InvalidAlpha(t *testing.T) {
 	mock := &handlersTestSearcher{}
 	s := &Server{searcher: mock}
 	mux := http.NewServeMux()
