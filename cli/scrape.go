@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -61,6 +63,9 @@ func init() {
 	scrapeCmd.Flags().Bool("enable-js-render", false, "Tier 3: render JS-only pages via chromedp (requires Chrome)")
 	scrapeCmd.Flags().Bool("enable-vision", false, "Send PDFs/images to the vision LLM instead of text extraction")
 	scrapeCmd.Flags().Bool("pdftotext", false, "Use system pdftotext (poppler) for PDF text extraction")
+
+	// Vision service
+	scrapeCmd.Flags().String("extractor-url", "", "Python vision service base URL (e.g. http://localhost:8765); when set, vision is auto-active for scanned PDFs/images")
 }
 
 func runScrape(cmd *cobra.Command, args []string) error {
@@ -83,6 +88,8 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	weaviateHost := viper.GetString("weaviate")
 	weaviateScheme := viper.GetString("weaviate-scheme")
 	weaviateAPIKey := viper.GetString("weaviate-api-key")
+
+	extractorURL := viper.GetString("extractor-url")
 
 	// Build embedder.
 	var embedder search.Embedder
@@ -116,9 +123,31 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("building extractor: %w", err)
 	}
 
+	// Build VisionExtractor based on flags.
+	//   --extractor-url set           → Python microservice (vision auto-active)
+	//   --enable-vision, no URL       → Go OpenAI vision adapter
+	//   neither                       → no vision (error if PDF has no text layer)
+	var visionEx scraper.VisionExtractor
+	switch {
+	case extractorURL != "":
+		visionEx = &scraper.PythonVisionExtractor{
+			BaseURL: extractorURL,
+			Client:  &http.Client{Timeout: 120 * time.Second},
+		}
+		slog.Info("using Python vision extractor", "url", extractorURL)
+	case enableVision:
+		oaex, ok := ex.(*scraper.OpenAICompatExtractor)
+		if !ok {
+			return fmt.Errorf("vision path requires OpenAI-compat extractor")
+		}
+		visionEx = &scraper.OpenAIVisionAdapter{Ex: oaex}
+		slog.Info("using Go OpenAI vision adapter")
+	}
+	// visionEx == nil → no vision configured
+
 	fetcher := scraper.NewHTTPFetcher(ignoreRobots)
 
-	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder, enableVision, usePdftotext)
+	return runScrapeWith(ctx, rawURL, fetcher, ex, visionEx, store, embedder, enableVision, usePdftotext)
 }
 
 // runScrapeWith is the testable core of the scrape command. All dependencies
@@ -128,6 +157,7 @@ func runScrapeWith(
 	rawURL string,
 	fetcher scraper.Fetcher,
 	ex scraper.Extractor,
+	visionEx scraper.VisionExtractor, // nil when no vision configured
 	store server.MenuStore,
 	embedder search.Embedder,
 	enableVision bool,
@@ -170,15 +200,34 @@ func runScrapeWith(
 	}
 
 	// ── Tier 1: HTML/PDF → LLM extraction ────────────────────────────────────
+	var rawPayload json.RawMessage
+
 	if !usedJSONLD {
 		var pageText string
 
 		if strings.Contains(ct, "pdf") {
-			pageText, err = extractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
-			if err != nil {
-				return fmt.Errorf("PDF extraction: %w", err)
+			// First: try text layer extraction.
+			text, textErr := scraper.ExtractPDFText(bodyBytes, usePdftotext)
+			if textErr == nil {
+				// Text layer succeeded — use Tier-1 LLM extraction below.
+				pageText = text
+			} else if errors.Is(textErr, scraper.ErrNeedVision) {
+				// Needs vision path.
+				if visionEx == nil {
+					return fmt.Errorf("PDF has no usable text layer and --enable-vision is not set")
+				}
+				result, rawPayload, err = visionEx.ExtractDocument(ctx, bodyBytes, ct)
+				if err != nil {
+					return fmt.Errorf("vision extraction: %w", err)
+				}
+				result.SourceURL = rawURL
+				result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+				// No JSON-LD backfill on vision branch: PDF inputs never carry JSON-LD.
+			} else {
+				return fmt.Errorf("PDF text extraction: %w", textErr)
 			}
 		} else {
+			// HTML path — convert to markdown then optionally fall back to trafilatura.
 			md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(bodyBytes), ct)
 			if err != nil {
 				return fmt.Errorf("HTML conversion: %w", err)
@@ -194,23 +243,26 @@ func runScrapeWith(
 			pageText = md
 		}
 
-		slog.Info("Tier 1: sending to LLM extractor", "chars", len([]rune(pageText)))
-		result, err = ex.Extract(ctx, pageText)
-		if err != nil {
-			return fmt.Errorf("LLM extraction: %w", err)
-		}
-		result.SourceURL = rawURL
-		result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+		// Tier-1 LLM extraction only when the text path was taken.
+		// The vision branch sets result directly above and leaves pageText empty.
+		if pageText != "" {
+			slog.Info("Tier 1: sending to LLM extractor", "chars", len([]rune(pageText)))
+			result, err = ex.Extract(ctx, pageText)
+			if err != nil {
+				return fmt.Errorf("LLM extraction: %w", err)
+			}
+			result.SourceURL = rawURL
+			result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
 
-		// Backfill location from JSON-LD metadata when Tier 1 doesn't know it.
-		if result.City == "" && jsonldMeta.City != "" {
-			result.City = jsonldMeta.City
-			result.State = jsonldMeta.State
+			// Backfill location from JSON-LD metadata when Tier 1 doesn't know it.
+			if result.City == "" && jsonldMeta.City != "" {
+				result.City = jsonldMeta.City
+				result.State = jsonldMeta.State
+			}
+			if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
+				result.RestaurantName = jsonldMeta.RestaurantName
+			}
 		}
-		if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
-			result.RestaurantName = jsonldMeta.RestaurantName
-		}
-
 	}
 
 	if len(result.Items) == 0 {
@@ -222,7 +274,7 @@ func runScrapeWith(
 	slog.Info("extracted menu items", "count", len(result.Items), "restaurant", result.RestaurantName)
 
 	// ── Embed + upsert ────────────────────────────────────────────────────────
-	items, err := toMenuItems(ctx, result, rawURL, embedder)
+	items, err := toMenuItems(ctx, result, rawURL, rawPayload, embedder)
 	if err != nil {
 		return fmt.Errorf("embedding menu items: %w", err)
 	}
@@ -235,44 +287,13 @@ func runScrapeWith(
 	return nil
 }
 
-// extractPDF runs the PDF cascade: text-layer → pdftotext → vision LLM.
-// When the vision path is active it calls ExtractImage directly and returns
-// the LLM result text as a JSON string for the caller to feed to the extractor.
-func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision bool, ex scraper.Extractor) (string, error) {
-	text, err := scraper.ExtractPDFText(pdfBytes, usePdftotext)
-	if err == nil {
-		return text, nil
-	}
-	if !errors.Is(err, scraper.ErrNeedVision) {
-		return "", err
-	}
-	if !enableVision {
-		return "", fmt.Errorf("PDF has no usable text layer and --enable-vision is not set")
-	}
-
-	// Vision path: cast to OpenAICompatExtractor for image support.
-	oaex, ok := ex.(*scraper.OpenAICompatExtractor)
-	if !ok {
-		return "", fmt.Errorf("vision path requires --llm-backend openai-compat")
-	}
-	result, err := scraper.ExtractPDFVision(ctx, pdfBytes, oaex)
-	if err != nil {
-		return "", err
-	}
-	// Return the dish names as flat text so the caller's normal flow still works.
-	var lines []string
-	for _, item := range result.Items {
-		lines = append(lines, item.DishName+": "+item.Description)
-	}
-	return strings.Join(lines, "\n"), nil
-}
-
 // menuCollectionNS is the UUID namespace for deterministic menu item IDs.
 var menuCollectionNS = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 // toMenuItems converts a MenuExtractionResult to []search.MenuItem, embedding
-// each item's text vector.
-func toMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawURL string, embedder search.Embedder) ([]search.MenuItem, error) {
+// each item's text vector. rawPayload is the raw schema-v1 JSON document from
+// the vision path; it is nil on text/HTML paths and stored as-is on every item.
+func toMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawURL string, rawPayload json.RawMessage, embedder search.Embedder) ([]search.MenuItem, error) {
 	businessID := scraper.BusinessID(rawURL)
 	section := scraper.MenuSection(rawURL)
 	now := result.ScrapedAtUTC
@@ -312,6 +333,7 @@ func toMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 			SourceURL:          rawURL,
 			ScrapedAtUTC:       now,
 			Vector:             vectors[i],
+			Payload:            rawPayload,
 		}
 	}
 	return items, nil
