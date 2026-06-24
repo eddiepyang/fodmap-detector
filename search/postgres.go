@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -280,6 +281,102 @@ func (c *PostgresClient) DeleteFodmapItem(ctx context.Context, name string) erro
 		return fmt.Errorf("delete fodmap item: %w", err)
 	}
 	return nil
+}
+
+// EnsureMenuSchema is a no-op. Schema creation is handled by the centralised
+// migration runner (internal/db). The method is kept to satisfy the MenuStore
+// interface.
+func (c *PostgresClient) EnsureMenuSchema(_ context.Context) error {
+	return nil
+}
+
+// BatchUpsertMenu embeds each item's dish name and upserts all items into the
+// restaurant_menu table inside a single transaction.
+func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	texts := make([]string, len(items))
+	for i, it := range items {
+		texts[i] = it.DishName
+	}
+	vecs, err := c.embedder.EmbedBatch(ctx, texts)
+	if err != nil {
+		return fmt.Errorf("embed batch: %w", err)
+	}
+
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	upsertSQL, err := sqlFS.ReadFile("sql/menu_upsert.sql")
+	if err != nil {
+		return fmt.Errorf("read menu_upsert.sql: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, string(upsertSQL))
+	if err != nil {
+		return fmt.Errorf("prepare stmt: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for i, it := range items {
+		ings := it.StatedIngredients
+		if ings == nil {
+			ings = []string{}
+		}
+		if _, err := stmt.ExecContext(ctx,
+			it.MenuItemID, it.BusinessID, it.MenuSection, it.RestaurantName,
+			it.City, it.State, it.DishName, it.Description,
+			pq.Array(ings), it.HasFullIngredients, it.SourceURL, it.ScrapedAtUTC,
+			pgvector.NewVector(vecs[i]), it.Payload,
+		); err != nil {
+			return fmt.Errorf("upsert menu item %q: %w", it.MenuItemID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SearchMenu performs a vector cosine-distance search over the restaurant_menu
+// table and returns the top limit results ordered by embedding similarity.
+func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int) ([]MenuItem, error) {
+	vec, err := c.embedder.EmbedSingle(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("vectorize query: %w", err)
+	}
+
+	searchSQL, err := sqlFS.ReadFile("sql/menu_search.sql")
+	if err != nil {
+		return nil, fmt.Errorf("read menu_search.sql: %w", err)
+	}
+
+	rows, err := c.db.QueryContext(ctx, string(searchSQL), pgvector.NewVector(vec), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query menu: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []MenuItem
+	for rows.Next() {
+		var it MenuItem
+		var ings pgxStringArray
+		var payload json.RawMessage
+		if err := rows.Scan(
+			&it.MenuItemID, &it.BusinessID, &it.MenuSection, &it.RestaurantName,
+			&it.City, &it.State, &it.DishName, &it.Description,
+			&ings, &it.HasFullIngredients, &it.SourceURL, &it.ScrapedAtUTC,
+			&payload,
+		); err != nil {
+			return nil, fmt.Errorf("scan menu row: %w", err)
+		}
+		it.StatedIngredients = []string(ings)
+		it.Payload = payload
+		results = append(results, it)
+	}
+	return results, rows.Err()
 }
 
 // pgxStringArray is a helper to scan Postgres TEXT[] into []string for database/sql using pgx

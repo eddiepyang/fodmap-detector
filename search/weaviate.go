@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,6 +49,7 @@ type MenuItem struct {
 	SourceURL          string
 	ScrapedAtUTC       string
 	Vector             []float32
+	Payload            json.RawMessage // arbitrary JSON metadata; ignored by the Weaviate store
 }
 
 // Client wraps the Weaviate client with domain-specific operations.

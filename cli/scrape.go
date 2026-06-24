@@ -99,7 +99,9 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	defer func() { _ = embedder.Close() }()
 
 	// Build MenuStore.
-	store, err := buildMenuStore(ctx, weaviateHost, weaviateScheme, weaviateAPIKey, embedder)
+	storeType := viper.GetString("store")
+	postgresDSN := viper.GetString("postgres-dsn")
+	store, err := buildMenuStore(ctx, storeType, postgresDSN, weaviateHost, weaviateScheme, weaviateAPIKey, embedder)
 	if err != nil {
 		return fmt.Errorf("building store: %w", err)
 	}
@@ -315,12 +317,20 @@ func toMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 	return items, nil
 }
 
-// buildMenuStore constructs a Weaviate-backed MenuStore. Postgres and Pinecone
-// paths can be added here following the same pattern as cli/index.go.
-func buildMenuStore(_ context.Context, host, scheme, apiKey string, embedder search.Embedder) (server.MenuStore, error) {
-	client, err := search.NewClient(host, scheme, apiKey, embedder)
-	if err != nil {
-		return nil, fmt.Errorf("weaviate client: %w", err)
+// buildMenuStore constructs a MenuStore for the given backend type.
+// Supported backends: "postgres" and "weaviate" (default).
+func buildMenuStore(_ context.Context, storeType, postgresDSN, host, scheme, apiKey string, embedder search.Embedder) (server.MenuStore, error) {
+	switch storeType {
+	case "postgres":
+		if postgresDSN == "" {
+			return nil, fmt.Errorf("--postgres-dsn is required when --store=postgres")
+		}
+		return search.NewPostgresClient(postgresDSN, embedder)
+	default: // "weaviate"
+		client, err := search.NewClient(host, scheme, apiKey, embedder)
+		if err != nil {
+			return nil, fmt.Errorf("weaviate client: %w", err)
+		}
+		return client, nil
 	}
-	return client, nil
 }

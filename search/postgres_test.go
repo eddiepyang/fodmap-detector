@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -430,5 +431,204 @@ func TestNewPostgresClient(t *testing.T) {
 	_, err := NewPostgresClient("postgres://invalid:invalid@localhost:0/invalid", nil)
 	if err == nil {
 		t.Error("expected error due to bad connection string")
+	}
+}
+
+// ── MenuStore tests ───────────────────────────────────────────────────────────
+
+func TestPostgresClient_EnsureMenuSchema(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	client := &PostgresClient{db: db, embedder: nil}
+
+	if err := client.EnsureMenuSchema(context.Background()); err != nil {
+		t.Errorf("EnsureMenuSchema returned unexpected error: %v", err)
+	}
+}
+
+func TestPostgresClient_BatchUpsertMenu_success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
+	client := &PostgresClient{db: db, embedder: mockEmb}
+
+	payload1 := json.RawMessage(`{"k":"v1"}`)
+	payload2 := json.RawMessage(`{"k":"v2"}`)
+
+	items := []MenuItem{
+		{
+			MenuItemID:         "item-1",
+			BusinessID:         "bus-1",
+			MenuSection:        "Mains",
+			RestaurantName:     "Test Restaurant",
+			City:               "San Francisco",
+			State:              "CA",
+			DishName:           "Grilled Chicken",
+			Description:        "Juicy grilled chicken",
+			StatedIngredients:  []string{"chicken", "herbs"},
+			HasFullIngredients: true,
+			SourceURL:          "https://example.com/menu",
+			ScrapedAtUTC:       "2024-01-01T00:00:00Z",
+			Payload:            payload1,
+		},
+		{
+			MenuItemID:         "item-2",
+			BusinessID:         "bus-1",
+			MenuSection:        "Sides",
+			RestaurantName:     "Test Restaurant",
+			City:               "San Francisco",
+			State:              "CA",
+			DishName:           "Caesar Salad",
+			Description:        "Classic caesar salad",
+			StatedIngredients:  []string{"lettuce", "croutons"},
+			HasFullIngredients: false,
+			SourceURL:          "https://example.com/menu",
+			ScrapedAtUTC:       "2024-01-01T00:00:00Z",
+			Payload:            payload2,
+		},
+	}
+
+	mock.ExpectBegin()
+	prep := mock.ExpectPrepare("INSERT INTO restaurant_menu")
+	vec := pgvector.NewVector([]float32{0.1, 0.2, 0.3})
+
+	prep.ExpectExec().
+		WithArgs(
+			"item-1", "bus-1", "Mains", "Test Restaurant",
+			"San Francisco", "CA", "Grilled Chicken", "Juicy grilled chicken",
+			pq.Array([]string{"chicken", "herbs"}), true,
+			"https://example.com/menu", "2024-01-01T00:00:00Z",
+			vec, payload1,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	prep.ExpectExec().
+		WithArgs(
+			"item-2", "bus-1", "Sides", "Test Restaurant",
+			"San Francisco", "CA", "Caesar Salad", "Classic caesar salad",
+			pq.Array([]string{"lettuce", "croutons"}), false,
+			"https://example.com/menu", "2024-01-01T00:00:00Z",
+			vec, payload2,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectCommit()
+
+	if err := client.BatchUpsertMenu(context.Background(), items); err != nil {
+		t.Errorf("BatchUpsertMenu returned unexpected error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}
+
+func TestPostgresClient_BatchUpsertMenu_empty(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	client := &PostgresClient{db: db, embedder: &mockEmbedder{vec: []float32{0.1}}}
+
+	if err := client.BatchUpsertMenu(context.Background(), nil); err != nil {
+		t.Errorf("BatchUpsertMenu(nil) returned unexpected error: %v", err)
+	}
+	if err := client.BatchUpsertMenu(context.Background(), []MenuItem{}); err != nil {
+		t.Errorf("BatchUpsertMenu([]) returned unexpected error: %v", err)
+	}
+
+	// No DB interactions expected.
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unexpected DB interactions: %s", err)
+	}
+}
+
+func TestPostgresClient_SearchMenu_success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	mockEmb := &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}}
+	client := &PostgresClient{db: db, embedder: mockEmb}
+
+	payload := json.RawMessage(`{"source":"test"}`)
+
+	rows := sqlmock.NewRows([]string{
+		"menu_item_id", "business_id", "menu_section", "restaurant_name",
+		"city", "state", "dish_name", "description", "stated_ingredients",
+		"has_full_ingredients", "source_url", "scraped_at", "payload",
+	}).
+		AddRow(
+			"item-1", "bus-1", "Mains", "Test Restaurant",
+			"San Francisco", "CA", "Grilled Chicken", "Juicy chicken",
+			"{chicken,herbs}", true, "https://example.com", "2024-01-01T00:00:00Z", payload,
+		).
+		AddRow(
+			"item-2", "bus-1", "Sides", "Test Restaurant",
+			"San Francisco", "CA", "Caesar Salad", "Classic salad",
+			"{lettuce,croutons}", false, "https://example.com", "2024-01-01T00:00:00Z", payload,
+		)
+
+	mock.ExpectQuery("SELECT").
+		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), 5).
+		WillReturnRows(rows)
+
+	results, err := client.SearchMenu(context.Background(), "chicken", 5)
+	if err != nil {
+		t.Fatalf("SearchMenu returned unexpected error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].DishName != "Grilled Chicken" {
+		t.Errorf("expected first dish 'Grilled Chicken', got %q", results[0].DishName)
+	}
+	if results[0].Payload == nil {
+		t.Errorf("expected non-nil Payload for first result")
+	}
+	if len(results[0].StatedIngredients) == 0 {
+		t.Errorf("expected non-empty StatedIngredients for first result")
+	}
+	if results[1].DishName != "Caesar Salad" {
+		t.Errorf("expected second dish 'Caesar Salad', got %q", results[1].DishName)
+	}
+	if results[1].Payload == nil {
+		t.Errorf("expected non-nil Payload for second result")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}
+
+func TestPostgresClient_SearchMenu_embedError(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	mockEmb := &mockEmbedder{err: fmt.Errorf("embedding service unavailable")}
+	client := &PostgresClient{db: db, embedder: mockEmb}
+
+	_, err = client.SearchMenu(context.Background(), "chicken", 5)
+	if err == nil {
+		t.Fatal("expected error from SearchMenu when embedder fails")
+	}
+	if !strings.Contains(err.Error(), "vectorize query") {
+		t.Errorf("expected error to contain 'vectorize query', got: %v", err)
 	}
 }
