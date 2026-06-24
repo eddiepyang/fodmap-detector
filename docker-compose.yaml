@@ -27,6 +27,25 @@ services:
       CLUSTER_HOSTNAME: "node1"
     volumes:
       - weaviate_data:/var/lib/weaviate
+  extractor:
+    # Python document/vision service for scanned PDF menu extraction.
+    # Not started by default — use: docker compose --profile extractor up -d extractor
+    # Or run locally: cd ../scraper && uv run uvicorn scraper.app:app --port 8765
+    build: ../scraper
+    image: scraper:latest
+    profiles: ["extractor"]
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      SCRAPER_OCR_BACKEND: "${SCRAPER_OCR_BACKEND:-stub}"
+      SCRAPER_LOG_LEVEL: "info"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/healthz').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:

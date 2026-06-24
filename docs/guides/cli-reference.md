@@ -40,6 +40,12 @@ go run . scrape "https://example-restaurant.com/menu.pdf" \
   --llm-url http://localhost:11434 \
   --llm-model qwen3.6:35b-mlx \
   --enable-vision
+
+# Route scanned PDFs to the Python vision service (lossless structured extraction)
+go run . scrape "https://example-restaurant.com/scanned-menu.pdf" \
+  --store postgres \
+  --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable" \
+  --extractor-url http://localhost:8765
 ```
 
 | Flag | Default | Description |
@@ -50,6 +56,9 @@ go run . scrape "https://example-restaurant.com/menu.pdf" \
 | `--llm-model` | `qwen3.6:35b-mlx` | LLM model to use |
 | `--enable-vision` | `false` | Send PDFs/images to the vision LLM instead of text extraction |
 | `--pdftotext` | `false` | Fall back to system `pdftotext` (poppler) for PDF text extraction |
+| `--extractor-url` | `""` | Python vision service base URL; when set, scanned PDFs/images route to the service instead of the Go LLM path |
+| `--store` | `weaviate` | Storage backend: `weaviate` \| `postgres` |
+| `--postgres-dsn` | `""` | PostgreSQL DSN (required when `--store=postgres`) |
 
 ##### Chat (interactive FODMAP/allergen agent)
 

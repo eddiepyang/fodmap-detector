@@ -8,6 +8,9 @@ cleanup() {
     if [ -n "$OLLAMA_PID" ]; then
         kill $OLLAMA_PID 2>/dev/null || true
     fi
+    if [ -n "$EXTRACTOR_PID" ]; then
+        kill $EXTRACTOR_PID 2>/dev/null || true
+    fi
     kill $SERVER_PID 2>/dev/null || true
     pkill -f "fodmap-detector serve" 2>/dev/null || true
     wait 2>/dev/null
@@ -51,7 +54,7 @@ echo "    Ensuring nomic-embed-text model is available..."
 ollama pull nomic-embed-text > /dev/null 2>&1 || echo "    Warning: failed to pull nomic-embed-text model"
 
 # 2. Start Postgres and Weaviate in Docker
-echo "[2/4] Starting Postgres and Weaviate in Docker..."
+echo "[2/5] Starting Postgres and Weaviate in Docker..."
 docker compose up -d
 
 # Wait for Postgres to become ready (query the host port directly)
@@ -82,13 +85,42 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-# 3. Run database migrations (domain tables + river schema)
+# 3. Python extractor service (optional — skipped if EXTRACTOR_URL is already set)
+EXTRACTOR_PID=""
+if [ -n "${EXTRACTOR_URL:-}" ]; then
+    echo "[3/5] Python extractor: using external service at $EXTRACTOR_URL"
+elif [ -f "../scraper/pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
+    echo "[3/5] Starting Python extractor service (../scraper)..."
+    (cd ../scraper && uv run uvicorn scraper.app:app --host 127.0.0.1 --port 8765 --log-level warning > /dev/null 2>&1) &
+    EXTRACTOR_PID=$!
+    echo "    Waiting for extractor to be ready..."
+    for i in $(seq 1 20); do
+        if curl -s -o /dev/null http://localhost:8765/healthz 2>/dev/null; then
+            echo "    Extractor is ready!"
+            export EXTRACTOR_URL="http://localhost:8765"
+            break
+        fi
+        if ! kill -0 $EXTRACTOR_PID 2>/dev/null; then
+            echo "    WARNING: Extractor process died; continuing without it."
+            EXTRACTOR_PID=""
+            break
+        fi
+        if [ "$i" -eq 20 ]; then
+            echo "    WARNING: Extractor did not become ready in time; continuing without it."
+        fi
+        sleep 1
+    done
+else
+    echo "[3/5] Python extractor: not available (set EXTRACTOR_URL to use an existing service)"
+fi
+
+# 4. Run database migrations (domain tables + river schema)
 POSTGRES_DSN="${POSTGRES_DSN:-postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable}"
-echo "[3/4] Running database migrations..."
+echo "[4/5] Running database migrations..."
 POSTGRES_DSN="$POSTGRES_DSN" go run . db migrate-up
 
-# 4. Start the Go server in the background
-echo "[4/4] Starting Go server on port 8081..."
+# 5. Start the Go server in the background
+echo "[5/5] Starting Go server on port 8081..."
 CONFLICTING_PID=$(lsof -t -i :8081 || true)
 if [ -n "$CONFLICTING_PID" ]; then
     echo "    Found conflicting process(es) on port 8081: $CONFLICTING_PID. Killing..."
@@ -104,6 +136,7 @@ echo " All services running!"
 echo "  Postgres:   localhost:5432"
 echo "  Ollama:     localhost:11434"
 echo "  Weaviate:   localhost:8090"
+echo "  Extractor:  ${EXTRACTOR_URL:-not running (--enable-vision for Go fallback)}"
 echo "  Go Server:  localhost:8081"
 echo ""
 echo " Run the chat app in another terminal:"

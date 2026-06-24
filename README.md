@@ -96,7 +96,7 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 │   ├── guides/                  # Playbooks, API/CLI references, system design
 │   └── plans/                   # Feature implementation plans and roadmaps
 │
-└── docker-compose.yaml      # Vector database (Weaviate) + relational DB (PostgreSQL) configuration
+└── docker-compose.yaml      # Weaviate + PostgreSQL (+ optional Python extractor with --profile extractor)
 ```
 
 ---
@@ -149,6 +149,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [Deleted User Plan](docs/plans/handle-deleted-user-plan.md)
 - [Frontend Plan](docs/plans/frontend-plan.md)
 - [SQL File Management Plan](docs/plans/sql-file-management-plan.md)
+- [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md) — implemented as optional `--extractor-url` vision path (Phase 2)
 
 **In Progress:**
 - [Feature Recommendations](docs/plans/feature-recommendations.md) — partially implemented
@@ -159,5 +160,4 @@ We have split our documentation into separate guides and plans for easier readin
 - [Waiter Script Plan](docs/plans/waiter-script-plan.md)
 
 **Archived:**
-- [Python Extractor Service Plan](docs/plans/python-extractor-service-plan.md) — replaced by pure-Go OpenAI-compatible extractor
 
