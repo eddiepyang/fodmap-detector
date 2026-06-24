@@ -237,7 +237,6 @@ func TestRunScrapeWith_VisionPath(t *testing.T) {
 		store,
 		stubEmbedder{},
 		false,
-		false,
 	)
 	if err != nil {
 		t.Fatalf("runScrapeWith: %v", err)
@@ -282,7 +281,6 @@ func TestRunScrapeWith_VisionPath_Error(t *testing.T) {
 		store,
 		stubEmbedder{},
 		false,
-		false,
 	)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -310,12 +308,14 @@ func TestRunScrapeWith_NilVisionEx_ScanError(t *testing.T) {
 		store,
 		stubEmbedder{},
 		false,
-		false,
 	)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "no usable text layer") {
 		t.Errorf("error should contain %q, got %q", "no usable text layer", err.Error())
+	}
+	if !strings.Contains(err.Error(), "--extractor-url") {
+		t.Errorf("error should contain %q, got %q", "--extractor-url", err.Error())
 	}
 }

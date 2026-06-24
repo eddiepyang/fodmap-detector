@@ -52,13 +52,17 @@ func (e *PythonVisionExtractor) doPost(ctx context.Context, url string, body []b
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status %d from %s: %s", resp.StatusCode, url, strings.TrimSpace(string(respBody)))
+		preview := respBody
+		if len(preview) > 4096 {
+			preview = preview[:4096]
+		}
+		return nil, fmt.Errorf("unexpected status %d from %s: %s", resp.StatusCode, url, strings.TrimSpace(string(preview)))
 	}
 	return respBody, nil
 }

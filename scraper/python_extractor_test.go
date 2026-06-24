@@ -186,6 +186,83 @@ func TestPythonVisionExtractor_structureHTTPError(t *testing.T) {
 	}
 }
 
+// TestPythonVisionExtractor_largeStructureResponse verifies that doPost does not
+// truncate 2xx responses. It serves a structure payload larger than 4096 bytes
+// (100 menu items ≈ 6 KB) and asserts the full JSON is preserved.
+func TestPythonVisionExtractor_largeStructureResponse(t *testing.T) {
+	// Build a structure response with 100 items so the JSON exceeds 4096 bytes.
+	type itemJSON struct {
+		Name               string   `json:"name"`
+		Description        string   `json:"description"`
+		StatedIngredients  []string `json:"stated_ingredients"`
+		HasFullIngredients bool     `json:"has_full_ingredients"`
+	}
+	type sectionJSON struct {
+		Name  string     `json:"name"`
+		Items []itemJSON `json:"items"`
+	}
+	type menuJSON struct {
+		SchemaRevision string        `json:"schema_revision"`
+		RestaurantName string        `json:"restaurant_name"`
+		City           string        `json:"city"`
+		State          string        `json:"state"`
+		Sections       []sectionJSON `json:"sections"`
+	}
+	type largeResp struct {
+		SchemaRevision string   `json:"schema_revision"`
+		Backend        string   `json:"backend"`
+		Menu           menuJSON `json:"menu"`
+	}
+
+	items := make([]itemJSON, 100)
+	for i := range items {
+		items[i] = itemJSON{
+			Name:               fmt.Sprintf("Dish Number %03d with a longer descriptive name", i+1),
+			Description:        fmt.Sprintf("A detailed description for dish %d including preparation notes", i+1),
+			StatedIngredients:  []string{"ingredient-a", "ingredient-b", "ingredient-c"},
+			HasFullIngredients: i%2 == 0,
+		}
+	}
+	resp := largeResp{
+		SchemaRevision: "v1",
+		Backend:        "openai-compat",
+		Menu: menuJSON{
+			SchemaRevision: "v1",
+			RestaurantName: "Big Menu Restaurant",
+			City:           "Los Angeles",
+			State:          "CA",
+			Sections:       []sectionJSON{{Name: "All Items", Items: items}},
+		},
+	}
+	largeJSON, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshalling large response: %v", err)
+	}
+	if len(largeJSON) <= 4096 {
+		t.Fatalf("fixture is only %d bytes; must exceed 4096 to test truncation guard", len(largeJSON))
+	}
+
+	srv := newPythonExtractorTestServer(t, nil, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(largeJSON)
+		},
+	)
+	defer srv.Close()
+
+	ex := &PythonVisionExtractor{BaseURL: srv.URL}
+	result, payload, err := ex.ExtractDocument(context.Background(), []byte("%PDF-fake"), "application/pdf")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Items) != 100 {
+		t.Errorf("expected 100 items, got %d", len(result.Items))
+	}
+	if len(payload) != len(largeJSON) {
+		t.Errorf("payload length %d does not match fixture length %d; likely truncated", len(payload), len(largeJSON))
+	}
+}
+
 func TestOpenAIVisionAdapter_nilPayload(t *testing.T) {
 	// Serve a valid OpenAI-compat /chat/completions response.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

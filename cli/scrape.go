@@ -147,7 +147,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 
 	fetcher := scraper.NewHTTPFetcher(ignoreRobots)
 
-	return runScrapeWith(ctx, rawURL, fetcher, ex, visionEx, store, embedder, enableVision, usePdftotext)
+	return runScrapeWith(ctx, rawURL, fetcher, ex, visionEx, store, embedder, usePdftotext)
 }
 
 // runScrapeWith is the testable core of the scrape command. All dependencies
@@ -160,7 +160,6 @@ func runScrapeWith(
 	visionEx scraper.VisionExtractor, // nil when no vision configured
 	store server.MenuStore,
 	embedder search.Embedder,
-	enableVision bool,
 	usePdftotext bool,
 ) error {
 	slog.Info("scraping URL", "url", rawURL)
@@ -214,7 +213,7 @@ func runScrapeWith(
 			} else if errors.Is(textErr, scraper.ErrNeedVision) {
 				// Needs vision path.
 				if visionEx == nil {
-					return fmt.Errorf("PDF has no usable text layer and --enable-vision is not set")
+					return fmt.Errorf("PDF has no usable text layer; set --enable-vision (Go LLM path) or --extractor-url (Python service)")
 				}
 				result, rawPayload, err = visionEx.ExtractDocument(ctx, bodyBytes, ct)
 				if err != nil {
