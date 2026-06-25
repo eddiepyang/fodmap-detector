@@ -128,6 +128,7 @@ We have split our documentation into separate guides and plans for easier readin
 
 ### Guides & Playbooks
 - [Quick Start & Setup](docs/guides/quick-start.md) - How to run the infrastructure and project locally.
+- [Menu Extraction E2E Testing](docs/guides/menu-extraction-e2e.md) - End-to-end testing guide for the Python vision service + Postgres pipeline.
 - [API Reference](docs/guides/api-reference.md) - HTTP endpoints, auth, and search.
 - [CLI Reference](docs/guides/cli-reference.md) - Commands for indexing, scraping, and chatting.
 - [Data Model & Pipeline](docs/guides/data-model.md) - Core data structures and inputs.

@@ -1,9 +1,15 @@
 {
 	"folders": [
 		{
+			"name": "scraper",
+			"path": "../scraper"
+		},
+		{
+			"name": "fodmap-detector",
 			"path": "."
 		},
 		{
+			"name": "fodmap-chat",
 			"path": "../fodmap-chat"
 		}
 	],
