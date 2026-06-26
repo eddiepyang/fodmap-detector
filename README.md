@@ -42,14 +42,20 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 │
 ├── chat/
 │   ├── chat.go              # Chat session logic, tool dispatch, system prompt rendering
+│   ├── backend.go           # Provider-agnostic ChatBackend interface (ToolDeclaration, Message, GenerateOpts)
+│   ├── gemini_backend.go    # Gemini implementation of ChatBackend (genai SDK)
+│   ├── openai_backend.go    # OpenAI-compatible implementation of ChatBackend (Ollama, vLLM, OpenAI)
 │   ├── profile.go           # Dietary profile generation via Gemini
-│   └── chat-instruction.txt # Embedded instruction template for the chat agent
+│   ├── chat-instruction.txt # Embedded instruction template for the chat agent
+│   └── dietary-profile-prompt.txt # Embedded prompt template for dietary profile generation
 │
 ├── server/
 │   ├── server.go            # HTTP server setup and routes
 │   ├── handlers.go          # Search & FODMAP HTTP handlers
 │   ├── auth_handler.go      # Auth endpoints (register, login, refresh, delete)
 │   ├── admin_handler.go     # Admin Console RBAC endpoints
+│   ├── admin_ingredients_handler.go  # Admin FODMAP ingredient CRUD + reseed endpoints
+│   ├── catalog_store.go     # In-memory catalog store adapter for ingredient admin
 │   ├── chat_handler.go      # Chat streaming handler (SSE)
 │   ├── conversation_handler.go       # Conversation CRUD endpoints
 │   ├── conversation_export_handler.go # Conversation export (JSON/Markdown)
@@ -58,6 +64,21 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 │   ├── profile_handler.go             # Dietary profile endpoints
 │   ├── middleware.go         # JWT auth, rate limiting, CORS middleware
 │   └── mock_store.go         # In-memory test store
+│
+├── fodmap/
+│   └── store/
+│       ├── postgres.go      # PostgreSQL-backed FODMAP ingredient store (CRUD + search)
+│       └── sql/             # Embedded SQL queries for the ingredient store
+│
+├── menutracking/            # Regulatory tracking pipeline (menu change detection + alerting)
+│   ├── agent.go             # Tracking agent orchestration
+│   ├── workers.go           # Concurrent worker pool
+│   ├── rule.go              # Rule evaluation engine
+│   ├── fastpath.go          # Fast-path heuristics for common cases
+│   ├── schema.go            # Data models for tracking events
+│   ├── source.go            # Menu source adapters
+│   ├── ratelimit.go         # Per-source rate limiting
+│   └── admin.go             # Admin interface for tracking rules
 │
 ├── data/
 │   ├── data.go              # Archive reading (TAR + JSON lines)
@@ -119,6 +140,15 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
   - `GET /api/v1/admin/conversations/{id}` - Reads complete transcript messages.
   - `GET /api/v1/admin/analytics/overview` - Fetches total, active, and suspended user counts and signups.
   - `GET /api/v1/admin/analytics/activity` - Fetches daily conversation volume.
+- **Ingredient Admin (`/api/v1/admin/ingredients/*`)**:
+  - `GET /api/v1/admin/ingredients` - Lists ingredients with optional filters and pagination.
+  - `GET /api/v1/admin/ingredients/stats` - Returns aggregate counts by FODMAP level and group.
+  - `GET /api/v1/admin/ingredients/search-test` - Runs a semantic search against the ingredient catalog.
+  - `GET /api/v1/admin/ingredients/{name}` - Returns a single ingredient by name.
+  - `POST /api/v1/admin/ingredients` - Creates a new ingredient (rejects duplicates).
+  - `PUT /api/v1/admin/ingredients/{name}` - Updates an existing ingredient.
+  - `DELETE /api/v1/admin/ingredients/{name}` - Deletes an ingredient from the catalog.
+  - `POST /api/v1/admin/ingredients/reseed` - Re-upserts the static FODMAP database into the store.
 
 ---
 
