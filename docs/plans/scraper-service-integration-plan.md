@@ -215,17 +215,34 @@ capability is not exposed by the service the detector calls.
 
 ### B1. Python repo: expose `webagent` over HTTP
 
-`create_webagent_app` already defines `POST /v1/scrape/{site}/{target}`
-(`../../../scraper/src/scraper/webagent/app.py:34`), but it requires a
-**pre-compiled adapter** in the `AdapterRegistry` (produced by the discovery
-flow). Work needed:
-- Decide deployment: mount `webagent` into the main `app.py` (shared port 8765)
-  or run it as a second service/port. A second mounted sub-app is cleanest.
-- Provide a discovery entry point usable by the detector: either an HTTP
-  `discover` endpoint taking a URL+goal returning/storing a compiled adapter, or
-  keep discovery as the offline `webagent/discovery/cli.py` authoring step and
-  have the detector only call the runtime `scrape` endpoint with a known
-  `{site}/{target}`.
+**Pipeline shape (the key point): JS pages are a two-call flow that converges on
+the same structuring step as PDFs** — webagent is just another *acquisition*
+front-end, alongside `documents:inspect`/`pages:extract`:
+
+1. `POST /v1/scrape/{site}/{target}` (webagent) → navigates the JS page and
+   returns `ScrapeResult{records: list[dict], meta}`
+   (`../../../scraper/src/scraper/webagent/result.py`) — adapter-extracted
+   content, **not** a `MenuDocument`.
+2. The detector serializes those records/text into `merged_text` and calls the
+   existing `POST /v1/extractions:structure` → validated `MenuDocument`.
+
+So from the detector's side this is "acquire, then structure" — the same
+converge-on-structuring pattern as PDF. **Server topology (one router via
+`include_router` vs. a mounted sub-app vs. a separate process) is a Python-repo
+decision, not something this plan should fix.** The only hard requirement the
+detector cares about is that both endpoints are reachable on the configured base
+URL. (Note: webagent does need a Playwright browser-pool lifecycle and its own
+`WebAgentError` envelope, which is why it's currently a separate factory — that
+informs the Python-side choice but doesn't change the two-call client contract.)
+
+Work needed in the Python repo:
+- Expose the `scrape` endpoint on the service the detector targets (topology per
+  above).
+- **Discovery stays a separate, offline authoring step.** `scrape/{site}/{target}`
+  requires a pre-compiled adapter in the `AdapterRegistry` produced by
+  `webagent/discovery/cli.py`. The two-call runtime does *not* remove this; the
+  detector calls `scrape` only for sites that already have an adapter. (Exposing
+  discovery itself over HTTP is a larger, optional follow-on — see Risks.)
 - Add auth (see Risks) before exposing anything callable.
 
 ### B2. Go side: route JS pages
@@ -233,8 +250,11 @@ flow). Work needed:
 - Repurpose the dead `--enable-js-render` flag to mean "send JS-only pages to the
   service's webagent endpoint" — or add `--webagent-url`.
 - Detect JS-only pages (the `IsTooNoisy`/empty-content heuristics already in
-  [scraper/scraper.go](../../scraper/scraper.go)) and route to the webagent
-  `scrape` endpoint, mapping the returned snapshot/items into the extraction flow.
+  [scraper/scraper.go](../../scraper/scraper.go)), then run the two-call flow:
+  call `scrape/{site}/{target}` → serialize the returned `records` into
+  `merged_text` → reuse the **same** `extractions:structure` path the PDF flow
+  already uses (`ServiceExtractor`'s structuring call). This keeps a single
+  structuring code path on the Go side for both PDF and JS inputs.
 
 ---
 
