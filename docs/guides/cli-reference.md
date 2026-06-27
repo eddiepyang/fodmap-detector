@@ -48,6 +48,14 @@ go run . scrape "https://example-restaurant.com/menu.pdf" \
   --llm-url http://localhost:11434/v1 \
   --extractor-url http://localhost:8765
 
+# Scrape a page whose menu is an embedded image (e.g. a photo of a printed
+# trifold menu). The detector detects the menu image in the HTML and routes it
+# to the service's OCR path automatically when --extractor-url is set.
+go run . scrape "https://thriftnsipcafe.com/#MENU" \
+  --weaviate localhost:8090 \
+  --llm-url http://localhost:11434/v1 \
+  --extractor-url http://localhost:8765
+
 # Route JS-rendered pages to the service's webagent (Phase B). Requires a
 # pre-compiled adapter (see ../scraper/src/scraper/webagent/discovery/cli.py).
 go run . scrape "https://js-heavy-site.com/menu" \
@@ -64,11 +72,20 @@ go run . scrape "https://js-heavy-site.com/menu" \
 | `--llm-model` | `qwen3.6:35b-mlx` | LLM model to use |
 | `--enable-vision` | `false` | Send PDFs/images to the local vision LLM (pure-Go fallback; alternative to `--extractor-url`) |
 | `--pdftotext` | `false` | Fall back to system `pdftotext` (poppler) for PDF text extraction |
-| `--extractor-url` | `""` | Base URL of the Python scraper service for PDF/OCR (e.g. `http://localhost:8765`); empty = pure-Go default |
+| `--extractor-url` | `""` | Base URL of the Python scraper service for PDF/OCR + image-embedded menus (e.g. `http://localhost:8765`); empty = pure-Go default |
 | `--extractor-page-timeout` | `2m` | Per-page request timeout when calling the scraper service |
 | `--extractor-pdf-timeout` | `10m` | Overall PDF deadline when calling the scraper service |
 | `--enable-js-render` | `false` | Route noisy/JS-only HTML pages to the webagent (requires `--extractor-url` + `--webagent-adapter`) |
 | `--webagent-adapter` | `""` | webagent adapter ID (`site/target`) for JS-rendered pages |
+
+**Scrape fallback cascade (when `--extractor-url` is set):**
+
+1. **Tier 0 — JSON-LD:** parse schema.org `Menu` blocks (no LLM call).
+2. **Tier 1 — HTML/PDF → LLM:** HTML→Markdown or PDF text-layer → `ex.Extract`.
+3. **Tier 1.5 — trafilatura:** if Markdown is noisy, try boilerplate removal.
+4. **Phase C — Image-embedded menu:** if content is still noisy/empty/too-short, scan HTML for a large `<img>` likely to be a menu photo; if found, fetch it and OCR via the service (`documents:inspect` → `pages:extract` → `extractions:structure`).
+5. **Phase B — Webagent:** if no menu image found and `--enable-js-render` is set, route to the service's webagent endpoint.
+6. **PDF service path:** PDFs without a text layer route to the service (inspect → extract → structure), with pure-Go vision as the 503 fallback.
 
 **Config ownership split:** when `--extractor-url` is set, PDF structuring is
 owned by the service's `SCRAPER_LLM_*` / OCR backend config — the detector's

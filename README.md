@@ -181,6 +181,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [SQL File Management Plan](docs/plans/sql-file-management-plan.md)
 
 **In Progress:**
+- [Scraper Service Integration Plan](docs/plans/scraper-service-integration-plan.md) — routing PDF/OCR, image-embedded menus, and JS-rendered pages to the Python `scraper` service (Phases A/B/C implemented)
 - [Feature Recommendations](docs/plans/feature-recommendations.md) — partially implemented
 - [Regulatory Tracking Pipeline Plan](docs/plans/regtrack-pipeline-plan.md) — implemented as `menutracking` package
 - [Weaviate Chunk Denormalization Plan](docs/plans/weaviate-chunk-denormalization-plan.md) — not yet started

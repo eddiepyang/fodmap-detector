@@ -48,6 +48,75 @@ The Avro streaming schema (`EventSchema`) mirrors the `Review` struct and carrie
 
 ---
 
+## Menu Scraping Pipeline
+
+The `scrape` command fetches a restaurant menu page and extracts structured menu items into Weaviate. The pipeline has multiple fallback tiers:
+
+```
+scrape <url>
+    |
+    v
+Fetch (HTTPFetcher: robots.txt check, body cap, charset decode)
+    |
+    +-- Tier 0: JSON-LD fast-path
+    |   ExtractJSONLD() parses schema.org Menu blocks — no LLM call.
+    |   If found: done.
+    |
+    +-- Tier 1: HTML/PDF → LLM extraction
+    |   HTML → ConvertHTMLToMarkdown → ex.Extract (OpenAI-compatible LLM)
+    |   PDF  → ExtractPDFText (text-layer) → ex.Extract
+    |   PDF  → pdftotext (poppler) → ex.Extract
+    |
+    +-- Tier 1.5: trafilatura fallback
+    |   If Markdown is noisy (IsTooNoisy), try go-trafilatura boilerplate removal.
+    |
+    +-- Phase C: Image-embedded menu (--extractor-url required)
+    |   If content is still noisy/empty/too-short, FindMenuImage() scans the
+    |   HTML for a large <img> likely to be a menu photo (size, filename,
+    |   #MENU context heuristics). If found, fetch the image and OCR it via
+    |   the service (inspect → pages:extract → extractions:structure).
+    |
+    +-- Phase B: JS-rendered page (--enable-js-render + --webagent-adapter)
+    |   If no menu image found, route to the service's webagent endpoint
+    |   (scrape/{site}/{target} → serialize records → extractions:structure).
+    |
+    +-- PDF service path (--extractor-url)
+    |   PDFs without a text layer route to the service (inspect → per-page
+    |   extract → structure). Pure-Go ExtractPDFVision is the 503 fallback.
+    |
+    v
+MenuExtractionResult → EmbedBatch → BatchUpsertMenu → Weaviate
+```
+
+**Key types** (`scraper/scraper.go`):
+
+```go
+type MenuEntry struct {
+    DishName            string   `json:"dish"`
+    Description         string   `json:"description"`
+    StatedIngredients   []string `json:"stated_ingredients"`
+    HasFullIngredients  bool     `json:"has_full_ingredients"`
+}
+
+type MenuExtractionResult struct {
+    RestaurantName string      `json:"restaurant_name"`
+    City           string      `json:"city,omitempty"`
+    State          string      `json:"state,omitempty"`
+    SourceURL      string      `json:"source_url"`
+    ScrapedAtUTC   string      `json:"scraped_at_utc"`
+    Items          []MenuEntry `json:"items"`
+}
+```
+
+The `ServiceExtractor` (`scraper/service_extractor.go`) implements three interfaces for the service-backed paths:
+- `PDFExtractor` — `ExtractPDF(ctx, pdfBytes)` for PDF/OCR
+- `ImageExtractor` — `ExtractImage(ctx, imgBytes, mime)` for image-embedded menus
+- `JSRenderer` — `ScrapeJS(ctx, adapterID, params)` for JS-rendered pages
+
+All three converge on the same `extractions:structure` endpoint to produce a `MenuExtractionResult`. See the [Scraper Service Integration Plan](../plans/scraper-service-integration-plan.md) for details.
+
+---
+
 ## Data Pipeline
 
 ```
