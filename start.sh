@@ -8,6 +8,9 @@ cleanup() {
     if [ -n "$OLLAMA_PID" ]; then
         kill $OLLAMA_PID 2>/dev/null || true
     fi
+    if [ -n "$SCRAPER_PID" ]; then
+        kill $SCRAPER_PID 2>/dev/null || true
+    fi
     kill $SERVER_PID 2>/dev/null || true
     pkill -f "fodmap-detector serve" 2>/dev/null || true
     wait 2>/dev/null
@@ -50,8 +53,38 @@ fi
 echo "    Ensuring nomic-embed-text model is available..."
 ollama pull nomic-embed-text > /dev/null 2>&1 || echo "    Warning: failed to pull nomic-embed-text model"
 
+# 1b. Optionally start the Python scraper service for PDF/OCR + webagent.
+# Set START_SCRAPER=true to enable (defaults to false — pure-Go is the default).
+SCRAPER_PID=""
+if [ "${START_SCRAPER:-false}" = "true" ]; then
+    echo "[1b/5] Starting Python scraper service on port 8765..."
+    SCRAPER_DIR="${SCRAPER_DIR:-../scraper}"
+    if [ ! -d "$SCRAPER_DIR" ]; then
+        echo "    ERROR: scraper dir $SCRAPER_DIR not found. Set SCRAPER_DIR or clone the repo."
+        exit 1
+    fi
+    (cd "$SCRAPER_DIR" && uv run uvicorn scraper.app:app --port 8765 > /dev/null 2>&1) &
+    SCRAPER_PID=$!
+    echo "    Waiting for scraper service to be ready..."
+    for i in $(seq 1 30); do
+        if curl -s -o /dev/null http://localhost:8765/healthz 2>/dev/null; then
+            echo "    Scraper service is ready!"
+            break
+        fi
+        if ! kill -0 $SCRAPER_PID 2>/dev/null; then
+            echo "    ERROR: scraper process died. Is 'uv sync' done in $SCRAPER_DIR?"
+            exit 1
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "    ERROR: scraper service did not become ready in time."
+            exit 1
+        fi
+        sleep 1
+    done
+fi
+
 # 2. Start Postgres and Weaviate in Docker
-echo "[2/4] Starting Postgres and Weaviate in Docker..."
+echo "[2/5] Starting Postgres and Weaviate in Docker..."
 docker compose up -d
 
 # Wait for Postgres to become ready (query the host port directly)
@@ -84,11 +117,11 @@ done
 
 # 3. Run database migrations (domain tables + river schema)
 POSTGRES_DSN="${POSTGRES_DSN:-postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable}"
-echo "[3/4] Running database migrations..."
+echo "[3/5] Running database migrations..."
 POSTGRES_DSN="$POSTGRES_DSN" go run . db migrate-up
 
 # 4. Start the Go server in the background
-echo "[4/4] Starting Go server on port 8081..."
+echo "[4/5] Starting Go server on port 8081..."
 CONFLICTING_PID=$(lsof -t -i :8081 || true)
 if [ -n "$CONFLICTING_PID" ]; then
     echo "    Found conflicting process(es) on port 8081: $CONFLICTING_PID. Killing..."
@@ -105,9 +138,17 @@ echo "  Postgres:   localhost:5432"
 echo "  Ollama:     localhost:11434"
 echo "  Weaviate:   localhost:8090"
 echo "  Go Server:  localhost:8081"
+if [ -n "$SCRAPER_PID" ]; then
+    echo "  Scraper:    localhost:8765 (PDF/OCR + webagent)"
+fi
 echo ""
 echo " Run the chat app in another terminal:"
 echo "   GOOGLE_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
+if [ -n "$SCRAPER_PID" ]; then
+    echo ""
+    echo " Scrape a PDF via the scraper service:"
+    echo "   go run . scrape <pdf-url> --extractor-url http://localhost:8765"
+fi
 echo ""
 echo " Press Ctrl+C to stop all services."
 echo "======================================"
