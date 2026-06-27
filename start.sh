@@ -153,6 +153,18 @@ if [ -n "$SCRAPER_PID" ]; then
     echo "               --enable-js-render --webagent-adapter site/target"
 fi
 echo ""
+echo " Scrape menus (vLLM at localhost:8000/v1 by default):"
+echo "   Image menu (pure-Go vision, no service):"
+echo "     go run . scrape <html-url> --enable-vision"
+echo "   JS-rendered menu (headless Chrome, no service/adapter):"
+echo "     go run . scrape <js-url> --enable-js-render"
+if [ -n "$SCRAPER_PID" ]; then
+    echo "   Via the scraper service (multi-page PDFs / per-site webagent):"
+    echo "     PDF/OCR:    go run . scrape <pdf-url> --extractor-url http://localhost:8765"
+    echo "     JS page:    go run . scrape <url> --extractor-url http://localhost:8765 \\"
+    echo "                 --enable-js-render --webagent-adapter site/target"
+fi
+echo ""
 echo " Press Ctrl+C to stop all services."
 echo "======================================"
 
