@@ -179,5 +179,6 @@ llm-linux-status:
 
 ## Related Plans
 
+- [vision-extraction.md](vision-extraction.md) — extraction quality findings (8-bit vs 4-bit, prompt rules, the froggeric VLM benchmark and how it transfers)
 - [scraper-pipeline-plan.md](scraper-pipeline-plan.md) — the scraper pipeline this LLM serves
 - [python-extractor-service-plan.md](python-extractor-service-plan.md) — **ARCHIVED.** Considered alternative.
