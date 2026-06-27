@@ -25,9 +25,11 @@ saved_cities.txt
 
 # Compiled Go binaries (go build / go install artifacts). A `go build` in
 # scripts/e2e_vision/ produces scripts/e2e_vision/e2e_vision (named after the
-# dir). The root `go build .` produces ./fodmap. Ignore both shapes.
+# dir). `go build ./scripts/menuscan` writes ./menuscan to the CWD. The root
+# `go build .` produces ./fodmap. Ignore all these shapes.
 /fodmap
 /fodmap.exe
+/menuscan
 /scripts/e2e_vision/e2e_vision
 /scripts/e2e_jsrender/e2e_jsrender
 /scripts/menuscan/menuscan
