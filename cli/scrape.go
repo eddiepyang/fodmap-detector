@@ -240,7 +240,7 @@ func runScrapeWith(
 			// threshold mirrors the PDF text-layer guard — a page with fewer
 			// than ~200 chars of real content is likely image- or JS-rendered.
 			tooShort := len([]rune(strings.TrimSpace(md))) < 200
-			needsFallback := noisy && (scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort)
+			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort
 
 			if needsFallback {
 				// Phase C: check for a menu image embedded in the HTML.

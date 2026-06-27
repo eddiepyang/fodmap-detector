@@ -422,11 +422,10 @@ func TrafilaturaFallback(rawHTML string) string {
 
 // menuImageCandidate describes an <img> that might be a menu image.
 type menuImageCandidate struct {
-	src     string
-	width   int
-	height  int
-	score   int
-	menuCtx bool
+	src    string
+	width  int
+	height int
+	score  int
 }
 
 // FindMenuImage scans HTML for the largest <img> likely to be an embedded menu
@@ -457,10 +456,9 @@ func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool)
 	}
 
 	var candidates []menuImageCandidate
-	var inMenuCtx bool
 
-	var walk func(*html.Node, bool)
-	walk = func(n *html.Node, inSkip bool) {
+	var walk func(*html.Node, bool, bool)
+	walk = func(n *html.Node, inSkip bool, inMenuCtx bool) {
 		if n.Type == html.ElementNode {
 			switch n.Data {
 			case "header", "footer", "nav":
@@ -482,10 +480,10 @@ func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool)
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c, inSkip)
+			walk(c, inSkip, inMenuCtx)
 		}
 	}
-	walk(doc, false)
+	walk(doc, false, false)
 
 	if len(candidates) == 0 {
 		return "", false
@@ -511,10 +509,13 @@ func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool)
 func evaluateImg(n *html.Node, inMenuCtx bool) menuImageCandidate {
 	c := menuImageCandidate{}
 
+	var dataSrc string
 	for _, a := range n.Attr {
 		switch a.Key {
-		case "src", "data-src":
+		case "src":
 			c.src = a.Val
+		case "data-src":
+			dataSrc = a.Val
 		case "srcset":
 			if w := maxSrcsetWidth(a.Val); w > c.width {
 				c.width = w
@@ -534,6 +535,11 @@ func evaluateImg(n *html.Node, inMenuCtx bool) menuImageCandidate {
 				c.score += 2
 			}
 		}
+	}
+
+	// Prefer src; fall back to data-src (lazy-loaded images) if src is absent.
+	if c.src == "" {
+		c.src = dataSrc
 	}
 
 	if c.src == "" {
@@ -564,7 +570,6 @@ func evaluateImg(n *html.Node, inMenuCtx bool) menuImageCandidate {
 		c.score += 2
 	}
 
-	c.menuCtx = inMenuCtx
 	return c
 }
 

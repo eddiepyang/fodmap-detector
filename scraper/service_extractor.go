@@ -250,6 +250,7 @@ func (s *ServiceExtractor) ExtractImage(ctx context.Context, imgBytes []byte, mi
 	return mapStructureToResult(structRes), nil
 }
 
+// pageBlob builds the per-page text contribution sent to extractions:structure.
 // For text-route pages we forward the text; for ocr-route pages we forward
 // ocr_text concatenated with ocr_layout (layout signal — see plan Risks).
 func pageBlob(p extractPageResult) string {
@@ -439,10 +440,8 @@ type scrapeResult struct {
 // pattern as the PDF flow. adapterID is "site/target"; params is the JSON body.
 func (s *ServiceExtractor) ScrapeJS(ctx context.Context, adapterID string, params map[string]any) (MenuExtractionResult, error) {
 	// 1. POST /v1/webagent/scrape/{site}/{target} with params as JSON body.
-	// TODO(phase-b): reconcile this path with the service once webagent is
-	// actually exposed over HTTP — the current webagent app defines
-	// POST /scrape/{site}/{target} (i.e. /v1/scrape/... if mounted at /v1),
-	// not /v1/webagent/scrape/... . This path is an unverified placeholder.
+	// The webagent sub-app is mounted at /v1/webagent (see app.py), so the
+	// full path is /v1/webagent/scrape/{site}/{target}.
 	body, err := json.Marshal(params)
 	if err != nil {
 		return MenuExtractionResult{}, fmt.Errorf("marshal webagent params: %w", err)
