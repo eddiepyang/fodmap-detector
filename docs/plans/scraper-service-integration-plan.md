@@ -1,4 +1,4 @@
-# Plan: Integrate fodmap-detector with the Python `scraper` service (PDF/OCR now, JS/discovery later)
+# Plan: Integrate fodmap-detector with the Python `scraper` service (PDF/OCR + image-embedded menus now, JS/discovery later)
 
 ## Context
 
@@ -30,13 +30,14 @@ VLM, per-page routing, schema-validated structuring, and a *separate* Playwright
 `webagent` with anti-bot + LLM-driven discovery.
 
 **Goal:** Make the detector actually use the service for inputs Go can't handle,
-in two phases, and correct the cross-repo docs to match reality.
+in three phases, and correct the cross-repo docs to match reality.
 
 ## Decision
 
-Build **both phases**: Phase A (PDF/OCR over the existing `/v1` HTTP API) now;
-Phase B (JS-rendered pages via `webagent`) later, since that capability is not
-yet exposed over HTTP in the Python repo.
+Build **all three phases**: Phase A (PDF/OCR over the existing `/v1` HTTP API)
+now; Phase B (JS-rendered pages via `webagent`) later, since that capability is
+not yet exposed over HTTP in the Python repo; Phase C (image-embedded menus —
+discovered in the Phase A e2e test against `thriftnsipcafe.com`).
 
 ---
 
@@ -170,10 +171,13 @@ Python is hierarchical and richer
   `stated_ingredients`→`StatedIngredients`, `has_full_ingredients`→`HasFullIngredients`.
 - Drop `price`/`modifiers`/`bounding_box` for now (no Go field). Optionally fold
   modifiers into description text — decide during impl.
-- Handle the **behavior difference**: Python `MenuDocument.sections` is
-  `min_length=1`, so an empty menu yields a 4xx, whereas Go currently just logs
-  "no menu items" (`cli/scrape.go:214`). Treat that specific validation error as
-  "no items found", not a hard failure.
+- Empty-menu handling (**RESOLVED** — implemented): `MenuDocument.sections`
+  previously had `min_length=1`, which would have surfaced an empty menu as an
+  error and pressured the model to fabricate a section. The Python schema was
+  relaxed to allow `sections: []`, so an empty menu is now a normal **200** with
+  zero sections. It maps to a `MenuExtractionResult` with zero `Items` and is
+  handled by the existing `len(result.Items) == 0` check (`cli/scrape.go:214`) —
+  no special error-detection heuristic on the Go side.
 
 ### A4. CLI flag
 
@@ -258,6 +262,137 @@ Work needed in the Python repo:
 
 ---
 
+## Phase C — Route image-embedded menus to the service (discovered in e2e)
+
+### Context
+
+The e2e test against `https://thriftnsipcafe.com/#MENU` exposed a gap neither
+Phase A nor B covers: **the menu is a static HTML page whose only menu content
+is an embedded `<img>` of a printed trifold menu** — no JSON-LD, no text items,
+no JS rendering. The page is WordPress + LiteSpeed cached; the `#MENU` anchor
+wraps a heading, one marketing sentence, and a single PNG
+(`TRIFOLD_MENU_8x11_BC-2048x1596.png`, `alt=""`). The detector's current flow
+converts HTML→Markdown→LLM and would send the LLM the text "Menu\n\n[marketing
+sentence]\n\n" with no actual menu data — it cannot see the image.
+
+The service already handles this: `documents:inspect` with
+`Content-Type: image/png` returns `route=ocr` for a single "page", and
+`pages:extract` OCRs it. The gap is on the Go side: `runScrapeWith` has no path
+from "fetched an HTML page" → "found a menu image" → "sent the image bytes to
+the service."
+
+### C1. Detect menu-image candidates in fetched HTML
+
+After the existing HTML→Markdown conversion, if the result is noisy/empty AND
+JSON-LD found no items, scan the fetched HTML for the largest `<img>` likely to
+be the menu. Heuristics (pick a subset, tune during impl):
+
+- **Size:** `width`/`height` attributes ≥ 800px, or `srcset` containing a
+  ≥1024w descriptor — menu trifolds are large images.
+- **Filename:** `src` matching `/menu|trifold|menu-card|food|drink/i` — the
+  test case is `TRIFOLD_MENU_8x11_BC-...png`.
+- **Context:** the `<img>` is inside or near an element with `id` containing
+  `menu` (the test case: `<div id="MENU">…<img …>`).
+- **Alt text:** `alt` is empty or contains "menu" (empty alt is actually a
+  positive signal here — text menus use descriptive alt).
+
+Exclude: nav logos, icons (`width < 100`), social/share buttons, and images
+inside `<header>`/`<footer>`/`<nav>`.
+
+Implementation: a new `findMenuImage(htmlBytes, contentType) (imgURL string, ok bool)`
+in `scraper/scraper.go` using `golang.org/x/net/html` (already a dependency).
+Return the first candidate's absolute URL (resolve relative URLs against the
+page URL). If multiple candidates, prefer the largest by `srcset` descriptor.
+
+### C2. Route the image to the service
+
+When `findMenuImage` returns a candidate AND `--extractor-url` is set:
+
+1. **Download the image** via the existing `HTTPFetcher` (honors robots, body
+   cap, UA). The image URL shares the page's host, so SSRF is not a new concern
+   (the fetcher already validated the page URL).
+2. **Call `ServiceExtractor.ExtractImage(ctx, imgBytes)`** — a new method that
+   reuses the existing `inspectDocument` → `extractPage` → `structure` flow
+   from A1, but sends the image with `Content-Type: image/png` (the service's
+   image-input path skips PyMuPDF page logic per `v1.py:52-58`). The inspect
+   call returns a single-page `route=ocr` decision; the extract call does the
+   real OCR.
+3. The result is a fully-structured `MenuExtractionResult` — skip `ex.Extract`
+   (same control-flow branch as the PDF service path in A2).
+
+Add `ExtractImage` to the `PDFExtractor` interface? No — rename the interface
+to `ServiceExtractor`-level capability or add a sibling. Recommended: add a
+new `ImageExtractor` interface so the type switch in `runScrapeWith` stays
+readable:
+
+```go
+type ImageExtractor interface {
+    ExtractImage(ctx context.Context, imgBytes []byte) (MenuExtractionResult, error)
+}
+```
+
+`ServiceExtractor` implements both `PDFExtractor` and `ImageExtractor`.
+
+### C3. Integration seam in `runScrapeWith`
+
+In the HTML branch (the `else` clause at `scrape.go:213`), after the
+trafilatura fallback still produces noisy/empty/too-short content:
+
+```go
+// Phase C: check for a menu image embedded in the HTML.
+if (scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort) && extractorURL != "" {
+    if imgURL, ok := scraper.FindMenuImage(bodyBytes, ct, rawURL); ok {
+        if iex, ok := ex.(scraper.ImageExtractor); ok {
+            // Fetch the image and route to the service.
+            imgFetch, err := fetcher.Fetch(ctx, imgURL)
+            // … read bytes, call iex.ExtractImage, set result, goto tier1Done
+        }
+    }
+}
+```
+
+This runs **before** the JS-render check (Phase B) — an image-embedded menu is
+a more common case than a JS-rendered SPA, and doesn't require a pre-compiled
+adapter. The two paths are mutually exclusive: if a menu image is found, skip
+the webagent; if no image is found, fall through to the JS-render check.
+
+### C4. Fallback policy
+
+- `--extractor-url` unset → `FindMenuImage` result is ignored; the noisy HTML
+  flows to the normal LLM path (which will likely produce no items — same as
+  today). Log a warning: "page appears to contain a menu image
+  (`<url>`); set --extractor-url to OCR it."
+- Service returns 503 → same fallback as Phase A: log + hard error naming both
+  failures (per the A1 503 policy). There is no pure-Go image-OCR fallback.
+- `FindMenuImage` finds nothing → fall through to Phase B (JS-render) if
+  configured, else the normal LLM path.
+
+### C5. Tests
+
+- `scraper/scraper_test.go`: `FindMenuImage` with a fixture HTML containing
+  `<div id="MENU"><img src="menu.png" width="1024" height="798"></div>` →
+  returns the absolute URL. Negative cases: nav logo, small icon, no image.
+- `scraper/service_extractor_test.go`: `ExtractImage` orchestration via
+  `httptest` stub (inspect with `image/png` → extract → structure), asserting
+  the image content-type is sent and the single-page ocr route is taken.
+- `cli/scrape_service_test.go`: an `ImageExtractor` stub + a fetcher that
+  serves HTML-with-menu-image then the image bytes, asserting the image path
+  is taken and `ex.Extract` is skipped.
+
+### C6. What this does NOT cover
+
+- **Galleries / multiple menu images.** A page with 5 menu photos needs a
+  multi-image flow (loop → merge). Scope to single-image for now; the test
+  case and likely majority are single-trifold menus.
+- **Image menus without `--extractor-url`.** Pure-Go cannot OCR images. The
+  warning in C4 is the best we can do without a local vision model that
+  actually works (the e2e test showed `qwen3.6:35b-mlx` reports vision
+  capability but refuses images).
+- **SVG menus.** `FindMenuImage` looks for raster `<img>`/`<picture>`. SVG
+  menus are text-extractable and don't need this path.
+
+---
+
 ## Cross-repo documentation fixes (do in Phase A)
 
 - `../../../scraper/README.md:391` and
@@ -288,6 +423,13 @@ Work needed in the Python repo:
   menu items are extracted (where the no-flag run produces "no embedded images
   found"). Confirm `--extractor-url` unset still uses pure-Go unchanged.
 - **Phase B:** deferred; verify once `webagent` is exposed.
+- **Phase C e2e (validated manually, to automate):** the
+  `thriftnsipcafe.com/#MENU` case — a static HTML page whose menu is a single
+  embedded PNG. With `--extractor-url` set, `FindMenuImage` should detect the
+  trifold PNG, fetch it, and route it through the service's image-OCR path,
+  producing the same 12-section structured menu the manual e2e produced.
+  Without `--extractor-url`, the scrape should log "page appears to contain a
+  menu image" and produce no items (same as today).
 
 ## Risks and Gaps
 
@@ -315,9 +457,12 @@ Work needed in the Python repo:
   included; decide during A1 and validate in the e2e check. (Do **not** scope
   Phase A to text-route-only PDFs — those already work via pure-Go `pdftotext`,
   so that would strip Phase A of its entire value.)
-- **Slow OCR / timeouts.** Per-page vision OCR can take many seconds each. The Go
-  HTTP client needs long, configurable timeouts; a multi-page scan can run for
-  minutes. Surface progress via `slog`.
+- **Slow OCR / timeouts (RESOLVED — implemented).** Per-page vision OCR can take
+  many seconds each. `ServiceExtractor` uses a per-page request timeout
+  (`--extractor-page-timeout`, default 2m) *and* enforces an overall wall-clock
+  deadline across the whole page loop via `context.WithTimeout`
+  (`--extractor-pdf-timeout`, default 10m) — the per-request timeout alone does
+  not bound an N-page loop. Per-page progress is logged via `slog`.
 - **503 fallback policy is a real decision.** If the service is up but its OCR
   backend is unavailable (503), the plan falls back to pure-Go vision — which on
   vector PDFs will *also* fail, leaving the user with a silent failure on both
@@ -339,3 +484,24 @@ Work needed in the Python repo:
 - **Dual prompt/schema maintenance.** Keeping the pure-Go extractor as a fallback
   means two extraction prompts/schemas to maintain. Decide whether pure-Go stays
   a supported fallback or becomes deprecated once the service path is proven.
+- **Image-menu detection heuristics are fragile.** `FindMenuImage` (Phase C)
+  relies on filename/context/size heuristics. A page that embeds its menu as a
+  background-image, a CSS `::after`, or an unlabelled `<img>` in a non-`#MENU`
+  container will be missed. The heuristics need tuning against real-world
+  fixtures; the e2e test case is one data point. Consider a fallback: if the
+  LLM extraction yields zero items AND the page has any large image, prompt the
+  LLM with "is there a menu image on this page?" (costs one extra call).
+- **Vision model availability is a hard dependency for Phase C.** The e2e test
+  showed `qwen3.6:35b-mlx` reports `vision` capability but refuses images
+  (text-only quantization), and the MLX DeepSeek-OCR model hit a
+  `transformers`/`mlx-vlm` version incompatibility. Phase C only works when the
+  service has a genuinely functional OCR backend (MLX DeepSeek-OCR with a
+  compatible `transformers` version, or a vLLM/Ollama vision model like
+  `minicpm-v:8b`). Document the known-good backend matrix in the service README.
+- **Structuring quality on OCR'd images is lower than on text.** The e2e OCR
+  (minicpm-v) produced 1,969 chars but the structuring LLM (qwen3.6) took ~5 min
+  and produced 21 items across 12 sections — some sections are coarse ("Coffee:
+  3 items" with no descriptions/prices). The service's structuring prompt may
+  need tuning for image-OCR input (which is noisier and less structured than
+  HTML→Markdown text). This is a prompt-quality issue, not an architecture
+  issue, but it affects Phase C's real-world value.
