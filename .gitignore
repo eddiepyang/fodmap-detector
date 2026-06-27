@@ -23,6 +23,20 @@ tmp/*
 temp/*
 saved_cities.txt
 
+# Compiled Go binaries (go build / go install artifacts). A `go build` in
+# scripts/e2e_vision/ produces scripts/e2e_vision/e2e_vision (named after the
+# dir). The root `go build .` produces ./fodmap. Ignore both shapes.
+/fodmap
+/fodmap.exe
+/scripts/e2e_vision/e2e_vision
+/scripts/e2e_jsrender/e2e_jsrender
+/scripts/menuscan/menuscan
+
+# Spike/run artifacts
+scripts/menuscan_results.json
+/tmp/spike_sample.json
+/tmp/spike_smoke.json
+/tmp/astoria_lic.csv
 
 # Diff files
 diff.txt
