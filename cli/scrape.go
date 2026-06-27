@@ -58,7 +58,7 @@ func init() {
 
 	// Fetch options
 	scrapeCmd.Flags().Bool("ignore-robots", false, "Skip robots.txt check")
-	scrapeCmd.Flags().Bool("enable-js-render", false, "Tier 3: render JS-only pages via chromedp (currently a no-op; will route to the scraper service's webagent in Phase B)")
+	scrapeCmd.Flags().Bool("enable-js-render", false, "Route noisy/JS-only HTML pages to the scraper service's webagent (requires --extractor-url + --webagent-adapter)")
 	scrapeCmd.Flags().Bool("enable-vision", false, "Send PDFs/images to the vision LLM instead of text extraction (pure-Go fallback; mutually alternative with --extractor-url)")
 	scrapeCmd.Flags().Bool("pdftotext", false, "Use system pdftotext (poppler) for PDF text extraction")
 

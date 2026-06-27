@@ -1,4 +1,8 @@
-# Plan: Integrate fodmap-detector with the Python `scraper` service (PDF/OCR + image-embedded menus now, JS/discovery later)
+# Plan: Integrate fodmap-detector with the Python `scraper` service (PDF/OCR, image-embedded menus, JS-rendered pages)
+
+**Status:** Phases A, B, and C are **implemented** (branch `scraper-integration`).
+See the [CLI reference](../guides/cli-reference.md) for usage and
+[data-model.md](../guides/data-model.md) for the full cascade diagram.
 
 ## Context
 
@@ -34,10 +38,10 @@ in three phases, and correct the cross-repo docs to match reality.
 
 ## Decision
 
-Build **all three phases**: Phase A (PDF/OCR over the existing `/v1` HTTP API)
-now; Phase B (JS-rendered pages via `webagent`) later, since that capability is
-not yet exposed over HTTP in the Python repo; Phase C (image-embedded menus —
-discovered in the Phase A e2e test against `thriftnsipcafe.com`).
+Build **all three phases**: Phase A (PDF/OCR over the existing `/v1` HTTP API),
+Phase B (JS-rendered pages via `webagent`, now exposed under `/v1/webagent`),
+and Phase C (image-embedded menus — discovered in the Phase A e2e test against
+`thriftnsipcafe.com`). All three are implemented.
 
 ---
 
@@ -212,18 +216,19 @@ misleading.
 
 ---
 
-## Phase B — Route JS-rendered pages to `webagent` (larger, spans both repos)
+## Phase B — Route JS-rendered pages to `webagent` (implemented)
 
-This is a **prerequisite project in the Python repo first**, because the
-capability is not exposed by the service the detector calls.
+Phase B required prerequisite work in the Python repo to expose `webagent` over
+HTTP; that is now done (`/v1/webagent/scrape/{site}/{target}`, gated by
+`SCRAPER_WEBAGENT_ENABLED=true` and bearer auth).
 
-### B1. Python repo: expose `webagent` over HTTP
+### B1. Python repo: expose `webagent` over HTTP (done)
 
 **Pipeline shape (the key point): JS pages are a two-call flow that converges on
 the same structuring step as PDFs** — webagent is just another *acquisition*
 front-end, alongside `documents:inspect`/`pages:extract`:
 
-1. `POST /v1/scrape/{site}/{target}` (webagent) → navigates the JS page and
+1. `POST /v1/webagent/scrape/{site}/{target}` (webagent) → navigates the JS page and
    returns `ScrapeResult{records: list[dict], meta}`
    (`../../../scraper/src/scraper/webagent/result.py`) — adapter-extracted
    content, **not** a `MenuDocument`.
@@ -239,20 +244,21 @@ URL. (Note: webagent does need a Playwright browser-pool lifecycle and its own
 `WebAgentError` envelope, which is why it's currently a separate factory — that
 informs the Python-side choice but doesn't change the two-call client contract.)
 
-Work needed in the Python repo:
-- Expose the `scrape` endpoint on the service the detector targets (topology per
-  above).
+Work needed in the Python repo (done):
+- Expose the `scrape` endpoint on the service the detector targets (mounted under
+  `/v1/webagent` via `include_router`).
 - **Discovery stays a separate, offline authoring step.** `scrape/{site}/{target}`
   requires a pre-compiled adapter in the `AdapterRegistry` produced by
   `webagent/discovery/cli.py`. The two-call runtime does *not* remove this; the
   detector calls `scrape` only for sites that already have an adapter. (Exposing
   discovery itself over HTTP is a larger, optional follow-on — see Risks.)
-- Add auth (see Risks) before exposing anything callable.
+- Add bearer auth on `/v1` (including the webagent sub-app) via
+  `BearerAuthMiddleware` when `SCRAPER_API_KEY` is set.
 
-### B2. Go side: route JS pages
+### B2. Go side: route JS pages (done)
 
-- Repurpose the dead `--enable-js-render` flag to mean "send JS-only pages to the
-  service's webagent endpoint" — or add `--webagent-url`.
+- The `--enable-js-render` flag now means "send JS-only pages to the service's
+  webagent endpoint" (gated by `--extractor-url` + `--webagent-adapter`).
 - Detect JS-only pages (the `IsTooNoisy`/empty-content heuristics already in
   [scraper/scraper.go](../../scraper/scraper.go)), then run the two-call flow:
   call `scrape/{site}/{target}` → serialize the returned `records` into
@@ -393,15 +399,17 @@ the webagent; if no image is found, fall through to the JS-render check.
 
 ---
 
-## Cross-repo documentation fixes (do in Phase A)
+## Cross-repo documentation fixes (done)
 
-- `../../../scraper/README.md:391` and
-  `../../../scraper/docs/plans/menu-extraction-implementation-plan.md:43,123`:
-  change "Phase 2 … DONE" to reflect reality — Phase A wires PDF/OCR; JS/discovery
-  (Phase B) is not yet exposed/wired.
-- Detector [README.md](../../README.md) and the archived plan: note the new
-  optional `--extractor-url` service path; keep the pure-Go default documented.
-- Note that `--enable-js-render` is currently a no-op until Phase B.
+- `../../../scraper/README.md` and
+  `../../../scraper/docs/plans/menu-extraction-implementation-plan.md`:
+  "Phase 2" status now reads "wired" — Phase A wires PDF/OCR, Phase B wires
+  JS/webagent, Phase C wires image-embedded menus.
+- Detector [README.md](../../README.md) lists this plan under "In Progress";
+  the archived plan notes it's extended by the service integration.
+- `--enable-js-render` is no longer a no-op — it routes to webagent when
+  `--extractor-url` + `--webagent-adapter` are set (see
+  [cli-reference.md](../guides/cli-reference.md)).
 
 ## Deployment
 
@@ -422,14 +430,18 @@ the webagent; if no image is found, fall through to the JS-render check.
   `go run . scrape <pdf-url> --extractor-url http://localhost:8765` and confirm
   menu items are extracted (where the no-flag run produces "no embedded images
   found"). Confirm `--extractor-url` unset still uses pure-Go unchanged.
-- **Phase B:** deferred; verify once `webagent` is exposed.
+- **Phase B unit/contract:** `make check` in the detector; `cli/scrape_service_test.go`
+  covers the webagent routing path with a `jsRendererStub`. Phase B e2e is pending
+  a real adapter in the Python repo's `AdapterRegistry` — the endpoint is live
+  but requires a pre-compiled adapter for the target site.
 - **Phase C e2e (validated manually, to automate):** the
   `thriftnsipcafe.com/#MENU` case — a static HTML page whose menu is a single
-  embedded PNG. With `--extractor-url` set, `FindMenuImage` should detect the
-  trifold PNG, fetch it, and route it through the service's image-OCR path,
-  producing the same 12-section structured menu the manual e2e produced.
-  Without `--extractor-url`, the scrape should log "page appears to contain a
-  menu image" and produce no items (same as today).
+  embedded PNG. With `--extractor-url` set, `FindMenuImage` detects the
+  trifold PNG, fetches it, and routes it through the service's image-OCR path,
+  producing the same 12-section / 21-item structured menu the manual e2e
+  produced (OCR via `minicpm-v:8b`, structuring via `qwen3.6:35b-mlx`).
+  Without `--extractor-url`, the scrape logs "page appears to contain a menu
+  image" and produces no items (same as today).
 
 ## Risks and Gaps
 

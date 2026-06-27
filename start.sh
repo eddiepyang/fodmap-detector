@@ -146,8 +146,11 @@ echo " Run the chat app in another terminal:"
 echo "   GOOGLE_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
 if [ -n "$SCRAPER_PID" ]; then
     echo ""
-    echo " Scrape a PDF via the scraper service:"
-    echo "   go run . scrape <pdf-url> --extractor-url http://localhost:8765"
+    echo " Scrape via the scraper service:"
+    echo "   PDF/OCR:    go run . scrape <pdf-url> --extractor-url http://localhost:8765"
+    echo "   Image menu: go run . scrape <html-url>#MENU --extractor-url http://localhost:8765"
+    echo "   JS page:    go run . scrape <url> --extractor-url http://localhost:8765 \\"
+    echo "               --enable-js-render --webagent-adapter site/target"
 fi
 echo ""
 echo " Press Ctrl+C to stop all services."
