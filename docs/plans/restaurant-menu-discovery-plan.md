@@ -90,20 +90,18 @@ fodmap restaurants import --area astoria-lic
                                     └──────────┬─────────────────────┘
                                                │
                                                v
-                                    ┌───────────────────────────────┐
-                                    │  ScrapeMenuWorker              │
-                                    │  - Fetch menu_url → raw HTML    │
-                                    │  - Write {camis}.html to bronze │
-                                    │  - Extract (pipeline.RunScrape)│
-                                    │  - Write menu_extraction.avro   │
-                                    │    (event_id, job_id, attempt,  │
-                                    │     discovery_event_id)        │
-                                    │  - Embed → BatchUpsertMenu      │
-                                    │    (Weaviate)                  │
-                                    │  - Update row:                 │
-                                    │    status='scraped',           │
-                                    │    item_count, scraped_at      │
-                                    └───────────────────────────────┘
+                                     ┌───────────────────────────────┐
+                                     │  ScrapeMenuWorker              │
+                                     │  - ExtractMenu (fetch+extract) │
+                                     │  - Write {camis}-{attempt}.html│
+                                     │  - Write menu_extraction.avro  │
+                                     │    (event_id, job_id, attempt,  │
+                                     │     discovery_event_id)        │
+                                     │  - StoreMenu (embed→Weaviate)  │
+                                     │  - Update row:                 │
+                                     │    status='scraped',           │
+                                     │    item_count, scraped_at      │
+                                     └───────────────────────────────┘
 ```
 
 ---
@@ -119,12 +117,16 @@ data/bronze/
       astoria-lic.avro          ← nyc_restaurant records (batch, deduped)
   gemini/
     {YYYY-MM-DD}/
-      {camis}.avro               ← gemini_discovery record (per job)
+      {camis}-{attempt}.avro    ← gemini_discovery record (per job attempt)
   restaurants/
     {YYYY-MM-DD}/
-      {camis}.html               ← raw scraped HTML (bronze, like menutracking)
-      {camis}.avro               ← menu_extraction record (silver, post-LLM)
+      {camis}-{attempt}.html    ← raw scraped HTML (bronze, like menutracking)
+      {camis}-{attempt}.avro    ← menu_extraction record (silver, post-LLM)
 ```
+
+Filenames include `{attempt}` (the River job attempt number, 1-based) so
+retry runs don't overwrite earlier attempts — each attempt's intermediate
+data is preserved for debugging and lineage.
 
 ### Avro schemas
 
@@ -189,7 +191,7 @@ existing `scraped_at` pattern.
 ```
 
 - Written by: `DiscoverMenuURLWorker` after Gemini call
-- One file per job: `data/bronze/gemini/{YYYY-MM-DD}/{camis}.avro`
+- One file per job attempt: `data/bronze/gemini/{YYYY-MM-DD}/{camis}-{attempt}.avro`
 - `event_id` = `uuid.NewString()` — passed to `ScrapeMenuJobArgs.DiscoveryEventID`
 - `job_id` = `job.ID` from River
 - `attempt` = `job.Attempt` from River (1-based)
@@ -228,7 +230,7 @@ existing `scraped_at` pattern.
 ```
 
 - Written by: `ScrapeMenuWorker` after LLM extraction, before embedding
-- One file per job: `data/bronze/restaurants/{YYYY-MM-DD}/{camis}.avro`
+- One file per job attempt: `data/bronze/restaurants/{YYYY-MM-DD}/{camis}-{attempt}.avro`
 - `event_id` = `uuid.NewString()`
 - `job_id` = `job.ID` from River
 - `attempt` = `job.Attempt` from River
@@ -250,8 +252,16 @@ nyc_restaurant.event_id
 - Reuse the existing `data/io/event.go` `EventWriter` — it already handles
   `map[string]any` records via `hamba/avro/v2/ocf`.
 - All three schemas go in `data/schemas/schemas.go`.
-- The `EventWriter.Write` method coerces `float64` → `float32` for Avro
-  `float` fields — `nyc_restaurant` uses `double` (no coercion needed).
+- **`nyc_restaurant` records must bypass `EventWriter.Write`** — the
+  existing `Write` method coerces all `float64` values to `float32`
+  (designed for the `yelp_reviews` schema which uses Avro `float`). The
+  `nyc_restaurant` schema uses `double` for `latitude`/`longitude`;
+  the coercion loses precision (`40.75664132086` → `40.75664138793945`).
+  Use `ocf.NewEncoder` + `encoder.Encode(record)` directly for
+  `nyc_restaurant` records, or add a `WriteRaw` method to `EventWriter`
+  that skips the coercion step.
+- `gemini_discovery` and `menu_extraction` have no `double` fields —
+  `EventWriter.Write` is safe for them.
 - Write failures emit `slog.Warn` and do not abort the job (same pattern as
   `menutracking/workers.go:110-112`) — the bronze layer is best-effort
   audit storage, not a transactional dependency.
@@ -264,9 +274,9 @@ nyc_restaurant.event_id
 |---|---|
 | `internal/db/migrations/000002_restaurants.up.sql` | `restaurants` table + indexes |
 | `internal/db/migrations/000002_restaurants.down.sql` | Drop table |
-| `pipeline/pipeline.go` | Extracted `RunScrape` + `ToMenuItems` + `ExtractPDF` from `cli/scrape.go` |
+| `pipeline/pipeline.go` | Extracted `ExtractMenu` + `StoreMenu` + `ToMenuItems` + `ExtractPDF` from `cli/scrape.go` |
 | `menusearch/restaurant.go` | `Restaurant` struct + status constants |
-| `menusearch/store.go` | `//go:embed` SQL strings |
+| `menusearch/store.go` | `//go:embed` SQL strings; implements `server.RestaurantStore` |
 | `menusearch/store/sql/upsert_restaurant.sql` | Upsert by camis |
 | `menusearch/store/sql/get_restaurant.sql` | Get by camis |
 | `menusearch/store/sql/list_restaurants.sql` | List with optional status/search filters |
@@ -286,6 +296,7 @@ nyc_restaurant.event_id
 | `cli/restaurants.go` | `fodmap restaurants import/list/scrape/discover/retry` commands |
 | `cli/restaurants_test.go` | CLI tests |
 | `server/restaurants_handler.go` | REST handlers: CRUD + trigger endpoints |
+| `server/restaurant_store.go` | `RestaurantStore` + `RiverInserter` interfaces + `Restaurant` struct (shared with menusearch) |
 | `server/restaurants_handler_test.go` | Handler tests |
 
 ---
@@ -389,14 +400,16 @@ func (ScrapeMenuJobArgs) Kind() string { return "menusearch.scrape_menu" }
 **Worker:** `ScrapeMenuWorker`
 - Reads `menu_url` from job args.
 - Sets `status='scraping'`.
-- Fetches the URL → writes raw HTML to `data/bronze/restaurants/{date}/{camis}.html`
+- Calls `pipeline.ExtractMenu(ctx, menuURL, fetcher, extractor, ...)` —
+  fetch + extract cascade. Returns `*scraper.MenuExtractionResult`.
+- Writes raw HTML to `data/bronze/restaurants/{date}/{camis}-{attempt}.html`
   (best-effort, like `menutracking`).
-- Calls `pipeline.RunScrape(ctx, menuURL, fetcher, extractor, menuStore, embedder, ...)`
-  — the extracted `runScrapeWith` function (see Pipeline Extraction below).
 - Generates `event_id` (`uuid.NewString()`).
-- Writes `menu_extraction.avro` record to silver (best-effort).
-- Embeds + upserts to Weaviate (inside `RunScrape`).
-- On success: `status='scraped'`, `item_count=N`, `scraped_at=NOW()`.
+- Writes `menu_extraction.avro` record to
+  `data/bronze/restaurants/{date}/{camis}-{attempt}.avro` (best-effort).
+- Calls `pipeline.StoreMenu(ctx, result, menuURL, menuStore, embedder)` —
+  embed + upsert to Weaviate. Returns `itemCount`.
+- On success: `status='scraped'`, `item_count=itemCount`, `scraped_at=NOW()`.
 - On error: `status='failed_scrape'`, `last_error=err.Error()`.
 
 **Unique opts:** `UniqueOpts{ByArgs: true, ByPeriod: 30 * 24 * time.Hour}`.
@@ -439,15 +452,56 @@ Create a new `pipeline` package that imports `scraper`, `search`, and
 `server` — a composition layer. Both `cli/scrape.go` and
 `menusearch/scrape.go` import it.
 
+### Split: `ExtractMenu` + `StoreMenu`
+
+`runScrapeWith` currently returns only `error` — the `MenuExtractionResult`
+and item count are lost (printed via `fmt.Printf` then discarded). The
+`ScrapeMenuWorker` needs both: the result for the Avro `menu_extraction`
+record, and the count for the `restaurants` row update.
+
+Split `runScrapeWith` into two phases so the worker can write the Avro
+record **between** extraction and storage:
+
+```go
+// ExtractMenu fetches the URL, runs the extraction cascade (JSON-LD →
+// HTML/PDF → image → JS-render), and returns the structured result.
+// This is the "acquire + extract" phase — no embedding, no storage.
+func ExtractMenu(
+    ctx context.Context,
+    rawURL string,
+    fetcher scraper.Fetcher,
+    ex scraper.Extractor,
+    enableVision bool,
+    enableJSRender bool,
+    usePdftotext bool,
+    webagentAdapter string,
+) (*scraper.MenuExtractionResult, error)
+
+// StoreMenu embeds the extracted items and upserts them into the menu
+// store (Weaviate). Returns the item count. This is the "embed + persist"
+// phase.
+func StoreMenu(
+    ctx context.Context,
+    result *scraper.MenuExtractionResult,
+    rawURL string,
+    store server.MenuStore,
+    embedder search.Embedder,
+) (int, error)
+```
+
+The CLI's `runScrape` calls both in sequence (replacing `runScrapeWith`).
+The `ScrapeMenuWorker` calls `ExtractMenu`, writes the Avro record, then
+calls `StoreMenu`.
+
 ### What moves
 
 Three functions move from `cli/scrape.go` to `pipeline/pipeline.go`:
 
-| Function | Current location | Signature |
+| Function | Current location | New signature |
 |---|---|---|
-| `runScrapeWith` | `cli/scrape.go:160` | `func RunScrape(ctx, rawURL, fetcher, ex, store, embedder, enableVision, enableJSRender, usePdftotext, webagentAdapter) error` |
-| `toMenuItems` | `cli/scrape.go:430` | `func ToMenuItems(ctx, result, rawURL, embedder) ([]search.MenuItem, error)` |
-| `extractPDF` | `cli/scrape.go:370` | `func ExtractPDF(ctx, pdfBytes, usePdftotext, enableVision, ex) (string, *scraper.MenuExtractionResult, error)` |
+| `runScrapeWith` | `cli/scrape.go:160` | Split into `ExtractMenu` + `StoreMenu` (above) |
+| `toMenuItems` | `cli/scrape.go:430` | `func ToMenuItems(ctx, result, rawURL, embedder) ([]search.MenuItem, error)` — called by `StoreMenu` |
+| `extractPDF` | `cli/scrape.go:370` | `func ExtractPDF(ctx, pdfBytes, usePdftotext, enableVision, ex) (string, *scraper.MenuExtractionResult, error)` — called by `ExtractMenu` |
 
 The `menuCollectionNS` UUID namespace variable (`cli/scrape.go:426`) moves
 with `ToMenuItems`.
@@ -456,9 +510,12 @@ with `ToMenuItems`.
 
 - Replace the two `fmt.Printf` calls in `runScrapeWith` (lines 338, 354)
   with `slog.Info` — the function is now library code, not CLI code.
-- Export the functions: `RunScrape`, `ToMenuItems`, `ExtractPDF`.
-- `cli/scrape.go`'s `runScrape` (the cobra wrapper) calls `pipeline.RunScrape`.
-- `menusearch/scrape.go`'s `ScrapeMenuWorker.Work` calls `pipeline.RunScrape`.
+  The CLI wrapper (`runScrape`) prints its own summary from the returned
+  `*MenuExtractionResult` + item count.
+- `cli/scrape.go`'s `runScrape` (the cobra wrapper) calls
+  `pipeline.ExtractMenu` then `pipeline.StoreMenu`.
+- `menusearch/scrape.go`'s `ScrapeMenuWorker.Work` calls `ExtractMenu`,
+  writes Avro + HTML bronze, then calls `StoreMenu`.
 
 ### Import safety
 
@@ -722,6 +779,35 @@ The `menutracking` pipeline creates a `*pgxpool.Pool` in
 Postgres + River tables). If `menutracking` is not enabled, `menusearch`
 creates its own pool.
 
+### Server interfaces (avoid `server` → `menusearch` import)
+
+Following the `MenutrackingAdmin` pattern, the `server` package defines
+interfaces that `menusearch` implements. `serve.go` wires the concrete
+implementations.
+
+```go
+// server/restaurant_store.go
+
+// RestaurantStore manages the restaurants table. Implemented by
+// menusearch.store; defined here so server handlers don't import menusearch.
+type RestaurantStore interface {
+    Upsert(ctx context.Context, r Restaurant) error
+    Get(ctx context.Context, camis string) (*Restaurant, error)
+    List(ctx context.Context, status string, search string, limit, offset int) ([]Restaurant, error)
+    UpdateMenuURL(ctx context.Context, camis, menuURL, source string) error
+    UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error
+}
+
+// RiverInserter inserts River jobs. Same interface as menutracking's.
+type RiverInserter interface {
+    Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error)
+}
+```
+
+The `Restaurant` struct is defined in `server` (not `menusearch`) so both
+packages share it without a circular import. The `menusearch` package's
+store implements `server.RestaurantStore` via structural typing.
+
 ### New flags on `serveCmd`
 
 The `ScrapeMenuWorker` needs the same extractor flags as `fodmap scrape`.
@@ -740,6 +826,13 @@ Add these to `serveCmd` (and bind to viper):
 - `--enable-restaurant-pipeline` — gate the menusearch workers (like
   `--enable-pipeline` gates menutracking)
 
+**Important: `serve` flag defaults differ from `scrape`.** The `scrape`
+command defaults `--llm-url` to `http://localhost:8000/v1`. On `serve`,
+`--llm-url` defaults to `""` so we can detect "not configured." The
+extractor is only built when `--enable-restaurant-pipeline` is true. If
+`--llm-url` is empty, the worker uses a basic `OpenAICompatExtractor` with
+its own default; if `--extractor-url` is set, wrap in `ServiceExtractor`.
+
 ### Startup function
 
 ```go
@@ -753,6 +846,25 @@ func StartMenuSearchPipeline(ctx context.Context, cfg MenuSearchPipelineConfig) 
 embedder, genaiClient, and pool (shared from menutracking or newly created).
 `MenuSearchPipelineResult` exposes `Pool` and `Stop` — the pool is wired to
 a `RestaurantStore` for the REST handlers via `srv.SetRestaurantStore(...)`.
+
+### Worker startup ordering
+
+River calls `Work` on a goroutine — there's a race if a job is already
+queued before the client is fully wired. The startup function must follow
+this ordering:
+
+1. Construct worker structs (with `RiverClient: nil` on
+   `DiscoverMenuURLWorker`).
+2. Register workers in `river.NewWorkers()`.
+3. Create `river.NewClient(riverpgxv5.New(pool), ...)` — this does not
+   start processing yet.
+4. Set `discoverWorker.RiverClient = riverClient` — wire the client
+   field so the discover worker can enqueue scrape jobs.
+5. Call `riverClient.Start(ctx)` — now workers begin processing.
+
+This mirrors the existing `menutracking` pattern
+(`menutracking_migrate.go:197-210`: create client → set
+`scrapeWorker.RiverClient` → `Start`).
 
 ---
 
@@ -817,11 +929,25 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
   `no_url_found`. This is expected — not every NYC restaurant has an
   online menu.
 
-- **Scrape jobs are long-running.** `pipeline.RunScrape` can take minutes
-  (especially PDF/OCR via the scraper service). River's `MaxWorkers: 5`
-  bounds concurrency; increase if throughput matters. The
+- **Scrape jobs are long-running.** `pipeline.ExtractMenu` + `StoreMenu`
+  can take minutes (especially PDF/OCR via the scraper service). River's
+  `MaxWorkers: 5` bounds concurrency; increase if throughput matters. The
   `--extractor-url` flag is passed through to the worker so it uses the
   Python service for hard cases.
+
+- **`EventWriter.Write` float64→float32 coercion.** The existing
+  `EventWriter.Write` method (`data/io/event.go:30-38`) blindly coerces
+  all `float64` values to `float32`. This is correct for the
+  `yelp_reviews` schema (Avro `float`) but corrupts `double` fields
+  (`latitude`/`longitude` in `nyc_restaurant`). Verified: `40.75664132086`
+  → `40.75664138793945`. Fix: bypass `EventWriter.Write` for
+  `nyc_restaurant` records — use `ocf.NewEncoder` + `Encode` directly.
+
+- **`RunScrape` signature change.** The original `runScrapeWith` returns
+  only `error` — the `MenuExtractionResult` and item count are lost.
+  Split into `ExtractMenu` (returns `*MenuExtractionResult`) +
+  `StoreMenu` (returns `int` item count) so the worker can write the
+  Avro record between phases and update the DB row with the count.
 
 - **No Postgres backend for menus.** `MenuStore` is Weaviate-only
   (`search/weaviate.go:1066`). The scrape worker stores items in Weaviate,
@@ -868,6 +994,15 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 - **Bronze layer disk growth.** Like the existing `menutracking` bronze
   layer, there is no rotation/GC. Add a River `PeriodicJob` `bronze-gc`
   (delete > N days) before production — same known gap as menutracking.
+  Retry attempts now produce separate files (`{camis}-{attempt}.avro`),
+  which compounds growth — the GC job should account for this.
+
+- **`serve` flag defaults differ from `scrape`.** The `scrape` command
+  defaults `--llm-url` to `http://localhost:8000/v1`. On `serve`,
+  `--llm-url` defaults to `""` so the startup code can detect "not
+  configured" and skip building an extractor. If
+  `--enable-restaurant-pipeline` is true but `--llm-url` is empty, the
+  worker uses a basic `OpenAICompatExtractor` with its own default.
 
 - **Existing menutracking `UniqueOpts` bug.** The existing
   `menutracking_migrate.go:189` uses `ByPeriod: 7 * 24 * time.Hour` without
@@ -879,25 +1014,31 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 ## Verification
 
 - **Unit tests:** `make check` passes (lint + test + build).
+- **Pipeline refactor:** existing `fodmap scrape <url>` command unchanged
+  (calls `pipeline.ExtractMenu` then `pipeline.StoreMenu` — same behavior,
+  no new flags required on `scrape` command). `make check` passes after
+  step 7 (refactor only, no new features).
 - **CSV import:** `fodmap restaurants import --area astoria-lic --limit 10
   --postgres-dsn ...` → 10 rows in DB, 10 discover jobs in River, Avro file
-  in `data/bronze/nyc_opendata/{date}/astoria-lic.avro`.
+  in `data/bronze/nyc_opendata/{date}/astoria-lic.avro` with `event_id`
+  and `created_at` fields (verify `latitude`/`longitude` precision — no
+  `float32` corruption).
 - **Discovery worker:** run worker, verify a row transitions
   `pending_discovery → url_found` with a real `menu_url`. Verify
-  `data/bronze/gemini/{date}/{camis}.avro` exists with `event_id`,
+  `data/bronze/gemini/{date}/{camis}-1.avro` exists with `event_id`,
   `job_id`, `attempt` fields.
 - **Scrape worker:** run worker on a `url_found` row, verify
   `scraped` status + `item_count > 0` + items in Weaviate
   `RestaurantMenu` collection. Verify
-  `data/bronze/restaurants/{date}/{camis}.html` and `{camis}.avro` exist
-  with `discovery_event_id` linking back to the Gemini record.
+  `data/bronze/restaurants/{date}/{camis}-1.html` and `{camis}-1.avro`
+  exist with `discovery_event_id` linking back to the Gemini record.
+- **Retry:** verify a failed discovery (attempt 1) + retry (attempt 2)
+  produces `data/bronze/gemini/{date}/{camis}-1.avro` and
+  `{camis}-2.avro` — both preserved.
 - **REST API:** `POST /api/v1/restaurants` with a JSON body → row created +
   discover job enqueued. `GET /api/v1/restaurants?status=scraped` → list.
   `POST /api/v1/restaurants/{camis}/retry` → status reset + job enqueued.
-- **No regression:** existing `fodmap scrape <url>` command unchanged
-  (calls `pipeline.RunScrape` instead of local `runScrapeWith` — same
-  behavior, no new flags required on `scrape` command);
-  existing `menutracking` pipeline unchanged.
+- **No regression:** existing `menutracking` pipeline unchanged.
 
 ---
 
@@ -906,29 +1047,38 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 1. **Migration:** `000002_restaurants.up.sql` — `restaurants` table.
 2. **Avro schemas:** Add `NYCRestaurantSchema`, `GeminiDiscoverySchema`,
    `MenuExtractionSchema` to `data/schemas/schemas.go`.
-3. **Avro writers:** `menusearch/avro.go` — record builders + `EventWriter`
-   wrappers for each schema.
-4. **Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
-   embedded SQL.
-5. **CSV parser:** `menusearch/csv.go` + tests.
-6. **Area filter + Socrata client:** `menusearch/areas.go`,
+3. **Avro writers:** `menusearch/avro.go` — record builders for each schema.
+   Use `ocf.NewEncoder` directly for `nyc_restaurant` (bypass
+   `EventWriter.Write` float64→float32 coercion on `double` fields). Use
+   `EventWriter` for `gemini_discovery` and `menu_extraction` (no `double`
+   fields).
+4. **Server interfaces:** `server/restaurant_store.go` — `RestaurantStore`
+   + `RiverInserter` interfaces + `Restaurant` struct.
+5. **Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
+   embedded SQL. Store implements `server.RestaurantStore`.
+6. **CSV parser:** `menusearch/csv.go` + tests.
+7. **Area filter + Socrata client:** `menusearch/areas.go`,
    `menusearch/nycdata.go`.
-7. **Refactor:** extract `runScrapeWith` + `toMenuItems` + `extractPDF`
-   from `cli/scrape.go` into `pipeline/pipeline.go`. Replace `fmt.Printf`
-   with `slog.Info`. Update `cli/scrape.go` to call `pipeline.RunScrape`.
+8. **Refactor:** split `runScrapeWith` from `cli/scrape.go` into
+   `pipeline/pipeline.go` as `ExtractMenu` + `StoreMenu` + `ToMenuItems` +
+   `ExtractPDF`. Replace `fmt.Printf` with `slog.Info`. Update
+   `cli/scrape.go` to call `pipeline.ExtractMenu` then `pipeline.StoreMenu`.
    Verify `make check` passes — no behavior change.
-8. **CLI import:** `cli/restaurants.go` — `import --area`, `list`,
+9. **CLI import:** `cli/restaurants.go` — `import --area`, `list`,
    `scrape`, `discover`, `retry` commands.
-9. **Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
-   (job args + `GeminiSearcher` interface + `GeminiMenuSearcher` impl +
-   Avro record writing).
-10. **Scrape worker:** `menusearch/scrape.go` — calls `pipeline.RunScrape`,
-    writes HTML + Avro bronze records.
-11. **Worker registration:** Merge `menusearch` workers into the existing
+10. **Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
+    (job args + `GeminiSearcher` interface + `GeminiMenuSearcher` impl +
+    Avro record writing with `{camis}-{attempt}.avro` filename).
+11. **Scrape worker:** `menusearch/scrape.go` — calls `ExtractMenu`, writes
+    HTML + Avro bronze, then calls `StoreMenu`.
+12. **Worker registration:** Merge `menusearch` workers into the existing
     `StartMenutrackingPipeline` (or a new `StartPipelines` that wraps both).
-    Add new flags to `serveCmd`. Wire `RestaurantStore` to `Server`.
-12. **REST API:** `server/restaurants_handler.go` — CRUD + trigger + retry
+    Add new flags to `serveCmd` (defaults: `--llm-url=""`, not
+    `http://localhost:8000/v1`). Wire `RestaurantStore` to `Server` via
+    `srv.SetRestaurantStore(...)`. Follow startup ordering: construct →
+    register → create client → wire `RiverClient` → `Start`.
+13. **REST API:** `server/restaurants_handler.go` — CRUD + trigger + retry
     endpoints.
-13. **Docs:** update `README.md`, `docs/guides/cli-reference.md`,
+14. **Docs:** update `README.md`, `docs/guides/cli-reference.md`,
     `docs/guides/data-model.md` (Avro schemas), `start.sh`.
-14. **`make check`** passes.
+15. **`make check`** passes.
