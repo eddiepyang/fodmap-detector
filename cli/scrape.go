@@ -46,13 +46,16 @@ func init() {
 	scrapeCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port")
 
 	// LLM extraction backend — any OpenAI-compatible endpoint.
+	// Default targets vLLM (vllm-metal on Mac, vLLM on the 5080): unlike Ollama's
+	// MLX engine, vLLM enforces response_format json_schema, which the extractor
+	// relies on. See docs/guides/llm-serving.md.
 	// --llm-url must include the version segment:
-	//   Ollama:  http://localhost:11434/v1
 	//   vLLM:   http://localhost:8000/v1
+	//   Ollama: http://localhost:11434/v1 (chat only; does not enforce json_schema)
 	//   OpenAI: https://api.openai.com/v1
 	//   Gemini: https://generativelanguage.googleapis.com/v1beta/openai
-	scrapeCmd.Flags().String("llm-url", "http://localhost:11434/v1", "Base URL for the OpenAI-compatible LLM endpoint (include version segment)")
-	scrapeCmd.Flags().String("llm-model", "qwen3.6:35b-mlx", "LLM model name")
+	scrapeCmd.Flags().String("llm-url", "http://localhost:8000/v1", "Base URL for the OpenAI-compatible LLM endpoint (include version segment)")
+	scrapeCmd.Flags().String("llm-model", "qwen3-vl", "LLM model name")
 	scrapeCmd.Flags().String("llm-api-key", "", "API key for cloud backends (OpenAI, Gemini, etc.)")
 	scrapeCmd.Flags().String("llm-reasoning-effort", "none", "Reasoning effort: none | low | medium | high (none = fastest, cost-optimal for Gemini)")
 

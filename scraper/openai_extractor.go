@@ -18,6 +18,9 @@ import (
 //go:embed scrape-prompt.txt
 var menuPrompt string
 
+//go:embed scrape-prompt-vision.txt
+var menuVisionPrompt string
+
 // OpenAICompatExtractor calls any OpenAI-compatible /chat/completions endpoint
 // (Ollama, vLLM, OpenAI, LM Studio, Gemini's /v1beta/openai wrapper, etc.).
 // BaseURL must include the version segment: e.g. "http://localhost:11434/v1" or
@@ -109,7 +112,7 @@ func (e *OpenAICompatExtractor) Extract(ctx context.Context, pageText string) (M
 func (e *OpenAICompatExtractor) ExtractImage(ctx context.Context, pngBytes []byte) (MenuExtractionResult, error) {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	dataURL := "data:image/png;base64," + b64
-	return e.chatJSON(ctx, menuPrompt, &dataURL)
+	return e.chatJSON(ctx, menuVisionPrompt, &dataURL)
 }
 
 // chatJSON sends a chat completion request. If imageDataURL is non-nil the

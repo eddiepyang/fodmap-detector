@@ -33,11 +33,14 @@ Scrape a restaurant menu page (HTML or PDF), extract the dishes and ingredients 
 # Basic scrape (HTML to Markdown via LLM)
 go run . scrape "https://example-restaurant.com/menu" --weaviate localhost:8090
 
-# Scrape an image-based menu or PDF using a local Vision LLM (e.g. Qwen3.6 via Ollama)
+# Scrape an image-based menu or PDF using a local Vision LLM.
+# Use vllm-metal (Mac) or vLLM (5080) — NOT Ollama: Ollama's MLX engine does not
+# enforce response_format json_schema, so structured extraction is unreliable.
+# See docs/guides/llm-serving.md for serving the model.
 go run . scrape "https://example-restaurant.com/menu.pdf" \
   --weaviate localhost:8090 \
-  --llm-url http://localhost:11434/v1 \
-  --llm-model qwen3.6:35b-mlx \
+  --llm-url http://localhost:8000/v1 \
+  --llm-model qwen3-vl \
   --enable-vision
 
 # Route PDF/OCR extraction to the Python scraper service (handles vector-outline
@@ -45,7 +48,7 @@ go run . scrape "https://example-restaurant.com/menu.pdf" \
 # (e.g. cd ../scraper && uv run uvicorn scraper.app:app --port 8765).
 go run . scrape "https://example-restaurant.com/menu.pdf" \
   --weaviate localhost:8090 \
-  --llm-url http://localhost:11434/v1 \
+  --llm-url http://localhost:8000/v1 \
   --extractor-url http://localhost:8765
 
 # Scrape a page whose menu is an embedded image (e.g. a photo of a printed
@@ -53,14 +56,14 @@ go run . scrape "https://example-restaurant.com/menu.pdf" \
 # to the service's OCR path automatically when --extractor-url is set.
 go run . scrape "https://thriftnsipcafe.com/#MENU" \
   --weaviate localhost:8090 \
-  --llm-url http://localhost:11434/v1 \
+  --llm-url http://localhost:8000/v1 \
   --extractor-url http://localhost:8765
 
 # Route JS-rendered pages to the service's webagent (Phase B). Requires a
 # pre-compiled adapter (see ../scraper/src/scraper/webagent/discovery/cli.py).
 go run . scrape "https://js-heavy-site.com/menu" \
   --weaviate localhost:8090 \
-  --llm-url http://localhost:11434/v1 \
+  --llm-url http://localhost:8000/v1 \
   --extractor-url http://localhost:8765 \
   --enable-js-render --webagent-adapter site/target
 ```
@@ -68,8 +71,8 @@ go run . scrape "https://js-heavy-site.com/menu" \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--weaviate` | `localhost:8090` | Weaviate host:port |
-| `--llm-url` | `http://localhost:11434/v1` | Base URL for OpenAI-compatible LLM endpoint |
-| `--llm-model` | `qwen3.6:35b-mlx` | LLM model to use |
+| `--llm-url` | `http://localhost:8000/v1` | Base URL for OpenAI-compatible LLM endpoint (vLLM/vllm-metal; Ollama's MLX can't enforce json_schema) |
+| `--llm-model` | `qwen3-vl` | LLM model to use |
 | `--enable-vision` | `false` | Send PDFs/images to the local vision LLM (pure-Go fallback; alternative to `--extractor-url`) |
 | `--pdftotext` | `false` | Fall back to system `pdftotext` (poppler) for PDF text extraction |
 | `--extractor-url` | `""` | Base URL of the Python scraper service for PDF/OCR + image-embedded menus (e.g. `http://localhost:8765`); empty = pure-Go default |
