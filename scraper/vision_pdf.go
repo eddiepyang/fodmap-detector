@@ -122,7 +122,7 @@ func ExtractPDFVision(ctx context.Context, pdfBytes []byte, ex *OpenAICompatExtr
 
 	var merged MenuExtractionResult
 	for i, page := range pages {
-		result, err := ex.ExtractImage(ctx, page)
+		result, err := ex.ExtractImage(ctx, page, "")
 		if err != nil {
 			return MenuExtractionResult{}, fmt.Errorf("vision extraction page %d: %w", i+1, err)
 		}

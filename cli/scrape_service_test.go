@@ -420,3 +420,296 @@ func (s *imageAndJSStub) ScrapeJS(_ context.Context, _ string, _ map[string]any)
 	s.jsCalls++
 	return s.jsResult, nil
 }
+
+// ── 1b: routing gate — image path reachable when text yields 0 items ──────────
+
+// textEmptyImageStub implements scraper.Extractor + scraper.ImageExtractor.
+// Extract returns 0 items (simulating the text path finding no menu in
+// boilerplate HTML); ExtractImage returns a real menu, proving the image path
+// is reachable even when the HTML has >200 chars of non-noisy content.
+type textEmptyImageStub struct {
+	extractCalls int
+	imgCalls     int
+	imgResult    scraper.MenuExtractionResult
+}
+
+func (s *textEmptyImageStub) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	s.extractCalls++
+	return scraper.MenuExtractionResult{}, nil // text path: 0 items
+}
+
+func (s *textEmptyImageStub) ExtractImage(_ context.Context, _ []byte, _ string) (scraper.MenuExtractionResult, error) {
+	s.imgCalls++
+	return s.imgResult, nil
+}
+
+// boilerplateMenuFetcher serves a non-noisy HTML page (>200 chars, not nav-heavy)
+// that contains a real menu image inside #MENU. The text path will run, return
+// 0 items, and then the new 1b logic must route to the image path — even though
+// the OLD gate (noisy || empty || tooShort<200) would NOT have routed there.
+type boilerplateMenuFetcher struct {
+	imgFetched bool
+}
+
+func (f *boilerplateMenuFetcher) Fetch(_ context.Context, rawURL string) (scraper.FetchResult, error) {
+	if strings.HasSuffix(rawURL, ".png") {
+		f.imgFetched = true
+		return scraper.FetchResult{
+			Body:        io.NopCloser(bytes.NewReader([]byte("fake-png"))),
+			ContentType: "image/png",
+		}, nil
+	}
+	// Boilerplate HTML: >200 chars, not noisy (long prose lines), with a
+	// menu image inside #MENU. ConvertHTMLToMarkdown yields prose, IsTooNoisy
+	// returns false, and len > 200 so the OLD gate would NOT route to image.
+	var b strings.Builder
+	b.WriteString("<html><head><title>Cafe</title></head><body>")
+	b.WriteString("<h1>Welcome to the Cafe</h1>")
+	b.WriteString("<p>")
+	b.WriteString(strings.Repeat("This is marketing boilerplate prose about our lovely cafe. ", 8))
+	b.WriteString("</p>")
+	b.WriteString(`<div id="MENU"><img src="https://example.com/TRIFOLD_MENU.png" width="1024" height="798" alt=""></div>`)
+	b.WriteString("</body></html>")
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(b.String()))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func TestRunScrapeWith_EmptyTextTriggersImageEvenWhenNotNoisy(t *testing.T) {
+	// The G1 fix: needsFallback is no longer the only gate to the image path.
+	// Even when the HTML has >200 chars of non-noisy prose (so the old gate
+	// would skip the fallback), if ex.Extract returns 0 items AND FindMenuImage
+	// found a candidate, the image path must fire.
+	stub := &textEmptyImageStub{
+		imgResult: scraper.MenuExtractionResult{
+			RestaurantName: "Image Cafe",
+			Items: []scraper.MenuEntry{
+				{DishName: "Latte", StatedIngredients: []string{}},
+			},
+		},
+	}
+	fetcher := &boilerplateMenuFetcher{}
+	err := runScrapeWith(
+		context.Background(),
+		"https://example.com/menu",
+		fetcher,
+		stub,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, // enableVision — not needed for the pure-Go image path (1a)
+		false, // enableJSRender
+		false, // usePdftotext
+		"",    // webagentAdapter
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	if stub.extractCalls != 1 {
+		t.Errorf("ex.Extract called %d times; want 1 (text pass must run first)", stub.extractCalls)
+	}
+	if stub.imgCalls != 1 {
+		t.Errorf("ExtractImage called %d times; want 1 (empty text should trigger image path)", stub.imgCalls)
+	}
+	if !fetcher.imgFetched {
+		t.Error("menu image was never fetched")
+	}
+}
+
+func TestRunScrapeWith_NonEmptyTextDoesNotTriggerImage(t *testing.T) {
+	// Regression guard: when text Extract returns real items, the image path
+	// must NOT fire even if a menu image is present — the text pass already won.
+	stub := &textNonEmptyImageStub{
+		textResult: scraper.MenuExtractionResult{
+			Items: []scraper.MenuEntry{{DishName: "Pizza"}},
+		},
+	}
+	fetcher := &boilerplateMenuFetcher{}
+	err := runScrapeWith(
+		context.Background(),
+		"https://example.com/menu",
+		fetcher,
+		stub,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, false, false, "",
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	if stub.imgCalls != 0 {
+		t.Errorf("ExtractImage called %d times; want 0 (text pass had items)", stub.imgCalls)
+	}
+}
+
+type textNonEmptyImageStub struct {
+	imgCalls   int
+	textResult scraper.MenuExtractionResult
+}
+
+func (s *textNonEmptyImageStub) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	return s.textResult, nil
+}
+
+func (s *textNonEmptyImageStub) ExtractImage(_ context.Context, _ []byte, _ string) (scraper.MenuExtractionResult, error) {
+	s.imgCalls++
+	return scraper.MenuExtractionResult{}, nil
+}
+
+// ── Phase 3: generic JS render-and-re-cascade (no per-site adapter) ───────────
+
+// jsShellFetcher implements scraper.Fetcher + scraper.RenderedFetcher.
+// Fetch returns a short JS-shell HTML (<200 chars, so needsFallback fires);
+// FetchRendered returns the hydrated HTML with a real menu the text pass can
+// extract — proving the generic render path runs WITHOUT a webagent adapter.
+type jsShellFetcher struct {
+	renderedCalls int
+}
+
+func (f *jsShellFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	// A minimal JS app shell: the menu hydrates client-side, so the raw HTML
+	// is tiny. needsFallback (tooShort<200) fires.
+	shell := `<html><head><title>Spa</title></head><body><div id="root"></div></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(shell))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func (f *jsShellFetcher) FetchRendered(_ context.Context, _ string) (scraper.FetchResult, error) {
+	f.renderedCalls++
+	// The hydrated DOM: a real menu appeared after JS ran.
+	hydrated := `<html><body><h1>Spa Cafe</h1><h2>Drinks</h2><ul>` +
+		`<li>Espresso</li><li>Latte</li><li>Cappuccino</li></ul></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(hydrated))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func TestRunScrapeWith_GenericJSRenderReCascadesWithoutAdapter(t *testing.T) {
+	// --enable-js-render with NO --webagent-adapter: the generic render path
+	// uses the RenderedFetcher to get hydrated HTML, then re-runs the text
+	// cascade on it. No webagent / per-site adapter is needed.
+	ex := &extractorStub{
+		result: scraper.MenuExtractionResult{
+			RestaurantName: "Spa Cafe",
+			Items: []scraper.MenuEntry{
+				{DishName: "Espresso", StatedIngredients: []string{}},
+				{DishName: "Latte", StatedIngredients: []string{}},
+			},
+		},
+	}
+	fetcher := &jsShellFetcher{}
+	err := runScrapeWith(
+		context.Background(),
+		"https://spa.example.com/menu",
+		fetcher,
+		ex,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, // enableVision
+		true,  // enableJSRender
+		false, // usePdftotext
+		"",    // webagentAdapter — empty: generic render path, not the webagent
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	if fetcher.renderedCalls != 1 {
+		t.Errorf("FetchRendered called %d times; want 1 (generic render must run)", fetcher.renderedCalls)
+	}
+	if ex.called != 1 {
+		t.Errorf("ex.Extract called %d times; want 1 (text pass on rendered HTML)", ex.called)
+	}
+}
+
+func TestRunScrapeWith_GenericJSRenderSkippedWhenFetchRenderedNotImplemented(t *testing.T) {
+	// If the fetcher is a plain Fetcher (not a RenderedFetcher) and no adapter
+	// is set, --enable-js-render must degrade gracefully — no panic, falls
+	// through to the normal text pass on the (empty) raw HTML.
+	ex := &extractorStub{result: scraper.MenuExtractionResult{}}
+	plain := &htmlFetcher{} // implements only Fetch, not FetchRendered
+	err := runScrapeWith(
+		context.Background(),
+		"https://spa.example.com/menu",
+		plain,
+		ex,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, true, false, "",
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	// Text pass still runs on the raw HTML; 0 items is fine (no menu there).
+	if ex.called != 1 {
+		t.Errorf("ex.Extract called %d times; want 1 (text pass on raw HTML)", ex.called)
+	}
+}
+
+func TestRunScrapeWith_WebagentAdapterPreferredOverGenericRender(t *testing.T) {
+	// When both a RenderedFetcher and a webagent adapter are available, the
+	// webagent (per-site) path wins — it has selector-level guarantees the
+	// generic render lacks. FetchRendered must NOT be called.
+	js := &jsRendererWithRendered{
+		jsResult: scraper.MenuExtractionResult{
+			Items: []scraper.MenuEntry{{DishName: "from-webagent"}},
+		},
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://spa.example.com/menu",
+		js, // implements Fetcher, RenderedFetcher, JSRenderer, Extractor
+		js,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false,
+		true, // enableJSRender
+		false,
+		"site/target", // webagentAdapter set — webagent path wins
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	if js.jsCalls != 1 {
+		t.Errorf("ScrapeJS called %d times; want 1 (webagent path should win)", js.jsCalls)
+	}
+	if js.renderedCalls != 0 {
+		t.Errorf("FetchRendered called %d times; want 0 (webagent preferred)", js.renderedCalls)
+	}
+}
+
+// jsRendererWithRendered implements Fetcher, RenderedFetcher, Extractor, and
+// JSRenderer so a single stub can exercise the precedence: webagent > render.
+type jsRendererWithRendered struct {
+	renderedCalls int
+	jsCalls       int
+	jsResult      scraper.MenuExtractionResult
+}
+
+func (f *jsRendererWithRendered) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	shell := `<html><body><div id="root"></div></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(shell))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func (f *jsRendererWithRendered) FetchRendered(_ context.Context, _ string) (scraper.FetchResult, error) {
+	f.renderedCalls++
+	hydrated := `<html><body><h1>Spa</h1><ul><li>Latte</li></ul></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(hydrated))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func (s *jsRendererWithRendered) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	return scraper.MenuExtractionResult{}, nil
+}
+
+func (s *jsRendererWithRendered) ScrapeJS(_ context.Context, _ string, _ map[string]any) (scraper.MenuExtractionResult, error) {
+	s.jsCalls++
+	return s.jsResult, nil
+}

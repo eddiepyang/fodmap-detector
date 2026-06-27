@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -428,6 +429,15 @@ type menuImageCandidate struct {
 	score  int
 }
 
+// minMenuImageScore is the minimum score an <img> must reach to be considered a
+// menu image. Size alone (≥800px) gives +3, which is below the threshold — so a
+// large hero/banner photo with no menu signal is rejected. A real menu image
+// picks up at least one more signal (filename keyword +3, #menu context +2, or
+// alt "menu" +2), clearing the threshold. The post-extraction "0 items ⇒ not
+// a menu" validation (cli/scrape.go) is the real safety net; this heuristic
+// gate only reduces wasted OCR calls on obvious non-menus.
+const minMenuImageScore = 4
+
 // FindMenuImage scans HTML for the largest <img> likely to be an embedded menu
 // image (e.g. a photo of a printed trifold menu). Returns the absolute URL of
 // the best candidate and true if one is found, or "" and false otherwise.
@@ -438,21 +448,37 @@ type menuImageCandidate struct {
 //   - Context: the <img> is inside an element with id containing "menu".
 //   - Alt: alt is empty (text menus use descriptive alt) or contains "menu".
 //
-// Excludes: images inside <header>/<footer>/<nav>, and tiny icons (width < 100).
-// pageURL is used to resolve relative src values into absolute URLs.
+// Excludes: images inside <header>/<footer>/<nav>, tiny icons (width < 100),
+// and images whose filename/alt screams non-menu (logo, hero, banner, press,
+// award) — the penalty drops them below minMenuImageScore even if alt contains
+// "menu". pageURL is used to resolve relative src values into absolute URLs.
 func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool) {
+	cands, ok := FindMenuImages(htmlBytes, contentType, pageURL)
+	if !ok {
+		return "", false
+	}
+	return cands[0], true
+}
+
+// FindMenuImages is the top-N variant of FindMenuImage. It returns the menu-
+// image candidates above minMenuImageScore in descending score order (ties
+// broken by largest dimensions), as absolute URLs. The caller may try them in
+// order until one yields extracted items (bounded N, e.g. 2), since pages mix a
+// hero photo with a real menu image. Returns (urls, true) iff at least one
+// candidate clears the threshold.
+func FindMenuImages(htmlBytes []byte, contentType, pageURL string) ([]string, bool) {
 	cr, err := charset.NewReader(bytes.NewReader(htmlBytes), contentType)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	doc, err := html.Parse(cr)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 
 	page, err := url.Parse(pageURL)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 
 	var candidates []menuImageCandidate
@@ -472,7 +498,7 @@ func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool)
 			}
 			if n.Data == "img" {
 				if !inSkip {
-					if c := evaluateImg(n, inMenuCtx); c.score > 0 {
+					if c := evaluateImg(n, inMenuCtx); c.score >= minMenuImageScore {
 						candidates = append(candidates, c)
 					}
 				}
@@ -486,23 +512,30 @@ func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool)
 	walk(doc, false, false)
 
 	if len(candidates) == 0 {
-		return "", false
+		return nil, false
 	}
 
-	// Pick the highest-scoring candidate; break ties by largest dimensions.
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.score > best.score ||
-			(c.score == best.score && c.width*c.height > best.width*best.height) {
-			best = c
+	// Sort by score desc, then by largest dimensions desc (deterministic order
+	// for equal scores so the top-N selection is stable across runs).
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
 		}
-	}
+		return candidates[i].width*candidates[i].height > candidates[j].width*candidates[j].height
+	})
 
-	abs := resolveURL(best.src, page)
-	if abs == "" {
-		return "", false
+	urls := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		abs := resolveURL(c.src, page)
+		if abs == "" {
+			continue
+		}
+		urls = append(urls, abs)
 	}
-	return abs, true
+	if len(urls) == 0 {
+		return nil, false
+	}
+	return urls, true
 }
 
 // evaluateImg scores an <img> node against the menu-image heuristics.
@@ -556,13 +589,29 @@ func evaluateImg(n *html.Node, inMenuCtx bool) menuImageCandidate {
 		c.score += 3
 	}
 
-	// Filename heuristic.
+	// Filename heuristic: positive keywords.
 	lower := strings.ToLower(c.src)
-	for _, kw := range []string{"menu", "trifold", "menu-card", "food", "drink"} {
+	for _, kw := range []string{"menu", "trifold", "menu-card", "food-menu", "drink-menu", "food", "drink"} {
 		if strings.Contains(lower, kw) {
 			c.score += 3
 			break
 		}
+	}
+
+	// Filename heuristic: negative keywords. A logo/hero/banner/press/award
+	// image is almost never a menu even if its alt says "menu" (e.g. a press
+	// badge labeled "menu of awards"). The penalty is large enough to cancel
+	// the size bonus plus one alt bonus, dropping the image below threshold.
+	for _, kw := range []string{"logo", "hero", "banner", "press", "award", "badge"} {
+		if strings.Contains(lower, kw) {
+			c.score -= 6
+			break
+		}
+	}
+
+	// .svg files are vector logos/icons, not menu photos — reject outright.
+	if strings.HasSuffix(lower, ".svg") {
+		return menuImageCandidate{}
 	}
 
 	// Context heuristic: inside an element with id containing "menu".

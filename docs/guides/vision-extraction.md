@@ -15,8 +15,12 @@
   engine (silently ignored). See [llm-serving.md](llm-serving.md).
 - **The hard part is semantic, not OCR.** The model reads the pixels fine; the
   failure mode is mis-*structuring* — copying a neighboring item's name into a
-  dish's `stated_ingredients`. That is the FODMAP-critical risk and is handled
+  dish's `stated_ingredients`. That is a FODMAP-critical risk and is handled
   by prompt rules, not by a bigger model alone.
+- **A non-menu image can hallucinate a whole menu.** Handed a branded *product
+  photo* (no readable menu text), the model invented a plausible item list. The
+  prompt now opens with an "IS THIS A MENU?" guard that returns zero items unless
+  legible menu text is present. See [Real-world test](#real-world-test-9-nyc-restaurants).
 - The vision prompt lives in
   [`scraper/scrape-prompt-vision.txt`](../../scraper/scrape-prompt-vision.txt)
   (used by `ExtractImage`); the text prompt in
@@ -65,6 +69,123 @@ coverage high.
 > safety verdict. The prompt deliberately trades recall on ingredients for zero
 > fabrication. `json_schema` enforces output *shape*, never *truth* — it cannot
 > catch a hallucinated ingredient.
+>
+> **Scope of the "zero fabrication" claim.** It holds for the `stated_ingredients`
+> field *on a real menu image* — the model does not copy neighbors or invent
+> ingredients for a transcribed dish. It does **not** automatically cover
+> *whole-item* invention from a *non-menu* image: a fourth rule (the "IS THIS A
+> MENU?" guard, below) is what prevents that, and it must be re-verified whenever
+> the prompt changes.
+
+## Real-world test (9 NYC restaurants)
+
+Tested the shipping cascade against 9 live NYC restaurants (via a harness calling
+the real `scraper` functions — `ConvertHTMLToMarkdown`, `FindMenuImage`,
+`ExtractImage`, `Extract` — minus the Weaviate/embed step). Findings:
+
+- **Coverage is fetch-bound, not extraction-bound.** 3/9 had no website; the other
+  6 are JS-rendered (Wix/Squarespace/React) whose raw HTML is marketing boilerplate.
+  Pure-Go text extraction correctly returned **0 items with 0 fabrication** — but
+  also 0 real menus. The menu content lives behind JS or in an image.
+- **Fallback-gate gap.** `needsFallback = noisy || empty || tooShort(<200 chars)`.
+  JS homepages emit *enough* boilerplate to pass the gate, so the cascade never
+  tries the image path — even when `FindMenuImage` found a real menu image
+  (e.g. a café's `TRIFOLD_MENU…png`). Bypassing only the gate and routing that
+  image through `ExtractImage` extracted a full menu. **Fix idea:** when
+  `FindMenuImage` finds a candidate *and* text extraction yields 0 items, route to
+  the image regardless of char count.
+- **`FindMenuImage` precision is low (~1/5 here).** It surfaced hero food photos,
+  a press badge, and a nav SVG alongside the one real menu. Needs a tighter signal
+  (filename/aspect-ratio) or post-extraction validation.
+- **Branded-photo fabrication (the safety failure).** Two of the surfaced images
+  were non-menu *food photos*. A roast-chicken hero shot → **0 items** (safe). But
+  a donut-shop marketing photo with the brand wordmark visible → **26 fabricated
+  flavors** (Red Velvet, Crème Brûlée, Birthday Cake…), none readable in the image.
+  The model filled in a "typical" menu from the brand + product category. The
+  anti-cross-attribution / empty-is-normal rules did not catch this — they govern
+  *ingredients within* a menu, not *whether the image is a menu at all*.
+
+**Fix (in repo):** the vision prompt now opens with an **"IS THIS A MENU?"** rule —
+transcribe only legible menu text; a photo/banner/logo with no readable item list
+returns an empty `items` array; never invent items from branding or product type.
+Re-verified: the donut photo went **26 → 0**, the chicken photo stayed **0**, and a
+real dense trifold menu still extracted its full item list with no invented
+ingredients.
+
+### Phase 1: the detector now reaches image menus with no service dependency
+
+The gaps above are closed in code (see
+[../plans/vision-extraction-gaps-plan.md](../plans/vision-extraction-gaps-plan.md)):
+
+- **The pure-Go extractor now satisfies `ImageExtractor`.** `ExtractImage` was
+  widened to a 3-arg signature `(ctx, bytes, mime)` and normalizes any decodable
+  image (PNG/JPEG/GIF/WEBP via `image.Decode` + `golang.org/x/image/webp`) to PNG
+  before sending. So `--enable-vision` alone — no `--extractor-url` — drives the
+  Phase C image path. AVIF is not yet supported by a pure-Go decoder (see the
+  plan's Risks); request the `?format=png` CDN variant as the mitigation.
+- **The routing gate no longer strands discovered menu images.** The cascade
+  now runs a *post-text-empty* image pass: even when JS-homepage boilerplate
+  passes the noisy/empty/tooShort gate, if `ex.Extract` returns 0 items and
+  `FindMenuImages` found a candidate, the image is fetched and OCR'd. This is
+  the Wix/Squarespace common case.
+- **`FindMenuImage` precision tightened.** A `minMenuImageScore` threshold
+  rejects size-only hero/banner photos; filename penalties (`logo`, `hero`,
+  `banner`, `press`, `award`, `badge`) and a `.svg` reject drop non-menus even
+  when alt contains "menu". A new `FindMenuImages` returns candidates in score
+  order; the cascade tries up to 2, so a hero photo + a real menu image on the
+  same page still reaches the menu.
+- **Post-extraction validation is the safety net.** If the image path returns
+  0 items (the "IS THIS A MENU?" guard fired), nothing is indexed — boilerplate
+  text is never promoted to a menu.
+
+**Re-test against the 6 reachable NYC sites (2026-06-27):**
+
+| Restaurant | Text items | Image items | Notes |
+|---|---|---|---|
+| THRIFT N SIP | 0 | **105** | G1 fix routed the trifold image → full menu, no fabrication |
+| CHICKEN AT LAST | 0 | 0 | hero photos → guard fired on both candidates |
+| NICE DAY CHINESE | 0 | 0 | hero photos → guard fired on both candidates |
+| JETBLUE LOUNGE | 0 | 0 | brand image → guard fired |
+| DOUGHNUTTERY | 0 | 0 | the 26-fabrication failure → now **0** (safe) |
+| WORLD SPA | 0 | 0 | no menu image candidate (JS-rendered; Phase B) |
+
+Net: the donut-photo fabrication failure is closed (26 → 0), the one reachable
+real menu (THRIFT) extracts end-to-end with `--enable-vision` and no service,
+and the four non-menu image sites all return 0 and index nothing.
+
+### Phase 3: generic JS render-and-re-cascade (no per-site adapter)
+
+The Phase 1 measurement showed image-reachability is ~1/6 reachable sites —
+more sites are JS-rendered than image-reachable. The original plan deferred JS
+rendering as "per-site webagent adapters," but live testing reframed it: most
+JS sites just hydrate the menu into the DOM, so a generic render-and-re-cascade
+covers them without per-site authoring.
+
+- **`ChromeRenderedFetcher`** (`scraper/jsrender.go`) implements
+  `RenderedFetcher` via chromedp + a headless Chrome found in the standard
+  locations. It navigates, waits for `body`, sleeps briefly for post-load
+  XHRs, and returns the hydrated `outerHTML`.
+- **`--enable-js-render` with no `--webagent-adapter`** uses this fetcher:
+  when the text cascade finds nothing (`needsFallback`), `FetchRendered`
+  runs, the rendered HTML re-converts to Markdown, menu-image candidates are
+  re-scanned, and the text/image cascade re-runs on the hydrated DOM.
+- **`--enable-js-render` with `--webagent-adapter`** keeps the per-site
+  webagent path (preferred — selector-level guarantees). Reserved for
+  interaction-heavy sites (click-to-reveal, infinite scroll, auth).
+
+**Re-test (WORLD SPA, 2026-06-27):** raw HTML was 729 chars of boilerplate
+(0 menu via the image path); the rendered DOM yielded **54 items** via the
+text cascade, with real `stated_ingredients` populated and the restaurant name
+read correctly. No per-site adapter, no service, no Weaviate.
+
+| Restaurant | Raw text chars | Rendered items | Notes |
+|---|---|---|---|
+| WORLD SPA | 729 | **54** | generic render → text cascade on hydrated DOM |
+
+Per-site webagent adapters remain available (the service's
+`AgentDiscoveryLLM` drafts a validated `Adapter` from DOM + network log +
+screenshot, then human review) for the minority of sites that need
+interaction-level scripting.
 
 ## External benchmark: froggeric's VLM repeat-sampling report
 
@@ -131,3 +252,5 @@ rules above — the configuration that produced zero fabrications.
 - [cli-reference.md](cli-reference.md) — `scrape` flags and defaults.
 - [scraper-pipeline-plan.md](../plans/scraper-pipeline-plan.md) — pipeline + test
   strategy this feeds.
+- `scripts/e2e_vision.sh` / `scripts/e2e_jsrender.sh` — end-to-end harnesses for
+  the image and JS-render paths (slow, network + LLM dependent; not in `make check`).

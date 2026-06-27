@@ -568,3 +568,95 @@ func TestFindMenuImage_MenuContextBonusOnlyInsideDiv(t *testing.T) {
 	assert.Equal(t, "https://cafe.com/inside.png", got,
 		"image inside #MENU should win over equally-sized sibling outside it")
 }
+
+// ── FindMenuImage precision (G3): live false-positive shapes ──────────────────
+
+func TestFindMenuImage_RejectsHeroPhotoWithNoMenuSignal(t *testing.T) {
+	// A large hero food photo with no menu keyword and no #menu context. With
+	// the min-score threshold, size alone is no longer enough to surface it.
+	html := `<html><body>
+<img src="/uploads/hero-2024.jpg" width="1920" height="1080" alt="Delicious food">
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "hero photo with no menu signal should be rejected by the min-score threshold")
+}
+
+func TestFindMenuImage_RejectsPressBadgeEvenWithMenuAlt(t *testing.T) {
+	// A press-badge image whose alt happens to contain "menu" but whose
+	// filename screams press/award must be penalized below the threshold.
+	html := `<html><body>
+<img src="/press/award-badge-2023.png" width="1200" height="1200" alt="menu of awards">
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "press/award badge should be rejected even if alt contains 'menu'")
+}
+
+func TestFindMenuImage_RejectsSvgLogo(t *testing.T) {
+	html := `<html><body>
+<img src="/assets/logo.svg" width="400" height="200" alt="logo">
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, ".svg logo should be rejected")
+}
+
+func TestFindMenuImage_RejectsBannerWithNoMenuSignal(t *testing.T) {
+	html := `<html><body>
+<img src="/banners/home-banner.jpg" width="1600" height="600" alt="">
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "banner with no menu signal should be rejected")
+}
+
+func TestFindMenuImage_RealTrifoldStillChosen(t *testing.T) {
+	// The live true-positive shape: a TRIFOLD_MENU png inside a #menu container
+	// with empty alt. Must still be chosen after the heuristics tighten.
+	html := `<html><body>
+<div id="MENU">
+  <h2>Menu</h2>
+  <p>Marketing text</p>
+  <img src="/wp-content/uploads/2026/03/TRIFOLD_MENU_8x11_BC-1024x798.png"
+       width="1024" height="798" alt="">
+</div>
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	require.True(t, ok, "real trifold menu inside #MENU must still be found")
+	assert.Equal(t, "https://cafe.com/wp-content/uploads/2026/03/TRIFOLD_MENU_8x11_BC-1024x798.png", got)
+}
+
+func TestFindMenuImage_LogoPenaltyBeatsMenuAltBonus(t *testing.T) {
+	// Two equally-sized images, both with "menu" in alt. One is a logo
+	// (filename contains "logo"), the other a real menu image. The logo
+	// penalty must drop it below the real menu image.
+	html := `<html><body>
+<img src="/img/logo-menu.png" width="1024" height="800" alt="menu">
+<img src="/img/TRIFOLD_MENU.png" width="1024" height="800" alt="menu">
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	require.True(t, ok)
+	assert.Equal(t, "https://cafe.com/img/TRIFOLD_MENU.png", got,
+		"real menu image should beat logo-with-menu-alt")
+}
+
+// ── FindMenuImages (plural): top-N candidates ─────────────────────────────────
+
+func TestFindMenuImages_ReturnsCandidatesInScoreOrder(t *testing.T) {
+	// A page with a real trifold (high score) and a hero photo (low/zero).
+	// The trifold must come first; the hero may appear after if it clears the
+	// threshold (here it does not, since size alone is below threshold).
+	html := `<html><body>
+<div id="MENU">
+  <img src="/TRIFOLD_MENU.png" width="1024" height="798" alt="">
+</div>
+<img src="/hero-2024.jpg" width="1920" height="1080" alt="Delicious food">
+</body></html>`
+	cands, ok := FindMenuImages([]byte(html), "text/html", "https://cafe.com/")
+	require.True(t, ok)
+	require.NotEmpty(t, cands)
+	assert.Equal(t, "https://cafe.com/TRIFOLD_MENU.png", cands[0])
+}
+
+func TestFindMenuImages_EmptyWhenNoCandidatesAboveThreshold(t *testing.T) {
+	html := `<html><body><img src="/hero.jpg" width="1920" height="1080" alt="food"></body></html>`
+	_, ok := FindMenuImages([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok)
+}
