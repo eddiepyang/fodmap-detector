@@ -12,6 +12,7 @@ formatters:
       - builtin$
       - examples$
       - vendor$
+      - scripts/
 linters:
   exclusions:
     generated: lax
@@ -19,3 +20,4 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - scripts/
