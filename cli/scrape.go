@@ -46,13 +46,16 @@ func init() {
 	scrapeCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port")
 
 	// LLM extraction backend — any OpenAI-compatible endpoint.
+	// Default targets vLLM (vllm-metal on Mac, vLLM on the 5080): unlike Ollama's
+	// MLX engine, vLLM enforces response_format json_schema, which the extractor
+	// relies on. See docs/guides/llm-serving.md.
 	// --llm-url must include the version segment:
-	//   Ollama:  http://localhost:11434/v1
 	//   vLLM:   http://localhost:8000/v1
+	//   Ollama: http://localhost:11434/v1 (chat only; does not enforce json_schema)
 	//   OpenAI: https://api.openai.com/v1
 	//   Gemini: https://generativelanguage.googleapis.com/v1beta/openai
-	scrapeCmd.Flags().String("llm-url", "http://localhost:11434/v1", "Base URL for the OpenAI-compatible LLM endpoint (include version segment)")
-	scrapeCmd.Flags().String("llm-model", "qwen3.6:35b-mlx", "LLM model name")
+	scrapeCmd.Flags().String("llm-url", "http://localhost:8000/v1", "Base URL for the OpenAI-compatible LLM endpoint (include version segment)")
+	scrapeCmd.Flags().String("llm-model", "qwen3-vl", "LLM model name")
 	scrapeCmd.Flags().String("llm-api-key", "", "API key for cloud backends (OpenAI, Gemini, etc.)")
 	scrapeCmd.Flags().String("llm-reasoning-effort", "none", "Reasoning effort: none | low | medium | high (none = fastest, cost-optimal for Gemini)")
 
@@ -145,7 +148,22 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		ex = oaex
 	}
 
-	fetcher := scraper.NewHTTPFetcher(ignoreRobots)
+	var fetcher scraper.Fetcher = scraper.NewHTTPFetcher(ignoreRobots)
+
+	// When --enable-js-render is set without a --webagent-adapter, use the
+	// generic render-and-re-cascade path: a headless Chrome fetcher whose
+	// FetchRendered lets the cascade re-run text/image extraction on hydrated
+	// DOM. With an adapter, the per-site webagent path is used instead (it has
+	// selector-level guarantees the generic render lacks), and a plain
+	// HTTPFetcher suffices — the webagent owns its own browser.
+	if enableJSRender && webagentAdapter == "" {
+		cf := scraper.NewChromeRenderedFetcher(ctx, ignoreRobots)
+		defer func() {
+			cf.Close()
+		}()
+		fetcher = cf
+		slog.Info("using headless Chrome for JS rendering (generic path; no adapter)")
+	}
 
 	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder,
 		enableVision, enableJSRender, usePdftotext, webagentAdapter)
@@ -211,6 +229,12 @@ func runScrapeWith(
 		// second ex.Extract pass below.
 		var pdfResult *scraper.MenuExtractionResult
 
+		// menuImgCandidates holds menu-image URLs found in the HTML (empty for
+		// the PDF branch). It is reused by both the noisy/short pre-text
+		// fallback and the post-text-empty image pass (the G1 fix), so the HTML
+		// is scanned once.
+		var menuImgCandidates []string
+
 		if strings.Contains(ct, "pdf") {
 			text, structured, err := extractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
 			if err != nil {
@@ -242,43 +266,42 @@ func runScrapeWith(
 			tooShort := len([]rune(strings.TrimSpace(md))) < 200
 			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort
 
+			// Find menu-image candidates once. The list is reused both for the
+			// noisy/short pre-text fallback (below) and for the post-text-empty
+			// image pass (the G1 fix), so we don't re-scan the HTML.
+			menuImgCandidates, _ = scraper.FindMenuImages(bodyBytes, ct, rawURL)
+
 			if needsFallback {
 				// Phase C: check for a menu image embedded in the HTML.
 				// Runs before the JS-render check — image-embedded menus are
 				// more common than JS-rendered SPAs and don't need an adapter.
-				if imgURL, found := scraper.FindMenuImage(bodyBytes, ct, rawURL); found {
+				if len(menuImgCandidates) > 0 {
 					if iex, ok := ex.(scraper.ImageExtractor); ok {
-						slog.Info("found menu image; routing to service OCR", "url", rawURL, "img", imgURL)
-						imgRes, err := fetcher.Fetch(ctx, imgURL)
-						if err != nil {
-							return fmt.Errorf("fetching menu image %s: %w", imgURL, err)
+						if imgResult, ran, err := extractFromImageURL(ctx, fetcher, iex, menuImgCandidates); ran {
+							if err != nil {
+								return err
+							}
+							result = imgResult
+							result.SourceURL = rawURL
+							result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+							if result.City == "" && jsonldMeta.City != "" {
+								result.City = jsonldMeta.City
+								result.State = jsonldMeta.State
+							}
+							if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
+								result.RestaurantName = jsonldMeta.RestaurantName
+							}
+							goto tier1Done
 						}
-						imgBytes, err := io.ReadAll(imgRes.Body)
-						_ = imgRes.Body.Close()
-						if err != nil {
-							return fmt.Errorf("reading menu image %s: %w", imgURL, err)
-						}
-						imgResult, imgErr := iex.ExtractImage(ctx, imgBytes, imgRes.ContentType)
-						if imgErr != nil {
-							return fmt.Errorf("service image OCR: %w", imgErr)
-						}
-						result = imgResult
-						result.SourceURL = rawURL
-						result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
-						if result.City == "" && jsonldMeta.City != "" {
-							result.City = jsonldMeta.City
-							result.State = jsonldMeta.State
-						}
-						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
-							result.RestaurantName = jsonldMeta.RestaurantName
-						}
-						goto tier1Done
+					} else {
+						slog.Warn("page appears to contain a menu image; set --enable-vision or --extractor-url to OCR it",
+							"url", rawURL, "img", menuImgCandidates[0])
 					}
-					slog.Warn("page appears to contain a menu image; set --extractor-url to OCR it",
-						"url", rawURL, "img", imgURL)
 				}
 
-				// Phase B: route JS-only pages to the webagent.
+				// Phase B: route JS-only pages to the webagent (per-site adapter).
+				// Preferred over the generic render path when an adapter exists
+				// because it has selector-level guarantees.
 				if enableJSRender && webagentAdapter != "" {
 					if jsr, ok := ex.(scraper.JSRenderer); ok {
 						slog.Info("HTML too noisy; routing to webagent", "url", rawURL, "adapter", webagentAdapter)
@@ -301,6 +324,35 @@ func runScrapeWith(
 						goto tier1Done
 					}
 				}
+
+				// Phase B (generic): --enable-js-render with NO adapter. Render
+				// the page in a headless browser, then re-cascade (text/image)
+				// on the hydrated HTML. This covers Wix/Squarespace/React sites
+				// whose menu hydrates into the DOM without per-site authoring.
+				// The fetcher must implement RenderedFetcher (e.g. chromedp); a
+				// plain HTTPFetcher silently skips this and falls through.
+				if enableJSRender && webagentAdapter == "" {
+					if rf, ok := fetcher.(scraper.RenderedFetcher); ok {
+						slog.Info("HTML too noisy; rendering JS and re-cascading", "url", rawURL)
+						rRes, rErr := rf.FetchRendered(ctx, rawURL)
+						if rErr == nil {
+							rBytes, rReadErr := io.ReadAll(rRes.Body)
+							_ = rRes.Body.Close()
+							if rReadErr == nil {
+								rCT := rRes.ContentType
+								if rMD, convErr := scraper.ConvertHTMLToMarkdown(bytes.NewReader(rBytes), rCT); convErr == nil {
+									// Re-scan the rendered DOM for menu images so the
+									// post-text-empty image pass (1b) can reach a menu
+									// image that only appears after hydration.
+									menuImgCandidates, _ = scraper.FindMenuImages(rBytes, rCT, rawURL)
+									md = rMD
+								}
+							}
+						} else {
+							slog.Warn("JS render failed; continuing with raw HTML", "url", rawURL, "err", rErr)
+						}
+					}
+				}
 			}
 			pageText = md
 		}
@@ -313,6 +365,26 @@ func runScrapeWith(
 			result, err = ex.Extract(ctx, pageText)
 			if err != nil {
 				return fmt.Errorf("LLM extraction: %w", err)
+			}
+			// G1 fix: when the text pass finds no menu (0 items) but the page
+			// has a menu-image candidate, OCR the image and prefer it. This
+			// reaches image-only menus on text-heavy marketing pages whose
+			// boilerplate passes the noisy/empty/tooShort gate. The image
+			// path's "IS THIS A MENU?" guard is the safety net: a non-menu
+			// photo returns 0 items and we do not index boilerplate text.
+			if len(result.Items) == 0 && len(menuImgCandidates) > 0 {
+				if iex, ok := ex.(scraper.ImageExtractor); ok {
+					if imgResult, ran, imgErr := extractFromImageURL(ctx, fetcher, iex, menuImgCandidates); ran {
+						if imgErr != nil {
+							return imgErr
+						}
+						if len(imgResult.Items) > 0 {
+							slog.Info("text pass empty; routing to menu image OCR",
+								"url", rawURL, "items", len(imgResult.Items))
+							result = imgResult
+						}
+					}
+				}
 			}
 		}
 		result.SourceURL = rawURL
@@ -421,6 +493,58 @@ func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision
 
 // menuCollectionNS is the UUID namespace for deterministic menu item IDs.
 var menuCollectionNS = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+// maxMenuImageAttempts bounds how many menu-image candidates we fetch+OCR when
+// a page mixes a hero photo with a real menu image. Candidates are tried in
+// descending score order; the first that yields items wins. Bounded small to
+// cap LLM cost — most pages have at most one real menu image.
+const maxMenuImageAttempts = 2
+
+// extractFromImageURL fetches and OCRs menu-image candidates via iex. It tries
+// candidates in score order until one yields items (bounded by
+// maxMenuImageAttempts), since pages mix a hero photo with a real menu image.
+//
+// Returns (result, ran, err):
+//   - ran=true iff at least one candidate was fetched and OCR'd.
+//   - result holds the first non-empty extraction; if every candidate's "IS
+//     THIS A MENU?" guard returns 0 items, result is the last empty extraction
+//     and ran=true (the caller treats 0 items as "no menu found" and does not
+//     index boilerplate).
+//   - err is non-nil only on a hard fetch/OCR failure (the caller surfaces it).
+func extractFromImageURL(ctx context.Context, fetcher scraper.Fetcher, iex scraper.ImageExtractor, candidates []string) (scraper.MenuExtractionResult, bool, error) {
+	attempts := len(candidates)
+	if attempts > maxMenuImageAttempts {
+		attempts = maxMenuImageAttempts
+	}
+	var last scraper.MenuExtractionResult
+	ran := false
+	for i := 0; i < attempts; i++ {
+		imgURL := candidates[i]
+		slog.Info("routing to menu image OCR", "url", imgURL, "candidate", i+1, "of", attempts)
+		imgRes, err := fetcher.Fetch(ctx, imgURL)
+		if err != nil {
+			return scraper.MenuExtractionResult{}, false, fmt.Errorf("fetching menu image %s: %w", imgURL, err)
+		}
+		imgBytes, err := io.ReadAll(imgRes.Body)
+		_ = imgRes.Body.Close()
+		if err != nil {
+			return scraper.MenuExtractionResult{}, false, fmt.Errorf("reading menu image %s: %w", imgURL, err)
+		}
+		result, err := iex.ExtractImage(ctx, imgBytes, imgRes.ContentType)
+		if err != nil {
+			return scraper.MenuExtractionResult{}, false, fmt.Errorf("image OCR %s: %w", imgURL, err)
+		}
+		ran = true
+		last = result
+		if len(result.Items) > 0 {
+			return result, true, nil
+		}
+		// 0 items ⇒ the "IS THIS A MENU?" guard fired on this candidate; try
+		// the next one (it may be the real menu image behind a hero photo).
+		slog.Info("menu image candidate yielded 0 items (not a menu)", "url", imgURL)
+	}
+	return last, ran, nil
+}
 
 // toMenuItems converts a MenuExtractionResult to []search.MenuItem, embedding
 // each item's text vector.
