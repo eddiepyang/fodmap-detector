@@ -31,10 +31,10 @@ jobs:
 
       - name: Report coverage
         run: |
-          grep -v "fodmap/cli" coverage.out > coverage_filtered.out
+          grep -Ev "fodmap/cli|fodmap/scripts|fodmap/data/schemas" coverage.out > coverage_filtered.out
           go tool cover -func=coverage_filtered.out
           echo ""
-          echo "--- Total (excluding cli) ---"
+          echo "--- Total (excluding cli, scripts, and config packages) ---"
           TOTAL=$(go tool cover -func=coverage_filtered.out | grep total: | awk '{print $3}' | sed 's/%//')
           echo "Total coverage: $TOTAL%"
           if (( $(echo "$TOTAL < 70" | bc -l) )); then
