@@ -33,6 +33,9 @@ else
 	}
 endif
 	@echo "    golangci-lint: $$(golangci-lint --version 2>/dev/null || echo 'not found')"
+	@echo "==> Installing gopls (Go LSP server)..."
+	@which gopls > /dev/null 2>&1 || go install golang.org/x/tools/gopls@latest
+	@echo "    gopls: $$(gopls version 2>/dev/null || echo 'not found')"
 
 ## Ollama — install if missing, then pull the embedding model
 setup-ollama:
