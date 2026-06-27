@@ -1,6 +1,7 @@
 # Scraper Pipeline Plan
 
-**Status:** Completed
+**Status:** Completed — extended by the [Scraper Service Integration Plan](scraper-service-integration-plan.md) (Phases A/B/C: PDF/OCR, image-embedded menus, and JS-rendered pages route to the Python `scraper` service when `--extractor-url` is set).
+
 ## Context
 Add a `fodmap scrape <url>` CLI command that fetches a restaurant menu page (HTML or PDF), converts it to a Markdown/text representation, calls a configurable OpenAI-compatible LLM endpoint (Ollama, vLLM, OpenAI, Gemini's `/v1beta/openai` wrapper, or any compatible server) to extract structured menu items (dish + ingredients), embeds the items, and upserts them into a **new dedicated `RestaurantMenu` collection** in the existing search backend so they are immediately searchable by the FODMAP chat without polluting the `YelpReview` collection.
 

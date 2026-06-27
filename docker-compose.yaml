@@ -28,6 +28,22 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
 
+  # Python scraper service for PDF/OCR + webagent (Phase A/B).
+  # Disabled by default — uncomment to enable routed PDF/OCR extraction.
+  # Requires the scraper repo at ../scraper with a built image, or run it
+  # outside Docker via START_SCRAPER=true ./start.sh.
+  # scraper:
+  #   image: scraper:latest
+  #   build:
+  #     context: ../scraper
+  #   ports:
+  #     - "127.0.0.1:8765:8765"
+  #   environment:
+  #     SCRAPER_OCR_BACKEND: "stub"  # auto | mlx | vllm | stub
+  #     # SCRAPER_API_KEY: "set-a-secret"  # bearer auth for /v1 (empty = no auth)
+  #     # SCRAPER_WEBAGENT_ENABLED: "true"
+  #     # SCRAPER_WEBAGENT_ADAPTERS_DIR: "src/scraper/webagent/adapters"
+
 volumes:
   postgres_data:
   weaviate_data:
