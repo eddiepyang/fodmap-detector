@@ -58,9 +58,24 @@ func init() {
 
 	// Fetch options
 	scrapeCmd.Flags().Bool("ignore-robots", false, "Skip robots.txt check")
-	scrapeCmd.Flags().Bool("enable-js-render", false, "Tier 3: render JS-only pages via chromedp (requires Chrome)")
-	scrapeCmd.Flags().Bool("enable-vision", false, "Send PDFs/images to the vision LLM instead of text extraction")
+	scrapeCmd.Flags().Bool("enable-js-render", false, "Route noisy/JS-only HTML pages to the scraper service's webagent (requires --extractor-url + --webagent-adapter)")
+	scrapeCmd.Flags().Bool("enable-vision", false, "Send PDFs/images to the vision LLM instead of text extraction (pure-Go fallback; mutually alternative with --extractor-url)")
 	scrapeCmd.Flags().Bool("pdftotext", false, "Use system pdftotext (poppler) for PDF text extraction")
+
+	// Scraper service (Phase A): route PDF/OCR extraction to the Python service.
+	// When set, PDFs that fail the local text-layer/pdftotext cascade are sent to
+	// the service instead of the pure-Go vision path. HTML/text extraction still
+	// uses the local --llm-* extractor. PDF structuring is then owned by the
+	// service's SCRAPER_LLM_* / OCR backend config — the detector's --llm-model
+	// / --llm-url only drive the HTML/text path (embeddings remain on --ollama-*).
+	scrapeCmd.Flags().String("extractor-url", "", "Base URL of the Python scraper service for PDF/OCR (e.g. http://localhost:8765); empty = pure-Go default")
+	scrapeCmd.Flags().Duration("extractor-page-timeout", 2*time.Minute, "Per-page request timeout when calling the scraper service (OCR VLM is slow)")
+	scrapeCmd.Flags().Duration("extractor-pdf-timeout", 10*time.Minute, "Overall PDF deadline when calling the scraper service (multi-page scans can run for minutes)")
+
+	// webagent (Phase B): route JS-rendered pages to the service's webagent
+	// endpoint. Requires --extractor-url + a pre-compiled adapter (offline
+	// authoring step in the Python repo). --enable-js-render gates this path.
+	scrapeCmd.Flags().String("webagent-adapter", "", "webagent adapter ID (site/target) for JS-rendered pages, e.g. 'amc/seats'; requires --enable-js-render + --extractor-url")
 }
 
 func runScrape(cmd *cobra.Command, args []string) error {
@@ -69,6 +84,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 
 	ignoreRobots, _ := cmd.Flags().GetBool("ignore-robots")
 	enableVision, _ := cmd.Flags().GetBool("enable-vision")
+	enableJSRender, _ := cmd.Flags().GetBool("enable-js-render")
 	usePdftotext, _ := cmd.Flags().GetBool("pdftotext")
 
 	llmURL := viper.GetString("llm-url")
@@ -83,6 +99,11 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	weaviateHost := viper.GetString("weaviate")
 	weaviateScheme := viper.GetString("weaviate-scheme")
 	weaviateAPIKey := viper.GetString("weaviate-api-key")
+
+	extractorURL := viper.GetString("extractor-url")
+	pageTimeout := viper.GetDuration("extractor-page-timeout")
+	pdfTimeout := viper.GetDuration("extractor-pdf-timeout")
+	webagentAdapter := viper.GetString("webagent-adapter")
 
 	// Build embedder.
 	var embedder search.Embedder
@@ -107,20 +128,32 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schema init: %w", err)
 	}
 
-	// Build extractor.
+	// Build extractor. When --extractor-url is set, wrap the OpenAI-compat
+	// extractor in a ServiceExtractor so PDFs route to the Python service
+	// while HTML/text still uses the local LLM. When empty, the plain
+	// OpenAICompatExtractor is used (pure-Go default, no behavior change).
 	var ex scraper.Extractor
-	ex, err = scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey, llmReasoningEffort)
+	oaex, err := scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey, llmReasoningEffort)
 	if err != nil {
 		return fmt.Errorf("building extractor: %w", err)
+	}
+	if extractorURL != "" {
+		ex = scraper.NewServiceExtractor(extractorURL, oaex, pageTimeout, pdfTimeout)
+		slog.Info("using scraper service for PDF/OCR", "url", extractorURL,
+			"page_timeout", pageTimeout, "pdf_timeout", pdfTimeout)
+	} else {
+		ex = oaex
 	}
 
 	fetcher := scraper.NewHTTPFetcher(ignoreRobots)
 
-	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder, enableVision, usePdftotext)
+	return runScrapeWith(ctx, rawURL, fetcher, ex, store, embedder,
+		enableVision, enableJSRender, usePdftotext, webagentAdapter)
 }
 
 // runScrapeWith is the testable core of the scrape command. All dependencies
-// are injected so tests can pass stubs directly.
+// are injected so tests can pass stubs directly. webagentAdapter is the
+// "site/target" ID for the JS-render path (Phase B); empty disables it.
 func runScrapeWith(
 	ctx context.Context,
 	rawURL string,
@@ -129,7 +162,9 @@ func runScrapeWith(
 	store server.MenuStore,
 	embedder search.Embedder,
 	enableVision bool,
+	enableJSRender bool,
 	usePdftotext bool,
+	webagentAdapter string,
 ) error {
 	slog.Info("scraping URL", "url", rawURL)
 
@@ -171,17 +206,28 @@ func runScrapeWith(
 	if !usedJSONLD {
 		var pageText string
 
+		// pdfResult is set when a PDFExtractor (service path) returned a fully
+		// structured MenuExtractionResult directly; in that case we skip the
+		// second ex.Extract pass below.
+		var pdfResult *scraper.MenuExtractionResult
+
 		if strings.Contains(ct, "pdf") {
-			pageText, err = extractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
+			text, structured, err := extractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
 			if err != nil {
 				return fmt.Errorf("PDF extraction: %w", err)
+			}
+			if structured != nil {
+				pdfResult = structured
+			} else {
+				pageText = text
 			}
 		} else {
 			md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(bodyBytes), ct)
 			if err != nil {
 				return fmt.Errorf("HTML conversion: %w", err)
 			}
-			if scraper.IsTooNoisy(md) {
+			noisy := scraper.IsTooNoisy(md)
+			if noisy {
 				slog.Warn("HTML→Markdown output is noisy, falling back to trafilatura", "url", rawURL)
 				if fallback := scraper.TrafilaturaFallback(string(bodyBytes)); fallback != "" {
 					md = fallback
@@ -189,13 +235,85 @@ func runScrapeWith(
 					slog.Warn("trafilatura fallback produced no output, using original conversion", "url", rawURL)
 				}
 			}
+			// If the content is still noisy/empty/too-short after both
+			// conversions, try the service-backed fallbacks. The min-content
+			// threshold mirrors the PDF text-layer guard — a page with fewer
+			// than ~200 chars of real content is likely image- or JS-rendered.
+			tooShort := len([]rune(strings.TrimSpace(md))) < 200
+			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort
+
+			if needsFallback {
+				// Phase C: check for a menu image embedded in the HTML.
+				// Runs before the JS-render check — image-embedded menus are
+				// more common than JS-rendered SPAs and don't need an adapter.
+				if imgURL, found := scraper.FindMenuImage(bodyBytes, ct, rawURL); found {
+					if iex, ok := ex.(scraper.ImageExtractor); ok {
+						slog.Info("found menu image; routing to service OCR", "url", rawURL, "img", imgURL)
+						imgRes, err := fetcher.Fetch(ctx, imgURL)
+						if err != nil {
+							return fmt.Errorf("fetching menu image %s: %w", imgURL, err)
+						}
+						imgBytes, err := io.ReadAll(imgRes.Body)
+						_ = imgRes.Body.Close()
+						if err != nil {
+							return fmt.Errorf("reading menu image %s: %w", imgURL, err)
+						}
+						imgResult, imgErr := iex.ExtractImage(ctx, imgBytes, imgRes.ContentType)
+						if imgErr != nil {
+							return fmt.Errorf("service image OCR: %w", imgErr)
+						}
+						result = imgResult
+						result.SourceURL = rawURL
+						result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+						if result.City == "" && jsonldMeta.City != "" {
+							result.City = jsonldMeta.City
+							result.State = jsonldMeta.State
+						}
+						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
+							result.RestaurantName = jsonldMeta.RestaurantName
+						}
+						goto tier1Done
+					}
+					slog.Warn("page appears to contain a menu image; set --extractor-url to OCR it",
+						"url", rawURL, "img", imgURL)
+				}
+
+				// Phase B: route JS-only pages to the webagent.
+				if enableJSRender && webagentAdapter != "" {
+					if jsr, ok := ex.(scraper.JSRenderer); ok {
+						slog.Info("HTML too noisy; routing to webagent", "url", rawURL, "adapter", webagentAdapter)
+						jsResult, jsErr := jsr.ScrapeJS(ctx, webagentAdapter, map[string]any{
+							"url": rawURL,
+						})
+						if jsErr != nil {
+							return fmt.Errorf("webagent JS scrape: %w", jsErr)
+						}
+						result = jsResult
+						result.SourceURL = rawURL
+						result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+						if result.City == "" && jsonldMeta.City != "" {
+							result.City = jsonldMeta.City
+							result.State = jsonldMeta.State
+						}
+						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
+							result.RestaurantName = jsonldMeta.RestaurantName
+						}
+						goto tier1Done
+					}
+				}
+			}
 			pageText = md
 		}
 
-		slog.Info("Tier 1: sending to LLM extractor", "chars", len([]rune(pageText)))
-		result, err = ex.Extract(ctx, pageText)
-		if err != nil {
-			return fmt.Errorf("LLM extraction: %w", err)
+		if pdfResult != nil {
+			// Service path already structured the menu. Skip the LLM pass.
+			result = *pdfResult
+		} else {
+			slog.Info("Tier 1: sending to LLM extractor", "chars", len([]rune(pageText)))
+			result, err = ex.Extract(ctx, pageText)
+			if err != nil {
+				return fmt.Errorf("LLM extraction: %w", err)
+			}
 		}
 		result.SourceURL = rawURL
 		result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
@@ -211,6 +329,7 @@ func runScrapeWith(
 
 	}
 
+tier1Done:
 	if len(result.Items) == 0 {
 		slog.Warn("no menu items extracted", "url", rawURL)
 		fmt.Printf("No menu items found at %s\n", rawURL)
@@ -233,36 +352,71 @@ func runScrapeWith(
 	return nil
 }
 
-// extractPDF runs the PDF cascade: text-layer → pdftotext → vision LLM.
-// When the vision path is active it calls ExtractImage directly and returns
-// the LLM result text as a JSON string for the caller to feed to the extractor.
-func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision bool, ex scraper.Extractor) (string, error) {
+// extractPDF runs the PDF cascade: text-layer → pdftotext → (service | vision).
+//
+// Returns (text, nil, nil) when a text layer was extracted; the caller feeds
+// text to ex.Extract for structuring. Returns ("", result, nil) when a
+// PDFExtractor (the service path) produced a fully structured result — the
+// caller must skip ex.Extract. Returns ("", nil, err) on failure.
+//
+// Cascade ordering (per the plan):
+//   - If the text-layer/pdftotext cascade yields usable text, return it.
+//   - On ErrNeedVision, prefer the service path if ex implements PDFExtractor
+//     (--extractor-url); fall back to pure-Go ExtractPDFVision on 503, or when
+//     the service is not configured.
+func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision bool, ex scraper.Extractor) (string, *scraper.MenuExtractionResult, error) {
 	text, err := scraper.ExtractPDFText(pdfBytes, usePdftotext)
 	if err == nil {
-		return text, nil
+		return text, nil, nil
 	}
 	if !errors.Is(err, scraper.ErrNeedVision) {
-		return "", err
-	}
-	if !enableVision {
-		return "", fmt.Errorf("PDF has no usable text layer and --enable-vision is not set")
+		return "", nil, err
 	}
 
-	// Vision path: cast to OpenAICompatExtractor for image support.
+	// Service path: if ex implements PDFExtractor, route there. On a 503 (OCR
+	// backend unavailable), fall back to pure-Go vision if enabled.
+	if pex, ok := ex.(scraper.PDFExtractor); ok {
+		result, sErr := pex.ExtractPDF(ctx, pdfBytes)
+		if sErr == nil {
+			// An empty menu comes back as a normal result with zero items; the
+			// caller's len(result.Items) == 0 check handles it gracefully.
+			return "", &result, nil
+		}
+		if !scraper.IsBackendUnavailable(sErr) {
+			return "", nil, fmt.Errorf("service PDF extraction: %w", sErr)
+		}
+		slog.Warn("service OCR backend unavailable (503), falling back to pure-Go vision", "err", sErr)
+		// Fall through to the vision path below if enabled; otherwise hard fail.
+		if !enableVision {
+			return "", nil, fmt.Errorf("service OCR backend unavailable (503) and --enable-vision is not set: %w", sErr)
+		}
+	}
+
+	if !enableVision {
+		return "", nil, fmt.Errorf("PDF has no usable text layer; set --extractor-url or --enable-vision")
+	}
+
+	// Pure-Go vision fallback.
 	oaex, ok := ex.(*scraper.OpenAICompatExtractor)
 	if !ok {
-		return "", fmt.Errorf("vision path requires --llm-backend openai-compat")
+		// ServiceExtractor wraps OpenAICompatExtractor; reach for it.
+		if sex, ok2 := ex.(*scraper.ServiceExtractor); ok2 {
+			oaex = sex.Text()
+		}
 	}
-	result, err := scraper.ExtractPDFVision(ctx, pdfBytes, oaex)
-	if err != nil {
-		return "", err
+	if oaex == nil {
+		return "", nil, fmt.Errorf("vision path requires --llm-backend openai-compat")
+	}
+	result, vErr := scraper.ExtractPDFVision(ctx, pdfBytes, oaex)
+	if vErr != nil {
+		return "", nil, vErr
 	}
 	// Return the dish names as flat text so the caller's normal flow still works.
 	var lines []string
 	for _, item := range result.Items {
 		lines = append(lines, item.DishName+": "+item.Description)
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n"), nil, nil
 }
 
 // menuCollectionNS is the UUID namespace for deterministic menu item IDs.

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -415,4 +416,189 @@ func RawHTMLBody(r io.Reader) ([]byte, error) {
 // fallback path.
 func TrafilaturaFallback(rawHTML string) string {
 	return trafilaturaFallback(rawHTML)
+}
+
+// ── Menu image detection (Phase C) ──────────────────────────────────────────
+
+// menuImageCandidate describes an <img> that might be a menu image.
+type menuImageCandidate struct {
+	src    string
+	width  int
+	height int
+	score  int
+}
+
+// FindMenuImage scans HTML for the largest <img> likely to be an embedded menu
+// image (e.g. a photo of a printed trifold menu). Returns the absolute URL of
+// the best candidate and true if one is found, or "" and false otherwise.
+//
+// Heuristics (any subset can match; higher score wins):
+//   - Size: width/height ≥ 800px, or a srcset descriptor ≥1024w.
+//   - Filename: src matches /menu|trifold|menu-card|food|drink/i.
+//   - Context: the <img> is inside an element with id containing "menu".
+//   - Alt: alt is empty (text menus use descriptive alt) or contains "menu".
+//
+// Excludes: images inside <header>/<footer>/<nav>, and tiny icons (width < 100).
+// pageURL is used to resolve relative src values into absolute URLs.
+func FindMenuImage(htmlBytes []byte, contentType, pageURL string) (string, bool) {
+	cr, err := charset.NewReader(bytes.NewReader(htmlBytes), contentType)
+	if err != nil {
+		return "", false
+	}
+	doc, err := html.Parse(cr)
+	if err != nil {
+		return "", false
+	}
+
+	page, err := url.Parse(pageURL)
+	if err != nil {
+		return "", false
+	}
+
+	var candidates []menuImageCandidate
+
+	var walk func(*html.Node, bool, bool)
+	walk = func(n *html.Node, inSkip bool, inMenuCtx bool) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "header", "footer", "nav":
+				inSkip = true
+			}
+			// Track whether we're inside an element with id containing "menu".
+			for _, a := range n.Attr {
+				if a.Key == "id" && strings.Contains(strings.ToLower(a.Val), "menu") {
+					inMenuCtx = true
+				}
+			}
+			if n.Data == "img" {
+				if !inSkip {
+					if c := evaluateImg(n, inMenuCtx); c.score > 0 {
+						candidates = append(candidates, c)
+					}
+				}
+				return // don't recurse into <img>
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, inSkip, inMenuCtx)
+		}
+	}
+	walk(doc, false, false)
+
+	if len(candidates) == 0 {
+		return "", false
+	}
+
+	// Pick the highest-scoring candidate; break ties by largest dimensions.
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.score > best.score ||
+			(c.score == best.score && c.width*c.height > best.width*best.height) {
+			best = c
+		}
+	}
+
+	abs := resolveURL(best.src, page)
+	if abs == "" {
+		return "", false
+	}
+	return abs, true
+}
+
+// evaluateImg scores an <img> node against the menu-image heuristics.
+func evaluateImg(n *html.Node, inMenuCtx bool) menuImageCandidate {
+	c := menuImageCandidate{}
+
+	var dataSrc string
+	for _, a := range n.Attr {
+		switch a.Key {
+		case "src":
+			c.src = a.Val
+		case "data-src":
+			dataSrc = a.Val
+		case "srcset":
+			if w := maxSrcsetWidth(a.Val); w > c.width {
+				c.width = w
+			}
+		case "width":
+			if w, err := strconv.Atoi(a.Val); err == nil && w > c.width {
+				c.width = w
+			}
+		case "height":
+			if h, err := strconv.Atoi(a.Val); err == nil && h > c.height {
+				c.height = h
+			}
+		case "alt":
+			if a.Val == "" {
+				c.score += 1 // empty alt is a mild positive signal for menu images
+			} else if strings.Contains(strings.ToLower(a.Val), "menu") {
+				c.score += 2
+			}
+		}
+	}
+
+	// Prefer src; fall back to data-src (lazy-loaded images) if src is absent.
+	if c.src == "" {
+		c.src = dataSrc
+	}
+
+	if c.src == "" {
+		return menuImageCandidate{} // no usable src
+	}
+
+	// Exclude tiny icons.
+	if c.width > 0 && c.width < 100 {
+		return menuImageCandidate{}
+	}
+
+	// Size heuristic: large image (≥800px in any dimension, or srcset ≥1024w).
+	if c.width >= 800 || c.height >= 800 {
+		c.score += 3
+	}
+
+	// Filename heuristic.
+	lower := strings.ToLower(c.src)
+	for _, kw := range []string{"menu", "trifold", "menu-card", "food", "drink"} {
+		if strings.Contains(lower, kw) {
+			c.score += 3
+			break
+		}
+	}
+
+	// Context heuristic: inside an element with id containing "menu".
+	if inMenuCtx {
+		c.score += 2
+	}
+
+	return c
+}
+
+// maxSrcsetWidth extracts the largest width descriptor from a srcset string
+// (e.g. "menu.png 1024w, menu-2x.png 2048w" → 2048).
+func maxSrcsetWidth(srcset string) int {
+	maxW := 0
+	for _, part := range strings.Split(srcset, ",") {
+		part = strings.TrimSpace(part)
+		// Descriptor is the last token, e.g. "1024w" or "2x".
+		fields := strings.Fields(part)
+		if len(fields) < 2 {
+			continue
+		}
+		desc := fields[len(fields)-1]
+		if strings.HasSuffix(desc, "w") {
+			if w, err := strconv.Atoi(strings.TrimSuffix(desc, "w")); err == nil && w > maxW {
+				maxW = w
+			}
+		}
+	}
+	return maxW
+}
+
+// resolveURL resolves a possibly-relative URL against a base URL.
+func resolveURL(raw string, base *url.URL) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return base.ResolveReference(u).String()
 }
