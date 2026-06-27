@@ -442,3 +442,97 @@ func TestValidateAPIURL(t *testing.T) {
 		}
 	})
 }
+
+// ── FindMenuImage (Phase C) ──────────────────────────────────────────────────
+
+func TestFindMenuImage_TrifoldInMenuContainer(t *testing.T) {
+	html := `<html><body>
+<div id="MENU">
+  <h2>Menu</h2>
+  <p>Marketing text</p>
+  <img src="/wp-content/uploads/2026/03/TRIFOLD_MENU_8x11_BC-1024x798.png"
+       width="1024" height="798" alt="">
+</div>
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/menu")
+	if !ok {
+		t.Fatal("expected to find a menu image")
+	}
+	assert.Equal(t, "https://cafe.com/wp-content/uploads/2026/03/TRIFOLD_MENU_8x11_BC-1024x798.png", got)
+}
+
+func TestFindMenuImage_SrcsetLarge(t *testing.T) {
+	html := `<html><body>
+<div id="menu-section">
+  <img src="menu.png" srcset="menu-300.png 300w, menu-1024.png 1024w, menu-2048.png 2048w" alt="menu">
+</div>
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	if !ok {
+		t.Fatal("expected to find a menu image")
+	}
+	assert.Equal(t, "https://cafe.com/menu.png", got)
+}
+
+func TestFindMenuImage_FilenameMenuKeyword(t *testing.T) {
+	html := `<html><body>
+<img src="https://cdn.com/food-menu-card-2024.jpg" width="1200" height="900">
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	if !ok {
+		t.Fatal("expected to find a menu image via filename keyword")
+	}
+	assert.Equal(t, "https://cdn.com/food-menu-card-2024.jpg", got)
+}
+
+func TestFindMenuImage_ExcludesHeaderFooterNav(t *testing.T) {
+	html := `<html><body>
+<header><img src="logo-menu.png" width="1024" height="800" alt=""></header>
+<nav><img src="nav-menu.png" width="1024" height="800" alt=""></nav>
+<footer><img src="footer-menu.png" width="1024" height="800" alt=""></footer>
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "images in header/footer/nav should be excluded")
+}
+
+func TestFindMenuImage_ExcludesSmallIcons(t *testing.T) {
+	html := `<html><body>
+<img src="icon.png" width="50" height="50" alt="">
+</body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "tiny icons should be excluded")
+}
+
+func TestFindMenuImage_NoImages(t *testing.T) {
+	html := `<html><body><h2>Menu</h2><p>text only</p></body></html>`
+	_, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	assert.False(t, ok, "no images → no menu image")
+}
+
+func TestFindMenuImage_RelativeURLResolved(t *testing.T) {
+	html := `<html><body>
+<div id="menu"><img src="../images/menu.png" width="1024" height="800" alt=""></div>
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/pages/home")
+	require.True(t, ok)
+	assert.Equal(t, "https://cafe.com/images/menu.png", got)
+}
+
+func TestFindMenuImage_PrefersLargestCandidate(t *testing.T) {
+	html := `<html><body>
+<div id="MENU">
+  <img src="small-menu.png" width="800" height="600" alt="">
+  <img src="big-trifold.png" width="2048" height="1596" alt="" data-src="big-trifold.png">
+</div>
+</body></html>`
+	got, ok := FindMenuImage([]byte(html), "text/html", "https://cafe.com/")
+	require.True(t, ok)
+	assert.Equal(t, "https://cafe.com/big-trifold.png", got)
+}
+
+func TestMaxSrcsetWidth(t *testing.T) {
+	assert.Equal(t, 2048, maxSrcsetWidth("menu.png 300w, menu-2x.png 2048w"))
+	assert.Equal(t, 1024, maxSrcsetWidth("menu.png 1024w"))
+	assert.Equal(t, 0, maxSrcsetWidth("menu.png 2x"))
+	assert.Equal(t, 0, maxSrcsetWidth(""))
+}

@@ -234,13 +234,52 @@ func runScrapeWith(
 				} else {
 					slog.Warn("trafilatura fallback produced no output, using original conversion", "url", rawURL)
 				}
-				// Re-check: if trafilatura also produced noisy/empty/too-short
-				// output and JS rendering is configured, route to the webagent
-				// (Phase B). The min-content threshold mirrors the PDF text-layer
-				// guard — a page with fewer than ~200 chars of real content after
-				// both conversions is likely JS-rendered.
-				tooShort := len([]rune(strings.TrimSpace(md))) < 200
-				if (scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort) && enableJSRender && webagentAdapter != "" {
+			}
+			// If the content is still noisy/empty/too-short after both
+			// conversions, try the service-backed fallbacks. The min-content
+			// threshold mirrors the PDF text-layer guard — a page with fewer
+			// than ~200 chars of real content is likely image- or JS-rendered.
+			tooShort := len([]rune(strings.TrimSpace(md))) < 200
+			needsFallback := noisy && (scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort)
+
+			if needsFallback {
+				// Phase C: check for a menu image embedded in the HTML.
+				// Runs before the JS-render check — image-embedded menus are
+				// more common than JS-rendered SPAs and don't need an adapter.
+				if imgURL, found := scraper.FindMenuImage(bodyBytes, ct, rawURL); found {
+					if iex, ok := ex.(scraper.ImageExtractor); ok {
+						slog.Info("found menu image; routing to service OCR", "url", rawURL, "img", imgURL)
+						imgRes, err := fetcher.Fetch(ctx, imgURL)
+						if err != nil {
+							return fmt.Errorf("fetching menu image %s: %w", imgURL, err)
+						}
+						imgBytes, err := io.ReadAll(imgRes.Body)
+						_ = imgRes.Body.Close()
+						if err != nil {
+							return fmt.Errorf("reading menu image %s: %w", imgURL, err)
+						}
+						imgResult, imgErr := iex.ExtractImage(ctx, imgBytes, imgRes.ContentType)
+						if imgErr != nil {
+							return fmt.Errorf("service image OCR: %w", imgErr)
+						}
+						result = imgResult
+						result.SourceURL = rawURL
+						result.ScrapedAtUTC = time.Now().UTC().Format(time.RFC3339)
+						if result.City == "" && jsonldMeta.City != "" {
+							result.City = jsonldMeta.City
+							result.State = jsonldMeta.State
+						}
+						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
+							result.RestaurantName = jsonldMeta.RestaurantName
+						}
+						goto tier1Done
+					}
+					slog.Warn("page appears to contain a menu image; set --extractor-url to OCR it",
+						"url", rawURL, "img", imgURL)
+				}
+
+				// Phase B: route JS-only pages to the webagent.
+				if enableJSRender && webagentAdapter != "" {
 					if jsr, ok := ex.(scraper.JSRenderer); ok {
 						slog.Info("HTML too noisy; routing to webagent", "url", rawURL, "adapter", webagentAdapter)
 						jsResult, jsErr := jsr.ScrapeJS(ctx, webagentAdapter, map[string]any{
@@ -259,7 +298,6 @@ func runScrapeWith(
 						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
 							result.RestaurantName = jsonldMeta.RestaurantName
 						}
-						// Skip the rest of the Tier 1 block — webagent structured it.
 						goto tier1Done
 					}
 				}
@@ -340,11 +378,9 @@ func extractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision
 	if pex, ok := ex.(scraper.PDFExtractor); ok {
 		result, sErr := pex.ExtractPDF(ctx, pdfBytes)
 		if sErr == nil {
+			// An empty menu comes back as a normal result with zero items; the
+			// caller's len(result.Items) == 0 check handles it gracefully.
 			return "", &result, nil
-		}
-		if scraper.IsEmptyMenuError(sErr) {
-			slog.Warn("service returned empty menu", "url", "pdf")
-			return "", &scraper.MenuExtractionResult{}, nil
 		}
 		if !scraper.IsBackendUnavailable(sErr) {
 			return "", nil, fmt.Errorf("service PDF extraction: %w", sErr)

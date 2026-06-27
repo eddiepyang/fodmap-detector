@@ -270,3 +270,153 @@ func TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract(t *testing.T) 
 			ex.called)
 	}
 }
+
+// ── Phase C: image-embedded menu path ────────────────────────────────────────
+
+// imageExtractorStub implements scraper.Extractor + scraper.ImageExtractor so
+// the noisy-HTML-with-menu-image branch can route to the service image OCR path.
+type imageExtractorStub struct {
+	extractCalls  int
+	extractImgErr error
+	imgCalls      int
+	imgResult     scraper.MenuExtractionResult
+}
+
+func (s *imageExtractorStub) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	s.extractCalls++
+	return scraper.MenuExtractionResult{}, nil
+}
+
+func (s *imageExtractorStub) ExtractImage(_ context.Context, _ []byte, _ string) (scraper.MenuExtractionResult, error) {
+	s.imgCalls++
+	if s.extractImgErr != nil {
+		return scraper.MenuExtractionResult{}, s.extractImgErr
+	}
+	return s.imgResult, nil
+}
+
+// menuImageFetcher serves noisy HTML containing a large menu image. When the
+// image URL is fetched, it returns fake PNG bytes.
+type menuImageFetcher struct {
+	imgFetched bool
+}
+
+func (f *menuImageFetcher) Fetch(_ context.Context, rawURL string) (scraper.FetchResult, error) {
+	if strings.HasSuffix(rawURL, ".png") {
+		f.imgFetched = true
+		return scraper.FetchResult{
+			Body:        io.NopCloser(bytes.NewReader([]byte("fake-png"))),
+			ContentType: "image/png",
+		}, nil
+	}
+	// Noisy HTML page with a menu image inside #MENU.
+	var b strings.Builder
+	b.WriteString("<html><head><title>x</title></head><body><ul>")
+	for i := 0; i < 30; i++ {
+		b.WriteString("<li>nav")
+		fmt.Fprintf(&b, "%d", i)
+		b.WriteString("</li>\n")
+	}
+	b.WriteString("</ul>")
+	b.WriteString(`<div id="MENU"><h2>Menu</h2><img src="https://example.com/menu.png" width="1024" height="798" alt=""></div>`)
+	b.WriteString("</body></html>")
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(b.String()))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func TestRunScrapeWith_NoisyHTMLWithMenuImageRoutesToImageOCR(t *testing.T) {
+	img := &imageExtractorStub{
+		imgResult: scraper.MenuExtractionResult{
+			RestaurantName: "Image Cafe",
+			Items: []scraper.MenuEntry{
+				{DishName: "Latte", StatedIngredients: []string{}},
+			},
+		},
+	}
+	fetcher := &menuImageFetcher{}
+	err := runScrapeWith(
+		context.Background(),
+		"https://example.com/menu",
+		fetcher,
+		img,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, // enableVision
+		false, // enableJSRender
+		false, // usePdftotext
+		"",    // webagentAdapter (not needed for image path)
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith image: %v", err)
+	}
+	if img.imgCalls != 1 {
+		t.Errorf("ExtractImage called %d times; want 1", img.imgCalls)
+	}
+	if img.extractCalls != 0 {
+		t.Errorf("ex.Extract called %d times; want 0 (image path skips the LLM pass)",
+			img.extractCalls)
+	}
+	if !fetcher.imgFetched {
+		t.Error("image was never fetched")
+	}
+}
+
+func TestRunScrapeWith_MenuImagePrefersImageOverWebagent(t *testing.T) {
+	// When both ImageExtractor and JSRenderer are implemented and the page has
+	// a menu image, the image path should win over the webagent.
+	both := &imageAndJSStub{
+		imgResult: scraper.MenuExtractionResult{
+			Items: []scraper.MenuEntry{{DishName: "from-image"}},
+		},
+		jsResult: scraper.MenuExtractionResult{
+			Items: []scraper.MenuEntry{{DishName: "from-js"}},
+		},
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://example.com/menu",
+		&menuImageFetcher{},
+		both,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false,
+		true, // enableJSRender — should be preempted by image path
+		false,
+		"site/target", // webagentAdapter set but image path should win
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith: %v", err)
+	}
+	if both.imgCalls != 1 {
+		t.Errorf("ExtractImage called %d times; want 1 (image path should win)", both.imgCalls)
+	}
+	if both.jsCalls != 0 {
+		t.Errorf("ScrapeJS called %d times; want 0 (image path preempts webagent)", both.jsCalls)
+	}
+}
+
+// imageAndJSStub implements both ImageExtractor and JSRenderer.
+type imageAndJSStub struct {
+	extractCalls int
+	imgCalls     int
+	jsCalls      int
+	imgResult    scraper.MenuExtractionResult
+	jsResult     scraper.MenuExtractionResult
+}
+
+func (s *imageAndJSStub) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	s.extractCalls++
+	return scraper.MenuExtractionResult{}, nil
+}
+
+func (s *imageAndJSStub) ExtractImage(_ context.Context, _ []byte, _ string) (scraper.MenuExtractionResult, error) {
+	s.imgCalls++
+	return s.imgResult, nil
+}
+
+func (s *imageAndJSStub) ScrapeJS(_ context.Context, _ string, _ map[string]any) (scraper.MenuExtractionResult, error) {
+	s.jsCalls++
+	return s.jsResult, nil
+}

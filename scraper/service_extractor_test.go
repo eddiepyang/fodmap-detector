@@ -159,7 +159,10 @@ func TestServiceExtractor_ExtractPDF_Orchestration(t *testing.T) {
 	}
 }
 
-func TestServiceExtractor_ExtractPDF_EmptyMenuTreatedAsEmpty(t *testing.T) {
+func TestServiceExtractor_ExtractPDF_EmptyMenuIsNotAnError(t *testing.T) {
+	// The service returns an empty menu as a normal 200 with zero sections (the
+	// MenuDocument contract allows empty). The client must surface that as an
+	// empty result, not an error.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -172,24 +175,63 @@ func TestServiceExtractor_ExtractPDF_EmptyMenuTreatedAsEmpty(t *testing.T) {
 			txt := "nothing here"
 			_ = json.NewEncoder(w).Encode(extractPageResult{Page: 1, Route: "text", Text: &txt})
 		case strings.HasSuffix(r.URL.Path, "/v1/extractions:structure"):
-			// Simulate the service's 422 when sections min_length=1 fails.
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			_ = json.NewEncoder(w).Encode(serviceErrorEnvelope{
-				Error: serviceErrorDetail{
-					Code: "validation_error", Message: "sections min_length 1 not met", RequestID: "req-123",
-				},
+			_ = json.NewEncoder(w).Encode(structureResult{
+				SchemaRevision: "v1", Backend: "openai-compat",
+				Menu: menuDocument{Sections: []menuSection{}},
 			})
 		}
 	}))
 	defer srv.Close()
 
 	se := newTestServiceExtractor(t, srv.URL)
-	_, err := se.ExtractPDF(context.Background(), []byte("fake"))
-	if err == nil {
-		t.Fatal("expected error from empty-menu structuring")
+	res, err := se.ExtractPDF(context.Background(), []byte("fake"))
+	if err != nil {
+		t.Fatalf("empty menu should not be an error, got: %v", err)
 	}
-	if !IsEmptyMenuError(err) {
-		t.Errorf("expected IsEmptyMenuError, got: %v", err)
+	if len(res.Items) != 0 {
+		t.Errorf("expected zero items for empty menu, got %d", len(res.Items))
+	}
+}
+
+func TestServiceExtractor_ExtractPDF_EnforcesOverallDeadline(t *testing.T) {
+	// Each per-page extract sleeps; with many pages the cumulative time exceeds
+	// the overall pdfTimeout even though no single request does. The overall
+	// deadline must abort the loop (regression guard for the unbounded-loop bug).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/documents:inspect"):
+			pages := make([]pageRoute, 20)
+			for i := range pages {
+				pages[i] = pageRoute{Page: i + 1, Route: "ocr"}
+			}
+			_ = json.NewEncoder(w).Encode(documentInspectResult{
+				PageCount: 20, ContentType: "application/pdf", Pages: pages,
+			})
+		case strings.Contains(r.URL.Path, ":extract"):
+			time.Sleep(60 * time.Millisecond)
+			txt := "page text"
+			_ = json.NewEncoder(w).Encode(extractPageResult{Route: "text", Text: &txt})
+		default:
+			_ = json.NewEncoder(w).Encode(structureResult{Menu: menuDocument{}})
+		}
+	}))
+	defer srv.Close()
+
+	text, err := NewOpenAICompatExtractor(srv.URL+"/v1", "test", "", "none")
+	if err != nil {
+		t.Fatalf("NewOpenAICompatExtractor: %v", err)
+	}
+	// Per-page timeout is generous (no single call trips it); overall deadline is
+	// short enough that 20 × 60ms pages must blow past it.
+	se := NewServiceExtractor(srv.URL, text, time.Second, 200*time.Millisecond)
+
+	_, err = se.ExtractPDF(context.Background(), []byte("fake"))
+	if err == nil {
+		t.Fatal("expected overall PDF deadline to abort the page loop")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
 
@@ -329,12 +371,6 @@ func TestMapStructureToResult_NilIngredientsBecomesEmpty(t *testing.T) {
 	}
 }
 
-func TestIsEmptyMenuError_NotAServiceError(t *testing.T) {
-	if IsEmptyMenuError(errors.New("plain error")) {
-		t.Error("plain error should not be an empty-menu error")
-	}
-}
-
 // ── Phase B: webagent JS-scrape path ─────────────────────────────────────────
 
 func TestServiceExtractor_ImplementsJSRenderer(t *testing.T) {
@@ -440,5 +476,139 @@ func (s *webagentStub) handler() http.HandlerFunc {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
+	}
+}
+
+// ── Phase C: image-embedded menu path ────────────────────────────────────────
+
+func TestServiceExtractor_ImplementsImageExtractor(t *testing.T) {
+	var _ ImageExtractor = (*ServiceExtractor)(nil)
+}
+
+func TestServiceExtractor_ExtractImage_Orchestration(t *testing.T) {
+	var inspectCalls, extractCalls, structureCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		ct := r.Header.Get("Content-Type")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/documents:inspect"):
+			inspectCalls++
+			if !strings.HasPrefix(ct, "image/") {
+				t.Errorf("inspect: expected image/* content-type, got %q", ct)
+			}
+			_ = json.NewEncoder(w).Encode(documentInspectResult{
+				PageCount:   1,
+				ContentType: ct,
+				Pages:       []pageRoute{{Page: 1, Route: "ocr", TextChars: 0}},
+			})
+		case strings.Contains(r.URL.Path, ":extract"):
+			extractCalls++
+			if !strings.HasPrefix(ct, "image/") {
+				t.Errorf("extract: expected image/* content-type, got %q", ct)
+			}
+			ocr := "Pizza Margherita $4.95\nLatte $4.50"
+			_ = json.NewEncoder(w).Encode(extractPageResult{
+				Page: 1, Route: "ocr", Backend: "vlm", OcrText: &ocr,
+			})
+		case strings.HasSuffix(r.URL.Path, "/v1/extractions:structure"):
+			structureCalls++
+			_ = json.NewEncoder(w).Encode(structureResult{
+				SchemaRevision: "v1",
+				Backend:        "test",
+				Menu: menuDocument{
+					SchemaRevision: "v1",
+					RestaurantName: "Test Cafe",
+					Sections: []menuSection{{
+						Name: "Drinks",
+						Items: []menuItem{
+							{Name: "Pizza Margherita", Description: "$4.95",
+								StatedIngredients: []string{}},
+							{Name: "Latte", Description: "$4.50",
+								StatedIngredients: []string{}},
+						},
+					}},
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	res, err := se.ExtractImage(context.Background(), []byte("fake-png-bytes"), "image/png")
+	if err != nil {
+		t.Fatalf("ExtractImage: %v", err)
+	}
+	if inspectCalls != 1 {
+		t.Errorf("inspect calls = %d, want 1", inspectCalls)
+	}
+	if extractCalls != 1 {
+		t.Errorf("extract calls = %d, want 1", extractCalls)
+	}
+	if structureCalls != 1 {
+		t.Errorf("structure calls = %d, want 1", structureCalls)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(res.Items))
+	}
+	if res.Items[0].DishName != "Pizza Margherita" {
+		t.Errorf("item[0] = %q", res.Items[0].DishName)
+	}
+	if res.RestaurantName != "Test Cafe" {
+		t.Errorf("restaurant = %q", res.RestaurantName)
+	}
+}
+
+func TestServiceExtractor_ExtractImage_EmptyMimeDefaultsToPng(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		ct := r.Header.Get("Content-Type")
+		if strings.HasSuffix(r.URL.Path, "/v1/documents:inspect") {
+			if ct != "image/png" {
+				t.Errorf("expected image/png default, got %q", ct)
+			}
+			_ = json.NewEncoder(w).Encode(documentInspectResult{
+				PageCount: 1, ContentType: ct,
+				Pages: []pageRoute{{Page: 1, Route: "ocr"}},
+			})
+		}
+		if strings.Contains(r.URL.Path, ":extract") {
+			ocr := "empty"
+			_ = json.NewEncoder(w).Encode(extractPageResult{Page: 1, Route: "ocr", OcrText: &ocr})
+		}
+		if strings.HasSuffix(r.URL.Path, "/v1/extractions:structure") {
+			_ = json.NewEncoder(w).Encode(structureResult{
+				Backend: "t",
+				Menu:    menuDocument{Sections: []menuSection{{Name: "S", Items: []menuItem{{Name: "x"}}}}},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	_, err := se.ExtractImage(context.Background(), []byte("fake"), "")
+	if err != nil {
+		t.Fatalf("ExtractImage with empty mime: %v", err)
+	}
+}
+
+func TestServiceExtractor_ExtractImage_503ReturnsServiceError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(serviceErrorEnvelope{
+			Error: serviceErrorDetail{Code: "service_unavailable", Message: "ocr down", RequestID: "r1"},
+		})
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	_, err := se.ExtractImage(context.Background(), []byte("fake"), "image/png")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsBackendUnavailable(err) {
+		t.Errorf("expected IsBackendUnavailable, got: %v", err)
 	}
 }
