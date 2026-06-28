@@ -108,10 +108,11 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 			rawURLs = append(rawURLs, u)
 		}
 	} else {
-		if result.WebsiteURL != "" {
+		if len(result.MenuURLs) > 0 {
+			rawURLs = append(rawURLs, result.MenuURLs...)
+		} else if result.WebsiteURL != "" {
 			rawURLs = append(rawURLs, result.WebsiteURL)
 		}
-		rawURLs = append(rawURLs, result.MenuURLs...)
 	}
 
 	// Separate direct restaurant URLs from delivery platform URLs.
@@ -134,7 +135,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	primaryURL := result.WebsiteURL
-	if primaryURL == "" && len(foundURLs) > 0 {
+	if (primaryURL == "" || isDeliveryURL(primaryURL)) && len(foundURLs) > 0 {
 		primaryURL = foundURLs[0]
 	}
 
