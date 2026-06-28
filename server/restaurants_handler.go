@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // restaurantStatusNeedsRescrape returns true if a retry should re-scrape.
@@ -55,6 +56,10 @@ func (s *Server) restaurantCreateHandler(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	if err := s.restaurantStore.Upsert(ctx, rest); err != nil {
 		slog.Error("restaurants: upsert", "camis", req.CAMIS, "err", err)
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "duplicate key value") {
+			respondError(w, "restaurant already exists", http.StatusConflict)
+			return
+		}
 		respondError(w, "failed to save restaurant", http.StatusInternalServerError)
 		return
 	}

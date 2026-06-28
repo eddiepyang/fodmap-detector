@@ -35,7 +35,14 @@ func (w *ScrapeMenuWorker) bronzeDir() string {
 	if w.BronzeDir != "" {
 		return w.BronzeDir
 	}
+	if envDir := os.Getenv("RESTAURANT_BRONZE_DIR"); envDir != "" {
+		return envDir
+	}
 	return "data/bronze/restaurants"
+}
+
+func (w *ScrapeMenuWorker) Timeout(job *river.Job[ScrapeMenuArgs]) time.Duration {
+	return 5 * time.Minute
 }
 
 func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuArgs]) error {

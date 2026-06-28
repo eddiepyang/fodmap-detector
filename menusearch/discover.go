@@ -92,6 +92,10 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 
 	foundURLs := dedupAndFilter(rawURLs)
 
+	if len(foundURLs) == 0 && len(rawURLs) > 0 {
+		logger.Info("all grounding chunks were filtered out (likely delivery/directory sites)", "raw_count", len(rawURLs))
+	}
+
 	eventID := uuid.NewString()
 	record := GeminiDiscoveryRecord{
 		CAMIS:        args.CAMIS,

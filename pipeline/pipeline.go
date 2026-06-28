@@ -240,9 +240,18 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 		texts[i] = strings.Join(parts, ". ")
 	}
 
-	vectors, err := embedder.EmbedBatch(ctx, texts)
-	if err != nil {
-		return nil, fmt.Errorf("embedding batch: %w", err)
+	vectors := make([][]float32, 0, len(texts))
+	const batchSize = 50
+	for i := 0; i < len(texts); i += batchSize {
+		end := i + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		batchVectors, err := embedder.EmbedBatch(ctx, texts[i:end])
+		if err != nil {
+			return nil, fmt.Errorf("embedding batch [%d:%d]: %w", i, end, err)
+		}
+		vectors = append(vectors, batchVectors...)
 	}
 
 	items := make([]search.MenuItem, len(result.Items))
