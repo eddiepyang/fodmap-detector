@@ -14,6 +14,7 @@ import (
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
+
 	"google.golang.org/genai"
 
 	"github.com/spf13/cobra"
