@@ -176,7 +176,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		}
 		if job.Attempt >= maxAttempts {
 			logger.Info("no URL found after max attempts, marking permanently", "camis", args.CAMIS, "max_attempts", maxAttempts)
-			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", nil, "gemini", "", ""); err != nil {
+			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", []string{}, "gemini", "", ""); err != nil {
 				return fmt.Errorf("update no-url status: %w", err)
 			}
 			return nil
