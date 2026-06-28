@@ -189,3 +189,123 @@ func TestReachableMenuURLs_DeadHostDropped(t *testing.T) {
 		t.Errorf("expected dead-port URL to be dropped; got %v", got)
 	}
 }
+
+// ── hasMenuSignal tests ──────────────────────────────────────────────────────
+
+func TestHasMenuSignal_JSONLD(t *testing.T) {
+	// JSON-LD with a Menu type → true.
+	body := []byte(`<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Menu","name":"Dinner Menu",
+ "hasMenuSection":[{"@type":"MenuSection","name":"Mains",
+   "hasMenuItem":[{"@type":"MenuItem","name":"Burger","offers":{"price":"12.00"}}]}]}
+</script></head><body></body></html>`)
+	if !hasMenuSignal(body) {
+		t.Error("expected hasMenuSignal=true for JSON-LD Menu document")
+	}
+}
+
+func TestHasMenuSignal_PricesAndKeyword(t *testing.T) {
+	// Several prices + menu keyword → true.
+	body := []byte(`<html><body>
+<h1>Our Menu</h1>
+<p>Salad $8.00 &nbsp; Soup $6.50 &nbsp; Burger $13.00</p>
+</body></html>`)
+	if !hasMenuSignal(body) {
+		t.Error("expected hasMenuSignal=true for page with prices and 'menu' keyword")
+	}
+}
+
+func TestHasMenuSignal_RealEstatePage(t *testing.T) {
+	// Generic real-estate page with no menu signals → false.
+	body := []byte(`<html><body>
+<h1>Prime Commercial Space for Lease</h1>
+<p>1,200 sq ft available in Midtown. Contact our broker for details.
+Floor plan available upon request. Zoned for retail or office use.</p>
+</body></html>`)
+	if hasMenuSignal(body) {
+		t.Error("expected hasMenuSignal=false for real-estate page")
+	}
+}
+
+func TestHasMenuSignal_SchemaOrgType(t *testing.T) {
+	// Inline schema.org MenuItem attribute → true.
+	body := []byte(`<html><body>
+<div itemtype="http://schema.org/MenuItem">
+  <span itemprop="name">Caesar Salad</span>
+</div>
+</body></html>`)
+	if !hasMenuSignal(body) {
+		t.Error("expected hasMenuSignal=true for schema.org MenuItem")
+	}
+}
+
+// ── menuSignalFilter / checkMenuSignal policy tests ─────────────────────────
+
+func TestCheckMenuSignal_403Kept(t *testing.T) {
+	// A server returning 403 must always be kept (anti-bot).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu")
+	if !keep {
+		t.Errorf("expected 403 response to be kept, got keep=false reason=%q", reason)
+	}
+}
+
+func TestCheckMenuSignal_OrderingPlatformKept(t *testing.T) {
+	// A whitelisted ordering platform must be kept regardless of body content.
+	// We don't even need a real server — the whitelist check fires before the GET.
+	client := &http.Client{Timeout: 1 * time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client, "https://order.toasttab.com/online/my-place")
+	if !keep {
+		t.Errorf("expected ordering platform to be kept, got keep=false reason=%q", reason)
+	}
+}
+
+func TestCheckMenuSignal_2xxWithSignalKept(t *testing.T) {
+	// 2xx response with menu JSON-LD → kept.
+	body := []byte(`<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"MenuItem","name":"Pasta","offers":{"price":"14.00"}}
+</script></head><body>Our menu</body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu")
+	if !keep {
+		t.Error("expected 2xx page with menu signal to be kept")
+	}
+}
+
+func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
+	// 2xx response with generic non-menu content → dropped.
+	body := []byte(`<html><body><h1>About Us</h1><p>We are a family restaurant founded in 1990.</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/about")
+	if keep {
+		t.Error("expected 2xx page with no menu signal to be dropped")
+	}
+}

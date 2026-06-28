@@ -25,6 +25,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"google.golang.org/genai"
+
+	"fodmap/scraper"
 )
 
 //go:embed prompts/discover.txt
@@ -150,10 +152,19 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		}
 	}
 
+	// Content signal check: for each live candidate, do a plain GET and see
+	// whether the response body contains a menu signal. URLs that return
+	// non-2xx (403/429/5xx) or fail to fetch are always kept — they may be
+	// anti-bot protected sites the webagent bypass handles at scrape time.
+	// Known first-party ordering platforms are also always kept (JS SPAs that
+	// won't expose content on a plain GET). Drop only when: GET 2xx + not a
+	// whitelisted platform + no menu signal found.
+	confirmed := menuSignalFilter(ctx, httpClient, candidates, logger)
+
 	// Separate direct restaurant URLs from delivery platform URLs.
 	// Prefer direct URLs; fall back to delivery-platform URLs if nothing else found.
 	var directURLs, deliveryURLs []string
-	for _, u := range candidates {
+	for _, u := range confirmed {
 		if isDeliveryURL(u) {
 			deliveryURLs = append(deliveryURLs, u)
 		} else {
@@ -443,6 +454,147 @@ func isPrivateMenuHost(host string) bool {
 		}
 	}
 	return false
+}
+
+// orderingPlatformHosts are first-party ordering/SPA platforms that won't
+// expose menu content on a plain GET. Always keep these regardless of body.
+var orderingPlatformHosts = []string{
+	"toasttab.com",
+	"getsauce.com",
+	"chownow.com",
+	"square.site",
+	"clover.com",
+	"mealkeyway.com",
+	"takeout7.com",
+}
+
+// isOrderingPlatform returns true when the URL's host is a known first-party
+// ordering platform (JS SPA — plain GET won't reveal menu content).
+func isOrderingPlatform(u string) bool {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	for _, p := range orderingPlatformHosts {
+		if host == p || strings.HasSuffix(host, "."+p) {
+			return true
+		}
+	}
+	return false
+}
+
+// menuKeywords are words that, when co-occurring with price patterns, indicate
+// a menu page.
+var menuKeywords = []string{
+	"menu", "appetizer", "entree", "entrée", "dessert", "dishes", "lunch", "dinner",
+}
+
+var priceRe = regexp.MustCompile(`\$\s?\d+(?:\.\d{2})?`)
+
+// hasMenuSignal returns true when the HTML body contains evidence of a menu:
+//   - JSON-LD with at least one menu item (via scraper.ExtractJSONLD), OR
+//   - schema.org Menu/MenuItem/MenuSection @type attribute, OR
+//   - ≥3 price patterns co-occurring with at least one menu keyword.
+//
+// This is a conservative heuristic: false negatives (missing a real menu) are
+// acceptable; false positives (claiming non-menu is a menu) must be avoided.
+func hasMenuSignal(body []byte) bool {
+	lower := strings.ToLower(string(body))
+
+	// Check JSON-LD for menu items via Tier-0 extractor.
+	_, _, ok := scraper.ExtractJSONLD(bytes.NewReader(body))
+	if ok {
+		return true
+	}
+
+	// schema.org type signals — both JSON-LD (@type:"Menu") and microdata
+	// (itemtype="https://schema.org/MenuItem") forms.
+	for _, t := range []string{
+		`"menu"`, `"menuitem"`, `"menusection"`, // JSON-LD @type values (quoted)
+		"schema.org/menu", "schema.org/menuitem", "schema.org/menusection", // microdata itemtype URLs
+	} {
+		if strings.Contains(lower, t) {
+			return true
+		}
+	}
+
+	// Price + keyword heuristic.
+	prices := priceRe.FindAllString(lower, -1)
+	if len(prices) >= 3 {
+		for _, kw := range menuKeywords {
+			if strings.Contains(lower, kw) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// menuSignalFilter runs a plain GET on each candidate URL and drops those that
+// return a 2xx response with no menu signal AND are not whitelisted ordering
+// platforms. URLs that fail, time out, or return non-2xx are always kept.
+func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, logger *slog.Logger) []string {
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if keep, reason := checkMenuSignal(ctx, client, u); keep {
+			if reason != "" {
+				logger.Info("keeping URL (menu signal check)", "url", u, "reason", reason)
+			}
+			out = append(out, u)
+		} else {
+			logger.Info("dropping URL (no menu signal on 2xx GET)", "url", u)
+		}
+	}
+	return out
+}
+
+// checkMenuSignal performs the keep/drop decision for a single URL.
+// Returns (keep, reason) where reason is non-empty only for interesting keep paths.
+func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string) (bool, string) {
+	// Always keep ordering platforms — JS SPAs don't expose menus on plain GET.
+	if isOrderingPlatform(rawURL) {
+		return true, "ordering-platform whitelist"
+	}
+
+	// SSRF guard.
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return true, "parse error; keeping conservatively"
+	}
+	if isPrivateMenuHost(parsed.Hostname()) {
+		return false, ""
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return true, "request build error; keeping conservatively"
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		// Fetch failed / timed out — may be anti-bot; keep.
+		return true, "fetch error; keeping conservatively"
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Non-2xx (403/429/5xx) → anti-bot protected; keep always.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return true, fmt.Sprintf("non-2xx status %d; keeping (anti-bot)", resp.StatusCode)
+	}
+
+	// 2xx: read body and check for menu signal.
+	const maxBodyBytes = 512 * 1024
+	buf := make([]byte, maxBodyBytes)
+	n, _ := resp.Body.Read(buf)
+	body := buf[:n]
+
+	if hasMenuSignal(body) {
+		return true, "menu signal found"
+	}
+
+	// 2xx, not a whitelisted platform, no signal → drop.
+	return false, ""
 }
 
 // isDeliveryURL reports whether u belongs to a third-party delivery or
