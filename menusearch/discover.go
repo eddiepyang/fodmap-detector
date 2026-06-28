@@ -104,9 +104,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	if err := json.Unmarshal([]byte(cleanText), &result); err != nil {
 		slog.Warn("failed to parse discovery JSON, falling back to regex", "err", err)
 		urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
-		for _, u := range urlRe.FindAllString(text, -1) {
-			rawURLs = append(rawURLs, u)
-		}
+		rawURLs = append(rawURLs, urlRe.FindAllString(text, -1)...)
 	} else {
 		if len(result.MenuURLs) > 0 {
 			rawURLs = append(rawURLs, result.MenuURLs...)
