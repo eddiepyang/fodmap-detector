@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"fodmap/chat"
+	"fodmap/menusearch"
 	"fodmap/menutracking"
 	"fodmap/scraper"
+	"fodmap/search"
+	"fodmap/server"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -19,6 +22,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/genai"
 )
 
 var menutrackingCmd = &cobra.Command{
@@ -92,10 +96,17 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 
 // PipelineConfig holds the configuration for starting the menutracking pipeline.
 type PipelineConfig struct {
-	DSN         string
-	Fetcher     scraper.Fetcher
-	VectorSink  menutracking.VectorSink
-	ChatBackend chat.ChatBackend
+	DSN                   string
+	Fetcher               scraper.Fetcher
+	VectorSink            menutracking.VectorSink
+	ChatBackend           chat.ChatBackend
+	MenuStore             server.MenuStore
+	Embedder              search.Embedder
+	GenAIClient           *genai.Client
+	Extractor             scraper.Extractor
+	DiscoveryAvroDestDir  string
+	DiscoveryGeminiModel  string
+	ExtractionAvroDestDir string
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -171,6 +182,28 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	river.AddWorker(workers, scrapeWorker)
 	river.AddWorker(workers, promotionWorker)
 
+	discoverWorker := &menusearch.DiscoverMenuURLWorker{
+		Store:       menusearch.NewStore(pool),
+		GenAIClient: cfg.GenAIClient,
+		AvroDestDir: cfg.DiscoveryAvroDestDir,
+		GeminiModel: cfg.DiscoveryGeminiModel,
+	}
+	if cfg.GenAIClient != nil {
+		river.AddWorker(workers, discoverWorker)
+	}
+
+	scrapeMenuWorker := &menusearch.ScrapeMenuWorker{
+		Store:       menusearch.NewStore(pool),
+		MenuStore:   cfg.MenuStore,
+		Embedder:    cfg.Embedder,
+		Fetcher:     cfg.Fetcher,
+		Extractor:   cfg.Extractor,
+		AvroDestDir: cfg.ExtractionAvroDestDir,
+	}
+	if cfg.MenuStore != nil && cfg.Embedder != nil && cfg.Extractor != nil {
+		river.AddWorker(workers, scrapeMenuWorker)
+	}
+
 	// Build periodic jobs from sources.
 	var periodicJobs []*river.PeriodicJob
 	for _, s := range sources {
@@ -208,6 +241,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		return nil, fmt.Errorf("creating river client: %w", err)
 	}
 	scrapeWorker.RiverClient = riverClient
+	discoverWorker.RiverClient = riverClient
 
 	if err := riverClient.Start(ctx); err != nil {
 		pool.Close()

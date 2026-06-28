@@ -14,6 +14,7 @@ import (
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
+	"google.golang.org/genai"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -160,12 +161,38 @@ var serveCmd = &cobra.Command{
 				chatBackend = cb
 			}
 
+			// Menu search dependencies
+			var genAIClient *genai.Client
+			if os.Getenv("GOOGLE_API_KEY") != "" {
+				genAIClient, _ = genai.NewClient(cmd.Context(), nil)
+			}
+
+			var menuStore server.MenuStore
+			if ms, ok := srv.Searcher().(server.MenuStore); ok {
+				menuStore = ms
+			}
+
+			extractorURL := viper.GetString("extractor-url")
+			extractorModel := viper.GetString("extractor-model")
+			extractorAPIKey := viper.GetString("extractor-api-key")
+			var extractor scraper.Extractor
+			if extractorURL != "" {
+				extractor, _ = scraper.NewOpenAICompatExtractor(extractorURL, extractorModel, extractorAPIKey, "none")
+			}
+
 			var pipelineErr error
 			pipelineResult, pipelineErr = StartMenutrackingPipeline(cmd.Context(), PipelineConfig{
-				DSN:         postgresDSN,
-				Fetcher:     fetcher,
-				VectorSink:  vectorSink,
-				ChatBackend: chatBackend,
+				DSN:                   postgresDSN,
+				Fetcher:               fetcher,
+				VectorSink:            vectorSink,
+				ChatBackend:           chatBackend,
+				MenuStore:             menuStore,
+				Embedder:              embedder,
+				GenAIClient:           genAIClient,
+				Extractor:             extractor,
+				DiscoveryAvroDestDir:  viper.GetString("discovery-avro-dir"),
+				DiscoveryGeminiModel:  viper.GetString("discovery-gemini-model"),
+				ExtractionAvroDestDir: viper.GetString("extraction-avro-dir"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -218,6 +245,12 @@ func init() {
 	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 	serveCmd.Flags().Bool("enable-pipeline", false, "Enable the menutracking regulatory tracking pipeline (requires postgres-dsn)")
+	serveCmd.Flags().String("extractor-url", "", "OpenAI-compatible LLM endpoint for menu extraction (e.g., https://api.openai.com/v1)")
+	serveCmd.Flags().String("extractor-model", "gpt-4o", "LLM model name for menu extraction")
+	serveCmd.Flags().String("extractor-api-key", "", "API key for menu extraction LLM")
+	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
+	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
+	serveCmd.Flags().String("extraction-avro-dir", "data/bronze/menu_extraction", "Directory for extraction Avro records")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 	_ = viper.BindEnv("admin-email", "ADMIN_EMAIL")
