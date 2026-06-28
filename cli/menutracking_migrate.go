@@ -97,22 +97,23 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 
 // PipelineConfig holds the configuration for starting the menutracking pipeline.
 type PipelineConfig struct {
-	DSN                     string
-	Fetcher                 scraper.Fetcher
-	VectorSink              menutracking.VectorSink
-	ChatBackend             chat.ChatBackend
-	MenuStore               server.MenuStore
-	Embedder                search.Embedder
-	GenAIClient             *genai.Client
-	Extractor               scraper.Extractor
-	DiscoveryAvroDestDir    string
-	DiscoveryGeminiModel    string
-	DiscoveryStaggerSeconds int
-	ExtractionAvroDestDir   string
-	EnableVision            bool
-	UsePdftotext            bool
-	WebagentAdapter         string
-	BronzeDir               string
+	DSN                       string
+	Fetcher                   scraper.Fetcher
+	VectorSink                menutracking.VectorSink
+	ChatBackend               chat.ChatBackend
+	MenuStore                 server.MenuStore
+	Embedder                  search.Embedder
+	GenAIClient               *genai.Client
+	Extractor                 scraper.Extractor
+	DiscoveryAvroDestDir      string
+	DiscoveryGeminiModel      string
+	DiscoveryStaggerSeconds   int
+	DiscoveryMaxNoURLAttempts int
+	ExtractionAvroDestDir     string
+	EnableVision              bool
+	UsePdftotext              bool
+	WebagentAdapter           string
+	BronzeDir                 string
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -214,6 +215,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		AvroDestDir:          cfg.DiscoveryAvroDestDir,
 		GeminiModel:          cfg.DiscoveryGeminiModel,
 		ScrapeStaggerSeconds: cfg.DiscoveryStaggerSeconds,
+		MaxNoURLAttempts:     cfg.DiscoveryMaxNoURLAttempts,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

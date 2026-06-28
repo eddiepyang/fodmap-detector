@@ -103,6 +103,8 @@ type MenuExtractionResult struct {
     City           string      `json:"city,omitempty"`
     State          string      `json:"state,omitempty"`
     SourceURL      string      `json:"source_url"`
+    Address        string      `json:"address"`
+    PhoneNumber    string      `json:"phone_number"`
     ScrapedAtUTC   string      `json:"scraped_at_utc"`
     Items          []MenuEntry `json:"items"`
 }

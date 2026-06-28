@@ -10,6 +10,9 @@ go run .
 
 #### Commands
 
+For information on running the background pipeline and managing restaurants via CLI, see the [Pipeline CLI Guide](pipeline-cli.md).
+For information on how to query Weaviate directly, see the [Weaviate Query Guide](weaviate-queries.md).
+
 ##### Index (Weaviate)
 
 ```sh

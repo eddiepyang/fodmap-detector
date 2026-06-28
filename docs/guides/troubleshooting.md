@@ -202,4 +202,140 @@ This drops all domain tables. You can then run `db migrate-up` to recreate them.
 ### River's own tables
 River's schema tables (`river_job`, `river_leader`, `river_queue`, `river_client`) are managed separately by `river migrate-up` and are **not** included in `golang-migrate` migrations. Do not attempt to manage them with `db migrate-up/down`.
 
+---
 
+## 7. River Job Queue Diagnostics
+
+The menu pipeline (discovery + scraping) runs as River jobs inside PostgreSQL. All diagnostic queries below use the `river_job` table.
+
+### River job states
+
+| State | Meaning |
+|---|---|
+| `available` | Queued and ready for a worker to pick up |
+| `running` | Currently being processed by a worker |
+| `scheduled` | Waiting until `scheduled_at` (e.g. staggered scrape jobs) |
+| `retryable` | Failed; will be retried after `scheduled_at` |
+| `discarded` | Exhausted all attempts; written to `menutracking_dead_letter` |
+| `cancelled` | Manually cancelled |
+| `completed` | Finished successfully |
+
+### Overview: job counts by kind and state
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "SELECT kind, state, count(*) FROM river_job GROUP BY 1, 2 ORDER BY 1, 2;"
+```
+
+Key job kinds in the pipeline:
+- `menusearch.discover_menu_url` — Gemini web-search for a restaurant's menu URLs
+- `menusearch.scrape_menu` — fetch + extract a single menu URL via the Python scraper
+
+### Check errors on failing jobs
+
+```bash
+# Most recent error on retryable scrape jobs
+docker compose exec postgres psql -U fodmap -d fodmap -x -c \
+  "SELECT id, args->>'camis' AS camis, attempt, max_attempts, errors->-1->>'error' AS last_error
+   FROM river_job
+   WHERE kind = 'menusearch.scrape_menu' AND state = 'retryable'
+   ORDER BY id DESC LIMIT 5;"
+
+# Same for discovery jobs
+docker compose exec postgres psql -U fodmap -d fodmap -x -c \
+  "SELECT id, args->>'dba' AS dba, attempt, max_attempts, errors->-1->>'error' AS last_error
+   FROM river_job
+   WHERE kind = 'menusearch.discover_menu_url' AND state = 'retryable'
+   ORDER BY id DESC LIMIT 5;"
+```
+
+### Check permanently discarded jobs
+
+Jobs that exhaust all attempts are written to `menutracking_dead_letter`:
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -x -c \
+  "SELECT job_kind, job_args->>'camis' AS camis, error, discarded_at
+   FROM menutracking_dead_letter
+   ORDER BY discarded_at DESC LIMIT 10;"
+```
+
+### Check scheduled (future) jobs
+
+Scrape jobs are staggered by `discovery-stagger-seconds` (default 15 s per URL). Jobs in the `scheduled` state are waiting for their `scheduled_at`:
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "SELECT kind, count(*), min(scheduled_at), max(scheduled_at)
+   FROM river_job WHERE state = 'scheduled' GROUP BY 1;"
+```
+
+### Check restaurant pipeline status
+
+The `restaurants` table tracks each restaurant's pipeline stage:
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "SELECT status, count(*) FROM restaurants GROUP BY 1 ORDER BY 1;"
+```
+
+Common statuses: `pending_discovery`, `pending_scrape`, `scraped`, `failed_scrape`, `no_url_found`.
+
+To see which restaurants are stuck:
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "SELECT camis, dba, status, array_length(menu_urls, 1) AS url_count
+   FROM restaurants WHERE status NOT IN ('scraped') ORDER BY status, dba LIMIT 20;"
+```
+
+### Common causes and fixes
+
+**Cause A: Python scraper service not running**
+
+If scrape jobs fail with a connection error to `localhost:8765`, the Python scraper is not running.
+
+```bash
+curl -s http://localhost:8765/healthz   # should return {"status":"ok"}
+```
+
+Start it: `cd ../scraper && ./start.sh` (or `uv run uvicorn scraper.app:app --port 8765`).
+
+**Cause B: Scrape worker not registered**
+
+If the error is `"job kind is not registered in the client's Workers bundle: menusearch.scrape_menu"`, the server started without an extractor URL configured. The pipeline skips registering the scrape worker when `extractor-url` is empty.
+
+Ensure `service.yaml` has:
+```yaml
+extractor-url: "http://localhost:8765"
+```
+Then restart the server with `--enable-pipeline`.
+
+**Cause C: Discovery jobs stopped retrying (no URL found)**
+
+Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `no_url_found`. This is intentional — it means the restaurant has no discoverable web presence.
+
+To re-run discovery for a specific restaurant:
+```bash
+go run . restaurants discover <CAMIS>
+```
+
+**Cause D: Scrape jobs staggered into the future**
+
+This is normal: scrape jobs for multiple URLs from the same restaurant are scheduled `discovery-stagger-seconds` apart. They will run automatically. If you want them to run immediately (e.g. after fixing a bug):
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "UPDATE river_job SET state='available', scheduled_at=now()
+   WHERE kind='menusearch.scrape_menu' AND state='scheduled';"
+```
+
+### Resetting retryable jobs to run immediately
+
+After fixing a configuration issue, force all retrying jobs to re-run now:
+
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c \
+  "UPDATE river_job SET state='available', attempt=0, scheduled_at=now()
+   WHERE state='retryable' AND kind IN ('menusearch.discover_menu_url','menusearch.scrape_menu');"
+```

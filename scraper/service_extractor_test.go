@@ -16,11 +16,7 @@ import (
 // short timeouts suitable for tests.
 func newTestServiceExtractor(t *testing.T, baseURL string) *ServiceExtractor {
 	t.Helper()
-	text, err := NewOpenAICompatExtractor(baseURL+"/v1", "test", "", "none")
-	if err != nil {
-		t.Fatalf("NewOpenAICompatExtractor: %v", err)
-	}
-	return NewServiceExtractor(baseURL, text, 5*time.Second, 10*time.Second)
+	return NewServiceExtractor(baseURL, 5*time.Second, 10*time.Second)
 }
 
 // serviceStub records the last request path/body so tests can assert the
@@ -218,15 +214,11 @@ func TestServiceExtractor_ExtractPDF_EnforcesOverallDeadline(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	text, err := NewOpenAICompatExtractor(srv.URL+"/v1", "test", "", "none")
-	if err != nil {
-		t.Fatalf("NewOpenAICompatExtractor: %v", err)
-	}
 	// Per-page timeout is generous (no single call trips it); overall deadline is
 	// short enough that 20 × 60ms pages must blow past it.
-	se := NewServiceExtractor(srv.URL, text, time.Second, 200*time.Millisecond)
+	se := NewServiceExtractor(srv.URL, time.Second, 200*time.Millisecond)
 
-	_, err = se.ExtractPDF(context.Background(), []byte("fake"))
+	_, err := se.ExtractPDF(context.Background(), []byte("fake"))
 	if err == nil {
 		t.Fatal("expected overall PDF deadline to abort the page loop")
 	}
@@ -301,27 +293,40 @@ func TestServiceExtractor_NonEnvelopeErrorUsesHeaderRequestID(t *testing.T) {
 	}
 }
 
-func TestServiceExtractor_Extract_DelegatesToText(t *testing.T) {
-	// The text extractor is an OpenAICompatExtractor; verify Extract routes there.
-	textSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(makeChoiceResp(
-			`{"restaurant_name":"X","items":[{"dish":"soup","description":"","stated_ingredients":[],"has_full_ingredients":false}]}`,
-			"", "", "stop"))
+func TestServiceExtractor_Extract_CallsStructureEndpoint(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/v1/extractions:structure") {
+			var req structureRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotText = req.MergedText
+			_ = json.NewEncoder(w).Encode(structureResult{
+				SchemaRevision: "v1",
+				Backend:        "test",
+				Menu: menuDocument{
+					Sections: []menuSection{{
+						Name:  "Mains",
+						Items: []menuItem{{Name: "soup", HasFullIngredients: false}},
+					}},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer textSrv.Close()
+	defer srv.Close()
 
-	text, err := NewOpenAICompatExtractor(textSrv.URL+"/v1", "m", "", "none")
-	if err != nil {
-		t.Fatalf("NewOpenAICompatExtractor: %v", err)
-	}
-	se := NewServiceExtractor("http://unused.example", text, time.Second, time.Second)
-
+	se := NewServiceExtractor(srv.URL, time.Second, time.Second)
 	res, err := se.Extract(context.Background(), "menu text")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
+	if gotText != "menu text" {
+		t.Errorf("structure endpoint received %q, want %q", gotText, "menu text")
+	}
 	if len(res.Items) != 1 || res.Items[0].DishName != "soup" {
-		t.Errorf("delegated result wrong: %+v", res)
+		t.Errorf("result wrong: %+v", res)
 	}
 }
 

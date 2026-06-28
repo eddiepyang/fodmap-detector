@@ -131,20 +131,19 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schema init: %w", err)
 	}
 
-	// Build extractor. When --extractor-url is set, wrap the OpenAI-compat
-	// extractor in a ServiceExtractor so PDFs route to the Python service
-	// while HTML/text still uses the local LLM. When empty, the plain
-	// OpenAICompatExtractor is used (pure-Go default, no behavior change).
+	// Build extractor. When --extractor-url is set, all extraction routes to
+	// the Python scraper service (HTML/text, PDF, image). When empty, the plain
+	// OpenAICompatExtractor is used for direct LLM extraction.
 	var ex scraper.Extractor
-	oaex, err := scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey, llmReasoningEffort)
-	if err != nil {
-		return fmt.Errorf("building extractor: %w", err)
-	}
 	if extractorURL != "" {
-		ex = scraper.NewServiceExtractor(extractorURL, oaex, pageTimeout, pdfTimeout)
-		slog.Info("using scraper service for PDF/OCR", "url", extractorURL,
+		ex = scraper.NewServiceExtractor(extractorURL, pageTimeout, pdfTimeout)
+		slog.Info("using scraper service for extraction", "url", extractorURL,
 			"page_timeout", pageTimeout, "pdf_timeout", pdfTimeout)
 	} else {
+		oaex, err := scraper.NewOpenAICompatExtractor(llmURL, llmModel, llmAPIKey, llmReasoningEffort)
+		if err != nil {
+			return fmt.Errorf("building extractor: %w", err)
+		}
 		ex = oaex
 	}
 

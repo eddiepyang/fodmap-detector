@@ -74,3 +74,5 @@ filter-city: ""
 # ---- menutracking/discovery settings ----
 # Seconds to stagger scrape jobs for multiple menus from the same restaurant
 discovery-stagger-seconds: 15
+discovery-max-no-url-attempts: 3
+extractor-url: "http://localhost:8765"

@@ -46,6 +46,8 @@ type MenuItem struct {
 	StatedIngredients  []string
 	HasFullIngredients bool
 	SourceURL          string
+	Address            string
+	PhoneNumber        string
 	ScrapedAtUTC       string
 	Vector             []float32
 }
@@ -1052,6 +1054,8 @@ func (c *Client) EnsureMenuSchema(ctx context.Context) error {
 			{Name: "statedIngredients", DataType: []string{"text[]"}},
 			{Name: "hasFullIngredients", DataType: []string{"boolean"}},
 			{Name: "sourceUrl", DataType: []string{"text"}},
+			{Name: "address", DataType: []string{"text"}},
+			{Name: "phoneNumber", DataType: []string{"text"}},
 			{Name: "scrapedAtUtc", DataType: []string{"text"}},
 		},
 	}
@@ -1082,6 +1086,8 @@ func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
 				"statedIngredients":  item.StatedIngredients,
 				"hasFullIngredients": item.HasFullIngredients,
 				"sourceUrl":          item.SourceURL,
+				"address":            item.Address,
+				"phoneNumber":        item.PhoneNumber,
 				"scrapedAtUtc":       item.ScrapedAtUTC,
 			},
 		})
@@ -1152,6 +1158,9 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 			StatedIngredients:  stringSliceField(m, "statedIngredients"),
 			HasFullIngredients: boolField(m, "hasFullIngredients"),
 			SourceURL:          stringField(m, "sourceUrl"),
+			Address:            stringField(m, "address"),
+			PhoneNumber:        stringField(m, "phoneNumber"),
+			ScrapedAtUTC:       stringField(m, "scrapedAtUtc"),
 			City:               stringField(m, "city"),
 			State:              stringField(m, "state"),
 		})

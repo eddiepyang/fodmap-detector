@@ -18,6 +18,7 @@ type Restaurant struct {
 	Street     *string    `json:"street"`
 	Zipcode    *string    `json:"zipcode"`
 	Phone      *string    `json:"phone"`
+	Address    *string    `json:"address"`
 	Cuisine    *string    `json:"cuisine"`
 	Latitude   *float64   `json:"latitude"`
 	Longitude  *float64   `json:"longitude"`
@@ -39,7 +40,7 @@ type RestaurantStore interface {
 	Upsert(ctx context.Context, r Restaurant) error
 	Get(ctx context.Context, camis string) (*Restaurant, error)
 	List(ctx context.Context, status string, search string, limit, offset int) ([]Restaurant, error)
-	UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL string, menuURLs []string, source string) error
+	UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL string, menuURLs []string, source, address, phone string) error
 	UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error
 }
 

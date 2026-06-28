@@ -54,7 +54,7 @@ func (s *stubRestaurantStore) List(_ context.Context, _, _ string, _, _ int) ([]
 	return out, nil
 }
 
-func (s *stubRestaurantStore) UpdateDiscoveryURLs(_ context.Context, camis, websiteURL string, menuURLs []string, source string) error {
+func (s *stubRestaurantStore) UpdateDiscoveryURLs(_ context.Context, camis, websiteURL string, menuURLs []string, source, address, phone string) error {
 	if s.updateErr != nil {
 		return s.updateErr
 	}
@@ -62,6 +62,8 @@ func (s *stubRestaurantStore) UpdateDiscoveryURLs(_ context.Context, camis, webs
 		r.WebsiteURL = &websiteURL
 		r.MenuURLs = menuURLs
 		r.URLSource = &source
+		r.Address = &address
+		r.Phone = &phone
 	}
 	return nil
 }

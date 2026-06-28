@@ -61,6 +61,18 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 		return fmt.Errorf("extract menu: %w", err)
 	}
 
+	rest, err := w.Store.Get(ctx, args.CAMIS)
+	if err != nil {
+		logger.Warn("failed to get restaurant for address enrichment", "error", err)
+	} else if rest != nil {
+		if rest.Address != nil {
+			result.Address = *rest.Address
+		}
+		if rest.Phone != nil {
+			result.PhoneNumber = *rest.Phone
+		}
+	}
+
 	// Write raw body to bronze layer (best-effort). PDF bytes use .html extension
 	// like menutracking; the extension is informational only.
 	if len(rawBody) > 0 {

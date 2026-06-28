@@ -1016,11 +1016,7 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
   `StoreMenu` (returns `int` item count) so the worker can write the
   Avro record between phases and update the DB row with the count.
 
-- **No Postgres backend for menus.** `MenuStore` is Weaviate-only
-  (`search/weaviate.go:1066`). The scrape worker stores items in Weaviate,
-  not Postgres. If Postgres menu storage is needed later, add
-  `BatchUpsertMenu` to `PostgresClient` + a `menu_items` table — out of
-  scope here.
+- **Postgres backend for menus.** `MenuStore` is implemented for Postgres/pgvector via `search.PostgresClient`. A `menu_items` table stores the vectorized menu item data.
 
 - **Discovery prompt quality.** The prompt "Find the menu page URL for
   {DBA} at {address}, {boro} NY" may need tuning. Some restaurants have
