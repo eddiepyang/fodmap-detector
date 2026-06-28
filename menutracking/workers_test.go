@@ -257,6 +257,9 @@ func TestScrapeWorker_FetchError(t *testing.T) {
 }
 
 func TestWriteBronzeFile_PermissionError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping permission test: running as root bypasses file permission checks")
+	}
 	// Use a read-only directory to force a write error.
 	tmpDir := t.TempDir()
 	if err := os.Chmod(tmpDir, 0o555); err != nil {
