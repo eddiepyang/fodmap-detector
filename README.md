@@ -12,6 +12,29 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 
 ---
 
+## Architecture
+
+The menu pipeline is split across two services:
+
+**Go service** (`fodmap-detector`) is responsible for:
+- **Discovery** — Gemini API call to find menu URLs for each restaurant
+- **Fetching** — HTTP GET of plain HTML and PDF menu pages
+- **JSON-LD extraction (Tier 0)** — structured menu data embedded in the page is extracted directly in Go, skipping the Python service entirely
+- **Job orchestration** — River queue, retries, status tracking in Postgres
+- **Storage** — upserts menu items into Weaviate / pgvector
+
+**Python service** (`../scraper`, running on `:8765`) is responsible for:
+- **Fetching JS-rendered pages** — headless Chrome via the webagent; Go never sees the raw HTML for these
+- **Parsing HTML/text menus** — page text is sent to `/v1/extractions:structure`, which calls the service's own LLM (configured independently, defaults to Gemini)
+- **PDF menus** — inspect page count → OCR each page → structure
+- **Image menus** — OCR the image → structure
+
+The Python service owns all LLM configuration for parsing. The Go service only invokes it via its REST API and stores the results.
+
+**Retry cost controls:**
+- Discovery worker: if a retry finds URLs already stored in Postgres (Gemini succeeded but the subsequent write/enqueue failed), it skips the Gemini call and goes straight to re-enqueueing scrape jobs. Configurable via `discovery-max-no-url-attempts` (default 3) to stop retrying when no URL is ever found.
+- Python structuring: an in-process LRU cache (`SCRAPER_STRUCTURING_CACHE_SIZE`, default 512) returns cached results for repeated inputs, avoiding redundant LLM calls on River retries.
+
 ## Tech Stack
 
 | Component      | Technology                                                                                                                                       |
@@ -22,7 +45,7 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 | Concurrency    | Go channels + goroutines                                                                                                                         |
 | Vector search  | [Weaviate](https://weaviate.io) (local), [Pinecone](https://pinecone.io) (cloud), or [PostgreSQL/pgvector](https://github.com/pgvector/pgvector) |
 | LLM (chat)     | Google Gemini (`gemini-3-flash-preview`)                                                                                                         |
-| LLM (scraping) | Any OpenAI-compatible endpoint (Ollama, vLLM, OpenAI, Gemini)                                                                                    |
+| LLM (parsing)  | Configured in the Python scraper service (defaults to Gemini)                                                                                    |
 | Embeddings     | Ollama (`nomic-embed-text`)                                                                                                                      |
 
 ---

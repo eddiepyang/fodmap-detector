@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -507,15 +508,17 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 		menuStore = wc
 	}
 
-	files, err := filepath.Glob(filepath.Join(avroDir, "**", "*.avro"))
-	if err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		files, err = filepath.Glob(filepath.Join(avroDir, "*.avro"))
+	var files []string
+	if err := filepath.WalkDir(avroDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		if !d.IsDir() && filepath.Ext(path) == ".avro" {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	fmt.Printf("Found %d avro files to replay\n", len(files))
@@ -556,7 +559,9 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 			}
 
 			rest, err := restaurantStore.Get(ctx, camis)
-			if err == nil && rest != nil {
+			if err != nil {
+				slog.Warn("failed to get restaurant for address enrichment", "camis", camis, "error", err)
+			} else if rest != nil {
 				if rest.Boro != nil {
 					res.City = *rest.Boro
 				}

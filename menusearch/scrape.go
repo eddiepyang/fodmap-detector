@@ -62,7 +62,9 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 	}
 
 	rest, err := w.Store.Get(ctx, args.CAMIS)
-	if err == nil && rest != nil {
+	if err != nil {
+		logger.Warn("failed to get restaurant for address enrichment", "error", err)
+	} else if rest != nil {
 		if rest.Address != nil {
 			result.Address = *rest.Address
 		}

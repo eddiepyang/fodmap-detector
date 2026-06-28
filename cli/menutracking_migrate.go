@@ -105,9 +105,10 @@ type PipelineConfig struct {
 	Embedder                search.Embedder
 	GenAIClient             *genai.Client
 	Extractor               scraper.Extractor
-	DiscoveryAvroDestDir    string
-	DiscoveryGeminiModel    string
-	DiscoveryStaggerSeconds int
+	DiscoveryAvroDestDir      string
+	DiscoveryGeminiModel      string
+	DiscoveryStaggerSeconds   int
+	DiscoveryMaxNoURLAttempts int
 	ExtractionAvroDestDir   string
 	EnableVision            bool
 	UsePdftotext            bool
@@ -214,6 +215,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		AvroDestDir:          cfg.DiscoveryAvroDestDir,
 		GeminiModel:          cfg.DiscoveryGeminiModel,
 		ScrapeStaggerSeconds: cfg.DiscoveryStaggerSeconds,
+		MaxNoURLAttempts:     cfg.DiscoveryMaxNoURLAttempts,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

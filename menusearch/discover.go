@@ -35,12 +35,23 @@ type DiscoverMenuURLWorker struct {
 	AvroDestDir          string
 	GeminiModel          string
 	ScrapeStaggerSeconds int
+	MaxNoURLAttempts     int
 }
 
 func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
 	args := job.Args
 	logger := slog.With("job", job.ID, "camis", args.CAMIS, "dba", args.DBA)
 	logger.Info("starting discovery job")
+
+	// If a previous attempt already stored URLs (Gemini succeeded but the
+	// subsequent DB write or enqueue failed), skip the expensive Gemini call
+	// and go straight to re-enqueueing scrape jobs.
+	if job.Attempt > 1 {
+		if existing, err := w.Store.Get(ctx, args.CAMIS); err == nil && existing != nil && len(existing.MenuURLs) > 0 {
+			logger.Info("reusing URLs from previous attempt, skipping Gemini call", "count", len(existing.MenuURLs))
+			return w.enqueueScrapeJobs(ctx, args, existing.MenuURLs, "")
+		}
+	}
 
 	var promptBuf bytes.Buffer
 	if err := discoverPromptTmpl.Execute(&promptBuf, args); err != nil {
@@ -155,40 +166,51 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 			return fmt.Errorf("update menu url: %w", err)
 		}
 
-		for i, menuURL := range foundURLs {
-			stagger := w.ScrapeStaggerSeconds
-			if stagger <= 0 {
-				stagger = 15
-			}
-			delay := time.Duration(i*stagger) * time.Second
-			_, err = w.RiverClient.Insert(ctx, ScrapeMenuArgs{
-				CAMIS:            args.CAMIS,
-				URL:              menuURL,
-				DBA:              args.DBA,
-				DiscoveryEventID: eventID,
-			}, &river.InsertOpts{
-				UniqueOpts: river.UniqueOpts{
-					ByArgs:   true,
-					ByPeriod: 30 * 24 * time.Hour,
-				},
-				ScheduledAt: time.Now().Add(delay),
-			})
-			if err != nil {
-				return fmt.Errorf("enqueue scrape for %s: %w", menuURL, err)
-			}
+		if err := w.enqueueScrapeJobs(ctx, args, foundURLs, eventID); err != nil {
+			return err
 		}
 	} else {
-		if job.Attempt >= job.MaxAttempts {
-			logger.Info("no URL found after max attempts, marking permanently", "camis", args.CAMIS)
+		maxAttempts := w.MaxNoURLAttempts
+		if maxAttempts <= 0 {
+			maxAttempts = 3
+		}
+		if job.Attempt >= maxAttempts {
+			logger.Info("no URL found after max attempts, marking permanently", "camis", args.CAMIS, "max_attempts", maxAttempts)
 			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", nil, "gemini", "", ""); err != nil {
 				return fmt.Errorf("update no-url status: %w", err)
 			}
 			return nil
 		}
-		logger.Info("no URL found, will retry", "camis", args.CAMIS, "attempt", job.Attempt)
-		return fmt.Errorf("no URL found for %s (attempt %d/%d)", args.CAMIS, job.Attempt, job.MaxAttempts)
+		logger.Info("no URL found, will retry", "camis", args.CAMIS, "attempt", job.Attempt, "max", maxAttempts)
+		return fmt.Errorf("no URL found for %s (attempt %d/%d)", args.CAMIS, job.Attempt, maxAttempts)
 	}
 
+	return nil
+}
+
+func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args DiscoverMenuURLArgs, menuURLs []string, eventID string) error {
+	for i, menuURL := range menuURLs {
+		stagger := w.ScrapeStaggerSeconds
+		if stagger <= 0 {
+			stagger = 15
+		}
+		delay := time.Duration(i*stagger) * time.Second
+		_, err := w.RiverClient.Insert(ctx, ScrapeMenuArgs{
+			CAMIS:            args.CAMIS,
+			URL:              menuURL,
+			DBA:              args.DBA,
+			DiscoveryEventID: eventID,
+		}, &river.InsertOpts{
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: 30 * 24 * time.Hour,
+			},
+			ScheduledAt: time.Now().Add(delay),
+		})
+		if err != nil {
+			return fmt.Errorf("enqueue scrape for %s: %w", menuURL, err)
+		}
+	}
 	return nil
 }
 

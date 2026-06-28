@@ -39,41 +39,35 @@ type ImageExtractor interface {
 	ExtractImage(ctx context.Context, imgBytes []byte, mime string) (MenuExtractionResult, error)
 }
 
-// ServiceExtractor routes the PDF/OCR path to the Python scraper service's
-// /v1 API while delegating HTML/text extraction to an embedded
-// OpenAICompatExtractor. It implements both Extractor (for HTML) and
-// PDFExtractor (for PDFs), and JSRenderer when a webagent adapter is configured.
+// ServiceExtractor routes all extraction — HTML/text, PDF, and image — to the
+// Python scraper service's /v1 API. It fails if the service is unavailable.
 type ServiceExtractor struct {
 	baseURL    string
 	pageClient *http.Client  // per-page request timeout (single inspect/extract/structure call)
 	pdfClient  *http.Client  // per-request safety net for inspect/structure calls
 	pdfTimeout time.Duration // wall-clock deadline across the whole PDF orchestration
-	text       *OpenAICompatExtractor
 }
 
 // NewServiceExtractor builds a ServiceExtractor targeting the service at
 // baseURL (e.g. "http://localhost:8765"). pageTimeout bounds each individual
-// /pages:extract call (per-page OCR VLM is slow); pdfTimeout bounds the whole
-// PDF orchestration (applied as an overall context deadline in ExtractPDF, not
-// just a per-request timeout).
-func NewServiceExtractor(baseURL string, text *OpenAICompatExtractor, pageTimeout, pdfTimeout time.Duration) *ServiceExtractor {
+// /pages:extract call; pdfTimeout bounds the whole PDF orchestration.
+func NewServiceExtractor(baseURL string, pageTimeout, pdfTimeout time.Duration) *ServiceExtractor {
 	return &ServiceExtractor{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		pageClient: &http.Client{Timeout: pageTimeout},
 		pdfClient:  &http.Client{Timeout: pdfTimeout},
 		pdfTimeout: pdfTimeout,
-		text:       text,
 	}
 }
 
-// Extract delegates HTML/text structuring to the embedded pure-Go extractor.
+// Extract routes HTML/text to the service's extractions:structure endpoint.
 func (s *ServiceExtractor) Extract(ctx context.Context, pageText string) (MenuExtractionResult, error) {
-	return s.text.Extract(ctx, pageText)
+	structRes, err := s.structure(ctx, pageText)
+	if err != nil {
+		return MenuExtractionResult{}, err
+	}
+	return mapStructureToResult(structRes), nil
 }
-
-// Text returns the embedded OpenAICompatExtractor, used by the pure-Go vision
-// fallback when the service returns 503.
-func (s *ServiceExtractor) Text() *OpenAICompatExtractor { return s.text }
 
 // ── service request/response types ─────────────────────────────────────────
 

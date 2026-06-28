@@ -291,16 +291,10 @@ func ExtractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision
 
 	if pex, ok := ex.(scraper.PDFExtractor); ok {
 		result, sErr := pex.ExtractPDF(ctx, pdfBytes)
-		if sErr == nil {
-			return "", &result, nil
-		}
-		if !scraper.IsBackendUnavailable(sErr) {
+		if sErr != nil {
 			return "", nil, fmt.Errorf("service PDF extraction: %w", sErr)
 		}
-		slog.Warn("service OCR backend unavailable (503), falling back to pure-Go vision", "err", sErr)
-		if !enableVision {
-			return "", nil, fmt.Errorf("service OCR backend unavailable (503) and --enable-vision is not set: %w", sErr)
-		}
+		return "", &result, nil
 	}
 
 	if !enableVision {
@@ -308,13 +302,8 @@ func ExtractPDF(ctx context.Context, pdfBytes []byte, usePdftotext, enableVision
 	}
 
 	oaex, ok := ex.(*scraper.OpenAICompatExtractor)
-	if !ok {
-		if sex, ok2 := ex.(*scraper.ServiceExtractor); ok2 {
-			oaex = sex.Text()
-		}
-	}
-	if oaex == nil {
-		return "", nil, fmt.Errorf("vision path requires --llm-backend openai-compat")
+	if !ok || oaex == nil {
+		return "", nil, fmt.Errorf("vision path requires an OpenAI-compatible LLM extractor")
 	}
 	result, vErr := scraper.ExtractPDFVision(ctx, pdfBytes, oaex)
 	if vErr != nil {

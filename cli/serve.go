@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"fodmap/auth"
@@ -177,20 +176,9 @@ var serveCmd = &cobra.Command{
 			}
 
 			extractorURL := viper.GetString("extractor-url")
-			extractorModel := viper.GetString("extractor-model")
-			extractorAPIKey := viper.GetString("extractor-api-key")
-			if extractorAPIKey == "" {
-				extractorAPIKey = os.Getenv("GOOGLE_API_KEY")
-			}
 			var extractor scraper.Extractor
 			if extractorURL != "" {
-				llmURL := resolveLLMURL(extractorURL)
-				oaex, _ := scraper.NewOpenAICompatExtractor(llmURL, extractorModel, extractorAPIKey, "none")
-				if strings.Contains(extractorURL, "generativelanguage") || strings.Contains(extractorURL, "openai") {
-					extractor = oaex
-				} else {
-					extractor = scraper.NewServiceExtractor(extractorURL, oaex, 30*time.Second, 120*time.Second)
-				}
+				extractor = scraper.NewServiceExtractor(extractorURL, 30*time.Second, 120*time.Second)
 			}
 
 			var pipelineErr error
@@ -203,9 +191,10 @@ var serveCmd = &cobra.Command{
 				Embedder:                embedder,
 				GenAIClient:             genAIClient,
 				Extractor:               extractor,
-				DiscoveryAvroDestDir:    viper.GetString("discovery-avro-dir"),
-				DiscoveryGeminiModel:    viper.GetString("discovery-gemini-model"),
-				DiscoveryStaggerSeconds: viper.GetInt("discovery-stagger-seconds"),
+				DiscoveryAvroDestDir:      viper.GetString("discovery-avro-dir"),
+				DiscoveryGeminiModel:      viper.GetString("discovery-gemini-model"),
+				DiscoveryStaggerSeconds:   viper.GetInt("discovery-stagger-seconds"),
+				DiscoveryMaxNoURLAttempts: viper.GetInt("discovery-max-no-url-attempts"),
 				ExtractionAvroDestDir:   viper.GetString("extraction-avro-dir"),
 				EnableVision:            viper.GetBool("enable-vision"),
 				UsePdftotext:            viper.GetBool("use-pdftotext"),
@@ -251,12 +240,6 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func resolveLLMURL(extractorURL string) string {
-	if !strings.Contains(extractorURL, "generativelanguage") && !strings.Contains(extractorURL, "openai") {
-		return "https://generativelanguage.googleapis.com/v1beta/openai/"
-	}
-	return extractorURL
-}
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
@@ -278,10 +261,9 @@ func init() {
 	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 	serveCmd.Flags().Bool("enable-pipeline", false, "Enable the menutracking regulatory tracking pipeline (requires postgres-dsn)")
-	serveCmd.Flags().String("extractor-url", "", "OpenAI-compatible LLM endpoint for menu extraction (e.g., https://api.openai.com/v1)")
-	serveCmd.Flags().String("extractor-model", "gpt-4o", "LLM model name for menu extraction")
-	serveCmd.Flags().String("extractor-api-key", "", "API key for menu extraction LLM")
+	serveCmd.Flags().String("extractor-url", "", "Python scraper service URL for all menu extraction (e.g., http://localhost:8765)")
 	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
+	serveCmd.Flags().Int("discovery-max-no-url-attempts", 3, "Stop retrying discovery after this many consecutive no-URL results")
 	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
 	serveCmd.Flags().Int("discovery-stagger-seconds", 15, "Seconds to stagger scrape jobs for multiple menus from the same restaurant")
 	serveCmd.Flags().String("extraction-avro-dir", "data/silver/menus", "Directory for extraction Avro records")

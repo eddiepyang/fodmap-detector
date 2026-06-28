@@ -36,7 +36,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 
 func (s *Store) Upsert(ctx context.Context, r server.Restaurant) error {
 	_, err := s.pool.Exec(ctx, upsertRestaurantSQL,
-		r.CAMIS, r.DBA, r.Boro, r.Building, r.Street, r.Zipcode, r.Phone, r.Cuisine, r.Latitude, r.Longitude, r.NTA, r.Status)
+		r.CAMIS, r.DBA, r.Boro, r.Building, r.Street, r.Zipcode, r.Phone, r.Address, r.Cuisine, r.Latitude, r.Longitude, r.NTA, r.Status)
 	return err
 }
 

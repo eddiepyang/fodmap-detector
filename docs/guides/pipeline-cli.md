@@ -7,12 +7,12 @@ The FODMAP Detector includes a robust CLI for interacting with the restaurant in
 To successfully process restaurants through the entire discovery and extraction pipeline, you must run both the Go HTTP/worker server and the Python OCR scraper service.
 
 ### 1. Configure the Extractor
-Ensure that your `service.yaml` routes menu extraction to the local Python OCR service:
+Ensure that your `service.yaml` routes all menu extraction to the Python scraper service:
 ```yaml
 extractor-url: "http://localhost:8765"
-extractor-model: "gemini-3-flash-preview"
+discovery-max-no-url-attempts: 3   # stop retrying discovery after this many no-URL results
 ```
-*(The server will automatically fall back to the `GOOGLE_API_KEY` environment variable for the `extractor-api-key` if not explicitly set).*
+All LLM configuration (model, API key) lives in the Python service — the Go server does not pass or know about them. If the Python service is unreachable, extraction fails immediately (no fallback).
 
 ### 2. Start the Services
 The easiest way to start the pipeline workers alongside the Python OCR service is using the `start.sh` script:
