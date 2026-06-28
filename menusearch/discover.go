@@ -53,8 +53,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	res, err := w.GenAIClient.Models.GenerateContent(ctx, w.GeminiModel, genai.Text(prompt), &genai.GenerateContentConfig{
-		Tools:            []*genai.Tool{tool},
-		ResponseMIMEType: "application/json",
+		Tools: []*genai.Tool{tool},
 	})
 	if err != nil {
 		logger.Error("gemini request failed", "error", err)
