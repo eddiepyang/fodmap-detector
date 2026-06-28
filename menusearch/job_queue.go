@@ -46,25 +46,31 @@ func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) err
 // EnqueueScrape inserts a scrape_menu job for the given restaurant.
 // The restaurant must have a non-empty MenuURL.
 func (q *JobQueue) EnqueueScrape(ctx context.Context, r server.Restaurant) error {
-	if r.MenuURL == nil || *r.MenuURL == "" {
-		return fmt.Errorf("restaurant %s has no menu_url", r.CAMIS)
+	if len(r.MenuURLs) == 0 {
+		return fmt.Errorf("restaurant %s has no menu_urls", r.CAMIS)
 	}
-	args := ScrapeMenuArgs{
-		CAMIS: r.CAMIS,
-		URL:   *r.MenuURL,
-		DBA:   r.DBA,
+	allSkipped := true
+	for _, u := range r.MenuURLs {
+		args := ScrapeMenuArgs{
+			CAMIS: r.CAMIS,
+			URL:   u,
+			DBA:   r.DBA,
+		}
+		opts := &river.InsertOpts{
+			UniqueOpts: river.UniqueOpts{
+				ByArgs:   true,
+				ByPeriod: 30 * 24 * time.Hour,
+			},
+		}
+		res, err := q.Client.Insert(ctx, args, opts)
+		if err != nil {
+			return fmt.Errorf("enqueue scrape %s: %w", u, err)
+		}
+		if !res.UniqueSkippedAsDuplicate {
+			allSkipped = false
+		}
 	}
-	opts := &river.InsertOpts{
-		UniqueOpts: river.UniqueOpts{
-			ByArgs:   true,
-			ByPeriod: 30 * 24 * time.Hour,
-		},
-	}
-	res, err := q.Client.Insert(ctx, args, opts)
-	if err != nil {
-		return fmt.Errorf("enqueue scrape: %w", err)
-	}
-	if res.UniqueSkippedAsDuplicate {
+	if allSkipped {
 		return server.ErrJobAlreadyQueued
 	}
 	return nil

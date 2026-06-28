@@ -190,8 +190,8 @@ func (s *Server) restaurantTriggerScrapeHandler(w http.ResponseWriter, r *http.R
 		respondError(w, "not found", http.StatusNotFound)
 		return
 	}
-	if row.MenuURL == nil || *row.MenuURL == "" {
-		respondError(w, "restaurant has no menu_url; run discover first", http.StatusUnprocessableEntity)
+	if len(row.MenuURLs) == 0 {
+		respondError(w, "restaurant has no menu_urls; run discover first", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -234,7 +234,7 @@ func (s *Server) restaurantRetryHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var action string
-	if restaurantStatusNeedsRescrape(row.Status) && row.MenuURL != nil && *row.MenuURL != "" {
+	if restaurantStatusNeedsRescrape(row.Status) && len(row.MenuURLs) > 0 {
 		if err := s.restaurantJobQueue.EnqueueScrape(ctx, *row); err != nil && !errors.Is(err, ErrJobAlreadyQueued) {
 			slog.Error("restaurants: retry enqueue scrape", "camis", camis, "err", err)
 			respondError(w, "failed to enqueue scrape", http.StatusInternalServerError)

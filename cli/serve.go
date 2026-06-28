@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"fodmap/auth"
@@ -180,7 +181,12 @@ var serveCmd = &cobra.Command{
 			extractorAPIKey := viper.GetString("extractor-api-key")
 			var extractor scraper.Extractor
 			if extractorURL != "" {
-				extractor, _ = scraper.NewOpenAICompatExtractor(extractorURL, extractorModel, extractorAPIKey, "none")
+				oaex, _ := scraper.NewOpenAICompatExtractor(extractorURL, extractorModel, extractorAPIKey, "none")
+				if strings.Contains(extractorURL, "generativelanguage") || strings.Contains(extractorURL, "openai") {
+					extractor = oaex
+				} else {
+					extractor = scraper.NewServiceExtractor(extractorURL, oaex, 30*time.Second, 120*time.Second)
+				}
 			}
 
 			var pipelineErr error
@@ -193,13 +199,14 @@ var serveCmd = &cobra.Command{
 				Embedder:              embedder,
 				GenAIClient:           genAIClient,
 				Extractor:             extractor,
-				DiscoveryAvroDestDir:  viper.GetString("discovery-avro-dir"),
-				DiscoveryGeminiModel:  viper.GetString("discovery-gemini-model"),
-				ExtractionAvroDestDir: viper.GetString("extraction-avro-dir"),
-				EnableVision:          viper.GetBool("enable-vision"),
-				UsePdftotext:          viper.GetBool("use-pdftotext"),
-				WebagentAdapter:       viper.GetString("webagent-adapter"),
-				BronzeDir:             viper.GetString("restaurant-bronze-dir"),
+				DiscoveryAvroDestDir:    viper.GetString("discovery-avro-dir"),
+				DiscoveryGeminiModel:    viper.GetString("discovery-gemini-model"),
+				DiscoveryStaggerSeconds: viper.GetInt("discovery-stagger-seconds"),
+				ExtractionAvroDestDir:   viper.GetString("extraction-avro-dir"),
+				EnableVision:            viper.GetBool("enable-vision"),
+				UsePdftotext:            viper.GetBool("use-pdftotext"),
+				WebagentAdapter:         viper.GetString("webagent-adapter"),
+				BronzeDir:               viper.GetString("restaurant-bronze-dir"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -265,6 +272,7 @@ func init() {
 	serveCmd.Flags().String("extractor-api-key", "", "API key for menu extraction LLM")
 	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
 	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
+	serveCmd.Flags().Int("discovery-stagger-seconds", 15, "Seconds to stagger scrape jobs for multiple menus from the same restaurant")
 	serveCmd.Flags().String("extraction-avro-dir", "data/bronze/menu_extraction", "Directory for extraction Avro records")
 	serveCmd.Flags().Bool("enable-vision", false, "Enable vision/OCR for image-only menus (requires --extractor-url)")
 	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")

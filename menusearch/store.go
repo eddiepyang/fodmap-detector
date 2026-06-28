@@ -20,8 +20,8 @@ var getRestaurantSQL string
 //go:embed store/sql/list_restaurants.sql
 var listRestaurantsSQL string
 
-//go:embed store/sql/update_menu_url.sql
-var updateMenuURLSQL string
+//go:embed store/sql/update_discovery_urls.sql
+var updateDiscoveryURLsSQL string
 
 //go:embed store/sql/update_scrape_result.sql
 var updateScrapeResultSQL string
@@ -44,7 +44,7 @@ func (s *Store) Get(ctx context.Context, camis string) (*server.Restaurant, erro
 	var r server.Restaurant
 	err := s.pool.QueryRow(ctx, getRestaurantSQL, camis).Scan(
 		&r.CAMIS, &r.DBA, &r.Boro, &r.Building, &r.Street, &r.Zipcode, &r.Phone, &r.Cuisine, &r.Latitude, &r.Longitude, &r.NTA,
-		&r.Status, &r.MenuURL, &r.MenuURLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
+		&r.Status, &r.WebsiteURL, &r.MenuURLs, &r.URLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -67,7 +67,7 @@ func (s *Store) List(ctx context.Context, status string, search string, limit, o
 		var r server.Restaurant
 		if err := rows.Scan(
 			&r.CAMIS, &r.DBA, &r.Boro, &r.Building, &r.Street, &r.Zipcode, &r.Phone, &r.Cuisine, &r.Latitude, &r.Longitude, &r.NTA,
-			&r.Status, &r.MenuURL, &r.MenuURLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
+			&r.Status, &r.WebsiteURL, &r.MenuURLs, &r.URLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -76,8 +76,8 @@ func (s *Store) List(ctx context.Context, status string, search string, limit, o
 	return results, rows.Err()
 }
 
-func (s *Store) UpdateMenuURL(ctx context.Context, camis, menuURL, source string) error {
-	_, err := s.pool.Exec(ctx, updateMenuURLSQL, camis, menuURL, source)
+func (s *Store) UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL string, menuURLs []string, source string) error {
+	_, err := s.pool.Exec(ctx, updateDiscoveryURLsSQL, camis, websiteURL, menuURLs, source)
 	return err
 }
 

@@ -105,13 +105,14 @@ type PipelineConfig struct {
 	Embedder              search.Embedder
 	GenAIClient           *genai.Client
 	Extractor             scraper.Extractor
-	DiscoveryAvroDestDir  string
-	DiscoveryGeminiModel  string
-	ExtractionAvroDestDir string
-	EnableVision          bool
-	UsePdftotext          bool
-	WebagentAdapter       string
-	BronzeDir             string
+	DiscoveryAvroDestDir    string
+	DiscoveryGeminiModel    string
+	DiscoveryStaggerSeconds int
+	ExtractionAvroDestDir   string
+	EnableVision            bool
+	UsePdftotext            bool
+	WebagentAdapter         string
+	BronzeDir               string
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -208,10 +209,11 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	river.AddWorker(workers, promotionWorker)
 
 	discoverWorker := &menusearch.DiscoverMenuURLWorker{
-		Store:       menusearch.NewStore(pool),
-		GenAIClient: cfg.GenAIClient,
-		AvroDestDir: cfg.DiscoveryAvroDestDir,
-		GeminiModel: cfg.DiscoveryGeminiModel,
+		Store:                menusearch.NewStore(pool),
+		GenAIClient:          cfg.GenAIClient,
+		AvroDestDir:          cfg.DiscoveryAvroDestDir,
+		GeminiModel:          cfg.DiscoveryGeminiModel,
+		ScrapeStaggerSeconds: cfg.DiscoveryStaggerSeconds,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

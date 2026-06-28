@@ -23,8 +23,9 @@ type Restaurant struct {
 	Longitude     *float64   `json:"longitude"`
 	NTA           *string    `json:"nta"`
 	Status        string     `json:"status"`
-	MenuURL       *string    `json:"menu_url"`
-	MenuURLSource *string    `json:"menu_url_source"`
+	WebsiteURL    *string    `json:"website_url"`
+	MenuURLs      []string   `json:"menu_urls"`
+	URLSource     *string    `json:"url_source"`
 	ItemCount     int        `json:"item_count"`
 	ScrapedAt     *time.Time `json:"scraped_at"`
 	LastError     *string    `json:"last_error"`
@@ -38,7 +39,7 @@ type RestaurantStore interface {
 	Upsert(ctx context.Context, r Restaurant) error
 	Get(ctx context.Context, camis string) (*Restaurant, error)
 	List(ctx context.Context, status string, search string, limit, offset int) ([]Restaurant, error)
-	UpdateMenuURL(ctx context.Context, camis, menuURL, source string) error
+	UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL string, menuURLs []string, source string) error
 	UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error
 }
 

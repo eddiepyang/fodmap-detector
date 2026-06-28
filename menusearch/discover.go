@@ -1,7 +1,10 @@
 package menusearch
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,14 +21,20 @@ import (
 	"google.golang.org/genai"
 )
 
+//go:embed prompts/discover.txt
+var discoverPromptStr string
+
+var discoverPromptTmpl = template.Must(template.New("discover").Parse(discoverPromptStr))
+
 type DiscoverMenuURLWorker struct {
 	river.WorkerDefaults[DiscoverMenuURLArgs]
 	Store       *Store
 	GenAIClient *genai.Client
-	RiverClient *river.Client[pgx.Tx]
-	HTTPClient  *http.Client
-	AvroDestDir string
-	GeminiModel string
+	RiverClient          *river.Client[pgx.Tx]
+	HTTPClient           *http.Client
+	AvroDestDir          string
+	GeminiModel          string
+	ScrapeStaggerSeconds int
 }
 
 func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
@@ -32,17 +42,19 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	logger := slog.With("job", job.ID, "camis", args.CAMIS, "dba", args.DBA)
 	logger.Info("starting discovery job")
 
-	prompt := fmt.Sprintf(
-		"Find the official website URL for the restaurant %q at %s %s, %s NY. "+
-			"Return only the URL(s), one per line.",
-		args.DBA, args.Building, args.Street, args.Boro)
+	var promptBuf bytes.Buffer
+	if err := discoverPromptTmpl.Execute(&promptBuf, args); err != nil {
+		return fmt.Errorf("execute prompt template: %w", err)
+	}
+	prompt := promptBuf.String()
 
 	tool := &genai.Tool{
 		GoogleSearch: &genai.GoogleSearch{},
 	}
 
 	res, err := w.GenAIClient.Models.GenerateContent(ctx, w.GeminiModel, genai.Text(prompt), &genai.GenerateContentConfig{
-		Tools: []*genai.Tool{tool},
+		Tools:            []*genai.Tool{tool},
+		ResponseMIMEType: "application/json",
 	})
 	if err != nil {
 		logger.Error("gemini request failed", "error", err)
@@ -82,15 +94,36 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	// resolve them to the real restaurant domain before filtering.
 	rawURLs = resolveRedirects(ctx, w.HTTPClient, rawURLs)
 
-	// Fallback: extract URLs from the response prose, skipping known redirect hosts.
-	urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
-	for _, u := range urlRe.FindAllString(text, -1) {
-		if !strings.Contains(u, "vertexaisearch") && !strings.Contains(u, "google.com") {
-			rawURLs = append(rawURLs, u)
+	var result struct {
+		WebsiteURL string   `json:"website_url"`
+		MenuURLs   []string `json:"menu_urls"`
+	}
+
+	cleanText := strings.TrimSpace(text)
+	cleanText = strings.TrimPrefix(cleanText, "```json")
+	cleanText = strings.TrimPrefix(cleanText, "```")
+	cleanText = strings.TrimSuffix(cleanText, "```")
+	cleanText = strings.TrimSpace(cleanText)
+	if err := json.Unmarshal([]byte(cleanText), &result); err != nil {
+		slog.Warn("failed to parse discovery JSON, falling back to regex", "err", err)
+		urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
+		for _, u := range urlRe.FindAllString(text, -1) {
+			if !strings.Contains(u, "vertexaisearch") && !strings.Contains(u, "google.com") {
+				rawURLs = append(rawURLs, u)
+			}
 		}
+	} else {
+		if result.WebsiteURL != "" {
+			rawURLs = append(rawURLs, result.WebsiteURL)
+		}
+		rawURLs = append(rawURLs, result.MenuURLs...)
 	}
 
 	foundURLs := dedupAndFilter(rawURLs)
+	primaryURL := result.WebsiteURL
+	if primaryURL == "" && len(foundURLs) > 0 {
+		primaryURL = foundURLs[0] // fallback
+	}
 
 	if len(foundURLs) == 0 && len(rawURLs) > 0 {
 		logger.Info("all grounding chunks were filtered out (likely delivery/directory sites)", "raw_count", len(rawURLs))
@@ -115,31 +148,38 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	if len(foundURLs) > 0 {
-		menuURL := foundURLs[0]
-		logger.Info("found URL", "url", menuURL)
+		logger.Info("found URL(s)", "count", len(foundURLs), "primary", primaryURL)
 
-		if err := w.Store.UpdateMenuURL(ctx, args.CAMIS, menuURL, "gemini"); err != nil {
+		if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, primaryURL, foundURLs, "gemini"); err != nil {
 			return fmt.Errorf("update menu url: %w", err)
 		}
 
-		_, err = w.RiverClient.Insert(ctx, ScrapeMenuArgs{
-			CAMIS:            args.CAMIS,
-			URL:              menuURL,
-			DBA:              args.DBA,
-			DiscoveryEventID: eventID,
-		}, &river.InsertOpts{
-			UniqueOpts: river.UniqueOpts{
-				ByArgs:   true,
-				ByPeriod: 30 * 24 * time.Hour,
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("enqueue scrape: %w", err)
+		for i, menuURL := range foundURLs {
+			stagger := w.ScrapeStaggerSeconds
+			if stagger <= 0 {
+				stagger = 15
+			}
+			delay := time.Duration(i*stagger) * time.Second
+			_, err = w.RiverClient.Insert(ctx, ScrapeMenuArgs{
+				CAMIS:            args.CAMIS,
+				URL:              menuURL,
+				DBA:              args.DBA,
+				DiscoveryEventID: eventID,
+			}, &river.InsertOpts{
+				UniqueOpts: river.UniqueOpts{
+					ByArgs:   true,
+					ByPeriod: 30 * 24 * time.Hour,
+				},
+				ScheduledAt: time.Now().Add(delay),
+			})
+			if err != nil {
+				return fmt.Errorf("enqueue scrape for %s: %w", menuURL, err)
+			}
 		}
 	} else {
 		if job.Attempt >= job.MaxAttempts {
 			logger.Info("no URL found after max attempts, marking permanently", "camis", args.CAMIS)
-			if err := w.Store.UpdateMenuURL(ctx, args.CAMIS, "", "gemini"); err != nil {
+			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", nil, "gemini"); err != nil {
 				return fmt.Errorf("update no-url status: %w", err)
 			}
 			return nil

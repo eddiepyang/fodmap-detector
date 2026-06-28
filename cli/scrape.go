@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
+	"fodmap/menusearch"
 	"fodmap/pipeline"
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -161,13 +165,68 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		slog.Info("using headless Chrome for JS rendering (generic path; no adapter)")
 	}
 
-	result, _, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
+	result, rawBody, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
 	if err != nil {
 		return err
 	}
+
+	camis := "cli-manual"
+	jobID := "0"
+	attempt := int(time.Now().Unix())
+
+	if len(rawBody) > 0 {
+		date := time.Now().UTC().Format("2006-01-02")
+		bronzeDir := os.Getenv("RESTAURANT_BRONZE_DIR")
+		if bronzeDir == "" {
+			bronzeDir = "data/bronze/restaurants"
+		}
+		htmlPath := filepath.Join(bronzeDir, date, fmt.Sprintf("%s-%d.html", camis, attempt))
+		if mkErr := os.MkdirAll(filepath.Dir(htmlPath), 0o755); mkErr == nil {
+			if wErr := os.WriteFile(htmlPath, rawBody, 0o644); wErr != nil {
+				slog.Warn("failed to write HTML bronze", "path", htmlPath, "error", wErr)
+			} else {
+				slog.Info("saved raw body to bronze layer", "path", htmlPath)
+			}
+		}
+	}
+
 	if result == nil || len(result.Items) == 0 {
 		fmt.Printf("No menu items found at %s\n", rawURL)
 		return nil
+	}
+
+	items := make([]search.MenuItem, 0, len(result.Items))
+	for _, entry := range result.Items {
+		items = append(items, search.MenuItem{
+			DishName:           entry.DishName,
+			Description:        entry.Description,
+			StatedIngredients:  entry.StatedIngredients,
+			HasFullIngredients: entry.HasFullIngredients,
+		})
+	}
+
+	record := menusearch.MenuExtractionRecord{
+		CAMIS:            camis,
+		SourceURL:        rawURL,
+		RestaurantName:   result.RestaurantName,
+		Items:            items,
+		EventID:          uuid.NewString(),
+		JobID:            jobID,
+		Attempt:          attempt,
+		DiscoveryEventID: "",
+	}
+
+	avroDir := os.Getenv("RESTAURANT_AVRO_DIR")
+	if avroDir == "" {
+		avroDir = "data/silver/menus"
+	}
+	avroDest := filepath.Join(avroDir, time.Now().UTC().Format("2006-01-02"), fmt.Sprintf("%s-%d.avro", camis, attempt))
+	if mkErr := os.MkdirAll(filepath.Dir(avroDest), 0o755); mkErr == nil {
+		if err := menusearch.WriteMenuExtractionAvro(ctx, avroDest, record); err != nil {
+			slog.Error("failed to write avro", "error", err)
+		} else {
+			slog.Info("saved extraction record to silver layer", "path", avroDest)
+		}
 	}
 
 	count, err := pipeline.StoreMenu(ctx, result, rawURL, store, embedder)

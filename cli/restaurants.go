@@ -104,11 +104,7 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 
 	store := menusearch.NewStore(pool)
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 10},
-		},
-	})
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -197,12 +193,14 @@ func runListRestaurants(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Found %d restaurants with status %q:\n", len(restaurants), status)
 	for _, r := range restaurants {
-		menuURL := r.MenuURL
-		if menuURL == nil {
-			menuURL = new(string)
-			*menuURL = ""
+		websiteURL := ""
+		if r.WebsiteURL != nil {
+			websiteURL = *r.WebsiteURL
 		}
-		fmt.Printf("- %s: %s (Menu URL: %s)\n", r.CAMIS, r.DBA, *menuURL)
+		if len(r.MenuURLs) > 0 {
+			websiteURL += fmt.Sprintf(" (+%d menus)", len(r.MenuURLs))
+		}
+		fmt.Printf("- %s: %s (Website: %s)\n", r.CAMIS, r.DBA, websiteURL)
 	}
 	return nil
 }
@@ -233,15 +231,11 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 	if r == nil {
 		return fmt.Errorf("restaurant %s not found", camis)
 	}
-	if r.MenuURL == nil || *r.MenuURL == "" {
-		return fmt.Errorf("restaurant %s has no menu URL", camis)
+	if len(r.MenuURLs) == 0 {
+		return fmt.Errorf("restaurant %s has no menu URLs", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 10},
-		},
-	})
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -250,14 +244,17 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update status: %w", err)
 	}
 
-	_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-		CAMIS:            r.CAMIS,
-		URL:              *r.MenuURL,
-		DBA:              r.DBA,
-		DiscoveryEventID: uuid.NewString(),
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("enqueue scrape: %w", err)
+	eventID := uuid.NewString()
+	for _, u := range r.MenuURLs {
+		_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
+			CAMIS:            r.CAMIS,
+			URL:              u,
+			DBA:              r.DBA,
+			DiscoveryEventID: eventID,
+		}, nil)
+		if err != nil {
+			return fmt.Errorf("enqueue river job for %s: %w", u, err)
+		}
 	}
 
 	fmt.Printf("Enqueued scrape job for %s\n", camis)
@@ -291,11 +288,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restaurant %s not found", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 10},
-		},
-	})
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -369,24 +362,23 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restaurant %s not found", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 10},
-		},
-	})
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
-	if r.MenuURL != nil && *r.MenuURL != "" {
-		_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-			CAMIS:            r.CAMIS,
-			URL:              *r.MenuURL,
-			DBA:              r.DBA,
-			DiscoveryEventID: uuid.NewString(),
-		}, nil)
-		if err != nil {
-			return fmt.Errorf("enqueue scrape: %w", err)
+	if len(r.MenuURLs) > 0 {
+		eventID := uuid.NewString()
+		for _, u := range r.MenuURLs {
+			_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
+				CAMIS:            r.CAMIS,
+				URL:              u,
+				DBA:              r.DBA,
+				DiscoveryEventID: eventID,
+			}, nil)
+			if err != nil {
+				return fmt.Errorf("enqueue scrape %s: %w", u, err)
+			}
 		}
 		err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, "")
 		if err != nil {
