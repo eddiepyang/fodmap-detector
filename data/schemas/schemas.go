@@ -103,6 +103,7 @@ var MenuExtractionSchema = `{
         {"name": "job_id", "type": "string"},
         {"name": "attempt", "type": "int"},
         {"name": "discovery_event_id", "type": "string"},
+        {"name": "extraction_tier", "type": "string", "default": ""},
         {"name": "created_at", "type": "string"}
     ]
 }`

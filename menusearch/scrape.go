@@ -57,7 +57,14 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 
 	result, rawBody, err := pipeline.ExtractMenu(ctx, args.URL, w.Fetcher, w.Extractor, w.EnableVision, w.UsePdftotext, w.WebagentAdapter)
 	if err != nil {
-		_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedScrape, 0, err.Error())
+		// Transient render errors (503 BrowserBusy/WafBlocked, 504 FetchTimeout)
+		// must not clobber the restaurant status — River will retry the job up to
+		// MaxAttempts times. Write StatusFailedScrape only for permanent failures.
+		if !scraper.IsRenderTransient(err) {
+			_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedScrape, 0, err.Error())
+		} else {
+			logger.Warn("transient render error; skipping failed_scrape write for retry", "error", err)
+		}
 		return fmt.Errorf("extract menu: %w", err)
 	}
 
@@ -110,6 +117,7 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 		JobID:            fmt.Sprintf("%d", job.ID),
 		Attempt:          job.Attempt,
 		DiscoveryEventID: args.DiscoveryEventID,
+		ExtractionTier:   result.ExtractionTier,
 	}
 
 	avroDest := filepath.Join(w.AvroDestDir, fmt.Sprintf("%s-%d.avro", args.CAMIS, job.Attempt))
@@ -128,6 +136,12 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 		return fmt.Errorf("update status: %w", err)
 	}
 
-	logger.Info("scrape successful", "count", count)
+	// Tier-mix telemetry (best-effort): record which cascade tier produced this
+	// result so the JSON-LD vs. LLM/OCR/browser split can be measured.
+	if tErr := w.Store.SetExtractionTier(ctx, args.CAMIS, result.ExtractionTier); tErr != nil {
+		logger.Warn("failed to record extraction tier", "tier", result.ExtractionTier, "error", tErr)
+	}
+
+	logger.Info("scrape successful", "count", count, "tier", result.ExtractionTier)
 	return nil
 }

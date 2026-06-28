@@ -193,6 +193,51 @@ func TestHTTPFetcher_404(t *testing.T) {
 	assert.Contains(t, err.Error(), "404")
 }
 
+func TestHTTPFetcher_404_ReturnsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	f := NewHTTPFetcher(false)
+	_, err := f.Fetch(context.Background(), srv.URL+"/page")
+	require.Error(t, err)
+
+	var statusErr *HTTPStatusError
+	require.ErrorAs(t, err, &statusErr, "404 must surface as *HTTPStatusError")
+	assert.Equal(t, 404, statusErr.StatusCode)
+	assert.Contains(t, statusErr.URL, srv.URL)
+}
+
+func TestHTTPFetcher_403_ReturnsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	f := NewHTTPFetcher(false)
+	_, err := f.Fetch(context.Background(), srv.URL+"/page")
+	require.Error(t, err)
+
+	var statusErr *HTTPStatusError
+	require.ErrorAs(t, err, &statusErr, "403 must surface as *HTTPStatusError")
+	assert.Equal(t, 403, statusErr.StatusCode)
+}
+
+func TestHTTPStatusError_ErrorString(t *testing.T) {
+	e := &HTTPStatusError{StatusCode: 429, URL: "https://example.com/menu"}
+	assert.Contains(t, e.Error(), "429")
+	assert.Contains(t, e.Error(), "example.com")
+}
+
 func TestHTTPFetcher_RobotsDisallowed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/robots.txt" {

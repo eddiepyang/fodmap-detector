@@ -25,6 +25,7 @@ func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) err
 		Building: safeDeref(r.Building),
 		Street:   safeDeref(r.Street),
 		Boro:     safeDeref(r.Boro),
+		Zipcode:  safeDeref(r.Zipcode),
 		Attempt:  1,
 	}
 	opts := &river.InsertOpts{

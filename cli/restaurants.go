@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"fodmap/menusearch"
 	"fodmap/pipeline"
@@ -41,6 +42,7 @@ func init() {
 	importCmd.Flags().Int("limit", 100, "Limit the number of records to import")
 	importCmd.Flags().Int("offset", 0, "Offset the number of records to import")
 	importCmd.Flags().Bool("skip-discovery", false, "Skip enqueueing discovery jobs")
+	importCmd.Flags().String("bronze-dir", "data/bronze/restaurants", "Directory to save raw restaurant downloads")
 	restaurantsCmd.AddCommand(importCmd)
 
 	listCmd := &cobra.Command{
@@ -137,17 +139,44 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
-	fmt.Printf("Fetching restaurants for area %q...\n", areaName)
-	reader, err := menusearch.FetchNYCRestaurants(ctx, areaName, appToken)
-	if err != nil {
-		return fmt.Errorf("fetch restaurants: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
+	bronzeDir, _ := cmd.Flags().GetString("bronze-dir")
+	todayStr := time.Now().UTC().Format("2006-01-02")
+	avroPath := filepath.Join(bronzeDir, fmt.Sprintf("%s-%s.avro", areaName, todayStr))
 
-	records, err := menusearch.ParseNYCCSV(reader)
-	if err != nil {
-		return fmt.Errorf("parse csv: %w", err)
+	var records []menusearch.NYCRestaurantRecord
+
+	if _, err := os.Stat(avroPath); err == nil {
+		fmt.Printf("Reusing today's avro file: %s\n", avroPath)
+		records, err = menusearch.ReadNYCRestaurantAvro(avroPath)
+		if err != nil {
+			return fmt.Errorf("read avro: %w", err)
+		}
+	} else {
+		since, err := store.MaxUpdatedAt(ctx)
+		if err != nil {
+			fmt.Printf("Warning: failed to get max updated_at: %v\n", err)
+		}
+
+		fmt.Printf("Fetching restaurants for area %q (since %v)...\n", areaName, since)
+		reader, err := menusearch.FetchNYCRestaurants(ctx, areaName, appToken, since)
+		if err != nil {
+			return fmt.Errorf("fetch restaurants: %w", err)
+		}
+		defer func() { _ = reader.Close() }()
+
+		records, err = menusearch.ParseNYCCSV(reader)
+		if err != nil {
+			return fmt.Errorf("parse csv: %w", err)
+		}
+
+		if len(records) > 0 {
+			fmt.Printf("Saving %d records to %s\n", len(records), avroPath)
+			if err := menusearch.WriteNYCRestaurantAvro(ctx, avroPath, records); err != nil {
+				return fmt.Errorf("write avro: %w", err)
+			}
+		}
 	}
+
 	offset, _ := cmd.Flags().GetInt("offset")
 	records = paginateRecords(records, limit, offset)
 
@@ -180,6 +209,7 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 				Building: rec.Building,
 				Street:   rec.Street,
 				Boro:     rec.Boro,
+				Zipcode:  rec.Zipcode,
 				Attempt:  1,
 			}, nil)
 			if err != nil {
@@ -343,6 +373,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		Building: safeStr(r.Building),
 		Street:   safeStr(r.Street),
 		Boro:     safeStr(r.Boro),
+		Zipcode:  safeStr(r.Zipcode),
 		Attempt:  1,
 	}, nil)
 	if err != nil {
@@ -436,6 +467,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 			Building: safeStr(r.Building),
 			Street:   safeStr(r.Street),
 			Boro:     safeStr(r.Boro),
+			Zipcode:  safeStr(r.Zipcode),
 			Attempt:  1,
 		}, nil)
 		if err != nil {

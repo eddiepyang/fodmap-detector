@@ -157,6 +157,18 @@ func IsBackendUnavailable(err error) bool {
 	return errors.As(err, &se) && se.statusCode == http.StatusServiceUnavailable
 }
 
+// IsRenderTransient reports whether err is a transient error from the rendered-
+// fetch endpoint (503 BrowserBusy/WafBlocked or 504 FetchTimeout). These should
+// be retried by River rather than written as terminal failed_scrape status.
+func IsRenderTransient(err error) bool {
+	var se *serviceError
+	if errors.As(err, &se) {
+		return se.statusCode == http.StatusServiceUnavailable ||
+			se.statusCode == http.StatusGatewayTimeout
+	}
+	return false
+}
+
 // ExtractPDF orchestrates the service's stateless flow:
 // documents:inspect → per-page pages:extract → extractions:structure.
 func (s *ServiceExtractor) ExtractPDF(ctx context.Context, pdfBytes []byte) (MenuExtractionResult, error) {
@@ -413,6 +425,82 @@ func decodeServiceError(resp *http.Response) error {
 // (see the service's MenuDocument contract), so it maps to a MenuExtractionResult
 // with zero Items and needs no special error handling here — callers detect it
 // via len(result.Items) == 0.
+
+// ── webagent rendered-fetch (anti-scraping bypass) ─────────────────────────
+
+// HTMLRenderer is implemented by extractors that can render an arbitrary URL
+// in a headless browser and return the HTML. ServiceExtractor implements it.
+// The capability is checked at runtime with a type assertion so the pipeline
+// can fall back gracefully when the extractor is nil or the service is not
+// configured.
+type HTMLRenderer interface {
+	FetchRenderedHTML(ctx context.Context, rawURL string) (FetchResult, error)
+}
+
+// renderFetchRequest is the JSON body for POST /v1/webagent/fetch.
+type renderFetchRequest struct {
+	URL string `json:"url"`
+}
+
+// renderFetchResponse mirrors the Python response model for /v1/webagent/fetch.
+type renderFetchResponse struct {
+	HTML        string `json:"html"`
+	ContentType string `json:"content_type"`
+}
+
+// FetchRenderedHTML renders rawURL in the Python webagent's headless browser and
+// returns the resulting HTML as a FetchResult. It uses pdfClient (120 s) because
+// a render can take up to ~75 s (FETCH_HARD_CAP_MS), which would exceed the 30 s
+// pageClient timeout. Errors from the Python service (BrowserBusy 503,
+// FetchTimeout 504, WafBlocked 503) surface as *serviceError so callers can
+// apply retryable-error classification via IsBackendUnavailable.
+func (s *ServiceExtractor) FetchRenderedHTML(ctx context.Context, rawURL string) (FetchResult, error) {
+	body, err := json.Marshal(renderFetchRequest{URL: rawURL})
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("marshal render request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.baseURL+"/v1/webagent/fetch", bytes.NewReader(body))
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("build render request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	slog.Info("rendered-fetch: calling webagent", "url", rawURL)
+	start := time.Now()
+
+	resp, err := s.pdfClient.Do(req)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("render request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := decodeServiceError(resp); err != nil {
+		return FetchResult{}, fmt.Errorf("render: %w", err)
+	}
+
+	var rr renderFetchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
+		return FetchResult{}, fmt.Errorf("decode render response: %w", err)
+	}
+
+	slog.Info("rendered-fetch: done", "url", rawURL,
+		"html_bytes", len(rr.HTML), "duration_ms", time.Since(start).Milliseconds())
+
+	ct := rr.ContentType
+	if ct == "" {
+		ct = "text/html; charset=utf-8"
+	}
+
+	// Return the rendered HTML as a FetchResult so the normal pipeline cascade
+	// (HTML→Markdown → JSON-LD → LLM) can process it, and the bronze layer
+	// captures it (Finding F).
+	return FetchResult{
+		Body:        io.NopCloser(strings.NewReader(rr.HTML)),
+		ContentType: ct,
+	}, nil
+}
 
 // ── webagent (Phase B) ──────────────────────────────────────────────────────
 

@@ -6,6 +6,7 @@ type DiscoverMenuURLArgs struct {
 	Building string `json:"building"`
 	Street   string `json:"street"`
 	Boro     string `json:"boro"`
+	Zipcode  string `json:"zipcode"`
 	Attempt  int    `json:"attempt"`
 }
 
