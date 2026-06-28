@@ -1,0 +1,86 @@
+package menusearch
+
+import (
+	"context"
+	_ "embed"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"fodmap/server"
+)
+
+//go:embed store/sql/upsert_restaurant.sql
+var upsertRestaurantSQL string
+
+//go:embed store/sql/get_restaurant.sql
+var getRestaurantSQL string
+
+//go:embed store/sql/list_restaurants.sql
+var listRestaurantsSQL string
+
+//go:embed store/sql/update_menu_url.sql
+var updateMenuURLSQL string
+
+//go:embed store/sql/update_scrape_result.sql
+var updateScrapeResultSQL string
+
+type Store struct {
+	pool *pgxpool.Pool
+}
+
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
+}
+
+func (s *Store) Upsert(ctx context.Context, r server.Restaurant) error {
+	_, err := s.pool.Exec(ctx, upsertRestaurantSQL,
+		r.CAMIS, r.DBA, r.Boro, r.Building, r.Street, r.Zipcode, r.Phone, r.Cuisine, r.Latitude, r.Longitude, r.NTA, r.Status)
+	return err
+}
+
+func (s *Store) Get(ctx context.Context, camis string) (*server.Restaurant, error) {
+	var r server.Restaurant
+	err := s.pool.QueryRow(ctx, getRestaurantSQL, camis).Scan(
+		&r.CAMIS, &r.DBA, &r.Boro, &r.Building, &r.Street, &r.Zipcode, &r.Phone, &r.Cuisine, &r.Latitude, &r.Longitude, &r.NTA,
+		&r.Status, &r.MenuURL, &r.MenuURLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (s *Store) List(ctx context.Context, status string, search string, limit, offset int) ([]server.Restaurant, error) {
+	rows, err := s.pool.Query(ctx, listRestaurantsSQL, status, search, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []server.Restaurant
+	for rows.Next() {
+		var r server.Restaurant
+		if err := rows.Scan(
+			&r.CAMIS, &r.DBA, &r.Boro, &r.Building, &r.Street, &r.Zipcode, &r.Phone, &r.Cuisine, &r.Latitude, &r.Longitude, &r.NTA,
+			&r.Status, &r.MenuURL, &r.MenuURLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+func (s *Store) UpdateMenuURL(ctx context.Context, camis, menuURL, source string) error {
+	_, err := s.pool.Exec(ctx, updateMenuURLSQL, camis, menuURL, source)
+	return err
+}
+
+func (s *Store) UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error {
+	_, err := s.pool.Exec(ctx, updateScrapeResultSQL, camis, status, itemCount, lastError)
+	return err
+}
