@@ -57,6 +57,11 @@ type MenuExtractionResult struct {
 	PhoneNumber    string      `json:"phone_number"`
 	ScrapedAtUTC   string      `json:"scraped_at_utc"`
 	Items          []MenuEntry `json:"items"`
+	// ExtractionTier records which cascade tier produced this result (e.g.
+	// "jsonld", "html_llm", "pdf", "image_ocr", "webagent"). It is pipeline
+	// metadata, not part of the service menu document — set by ExtractMenu and
+	// persisted per scrape for tier-mix telemetry. See pipeline.Tier* constants.
+	ExtractionTier string `json:"extraction_tier,omitempty"`
 }
 
 // FetchResult is the return value of Fetcher.Fetch.
@@ -85,6 +90,18 @@ type RenderedFetcher interface {
 // Gemini). Tests stub this interface directly.
 type Extractor interface {
 	Extract(ctx context.Context, pageText string) (MenuExtractionResult, error)
+}
+
+// HTTPStatusError is returned by HTTPFetcher.Fetch when the server responds with
+// a non-200 HTTP status. It carries the status code so callers can distinguish
+// retryable blocks (403/429) from hard failures (404/5xx) without string-matching.
+type HTTPStatusError struct {
+	StatusCode int
+	URL        string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d for %s", e.StatusCode, e.URL)
 }
 
 // HTTPFetcher is the production Fetcher. It enforces a body-size cap, sends a
@@ -130,7 +147,7 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string) (FetchResult, er
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return FetchResult{}, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, rawURL)
+		return FetchResult{}, &HTTPStatusError{StatusCode: resp.StatusCode, URL: rawURL}
 	}
 
 	ct := resp.Header.Get("Content-Type")

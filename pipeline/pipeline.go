@@ -17,6 +17,63 @@ import (
 	"github.com/google/uuid"
 )
 
+// Extraction tier labels, recorded on MenuExtractionResult.ExtractionTier and
+// persisted per scrape so the tier mix (cheap Go-only JSON-LD vs. Python
+// LLM/OCR/browser paths) can be measured. Keep these stable — they are written
+// to the DB and queried in aggregate.
+const (
+	TierJSONLD   = "jsonld"    // Tier 0: schema.org JSON-LD menu (pure Go, no LLM)
+	TierHTMLLLM  = "html_llm"  // Tier 1: HTML→Markdown → LLM structuring
+	TierPDF      = "pdf"       // PDF cascade (text-layer / pdftotext / service / vision)
+	TierImageOCR = "image_ocr" // embedded menu image → OCR
+	TierWebagent = "webagent"  // JS-rendered page via the webagent browser pool
+)
+
+// fetchWithFallback attempts a normal HTTP fetch and, on a 403 or 429 status
+// error, falls back to the webagent rendered-fetch endpoint if ex implements
+// scraper.HTMLRenderer. Returns (bodyBytes, contentType, error).
+// On a non-403/429 HTTP error (e.g. 404, 5xx) or if ex does not implement
+// HTMLRenderer, the original error is returned immediately.
+func fetchWithFallback(
+	ctx context.Context,
+	rawURL string,
+	fetcher scraper.Fetcher,
+	ex scraper.Extractor,
+) ([]byte, string, error) {
+	fetchRes, err := fetcher.Fetch(ctx, rawURL)
+	if err == nil {
+		bodyBytes, readErr := io.ReadAll(fetchRes.Body)
+		_ = fetchRes.Body.Close()
+		if readErr != nil {
+			return nil, "", fmt.Errorf("reading body: %w", readErr)
+		}
+		return bodyBytes, fetchRes.ContentType, nil
+	}
+
+	// On 403/429, try the rendered-fetch fallback if available.
+	var statusErr *scraper.HTTPStatusError
+	if errors.As(err, &statusErr) &&
+		(statusErr.StatusCode == 403 || statusErr.StatusCode == 429) {
+		if renderer, ok := ex.(scraper.HTMLRenderer); ok {
+			slog.Info("HTTP fetch blocked; falling back to rendered-fetch",
+				"url", rawURL, "status", statusErr.StatusCode)
+			renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL)
+			if renderErr != nil {
+				// Preserve the render error, but wrap with context.
+				return nil, "", fmt.Errorf("rendered-fetch fallback: %w", renderErr)
+			}
+			bodyBytes, readErr := io.ReadAll(renderRes.Body)
+			_ = renderRes.Body.Close()
+			if readErr != nil {
+				return nil, "", fmt.Errorf("reading rendered body: %w", readErr)
+			}
+			return bodyBytes, renderRes.ContentType, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("fetch: %w", err)
+}
+
 // ExtractMenu fetches the URL, runs the extraction cascade (JSON-LD → HTML/text → PDF/OCR → image),
 // and returns the structured result and the raw response body.
 // The raw body is nil for webagent JS paths. Callers may write it to the bronze layer.
@@ -31,21 +88,15 @@ func ExtractMenu(
 ) (*scraper.MenuExtractionResult, []byte, error) {
 	slog.Info("scraping URL", "url", rawURL)
 
-	fetchRes, err := fetcher.Fetch(ctx, rawURL)
+	bodyBytes, ct, err := fetchWithFallback(ctx, rawURL, fetcher, ex)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch: %w", err)
+		return nil, nil, err
 	}
 
-	bodyBytes, err := io.ReadAll(fetchRes.Body)
-	_ = fetchRes.Body.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading body: %w", err)
-	}
-
-	ct := fetchRes.ContentType
 	var result scraper.MenuExtractionResult
 	var jsonldMeta scraper.JSONLDMeta
 	var usedJSONLD bool
+	var tier string
 
 	if !strings.Contains(ct, "pdf") {
 		items, meta, ok := scraper.ExtractJSONLD(bytes.NewReader(bodyBytes))
@@ -61,6 +112,7 @@ func ExtractMenu(
 				Items:          items,
 			}
 			usedJSONLD = true
+			tier = TierJSONLD
 		}
 	}
 
@@ -70,6 +122,7 @@ func ExtractMenu(
 		var menuImgCandidates []string
 
 		if strings.Contains(ct, "pdf") {
+			tier = TierPDF
 			text, structured, err := ExtractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
 			if err != nil {
 				return nil, bodyBytes, fmt.Errorf("PDF extraction: %w", err)
@@ -116,6 +169,7 @@ func ExtractMenu(
 							if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
 								result.RestaurantName = jsonldMeta.RestaurantName
 							}
+							tier = TierImageOCR
 							goto tier1Done
 						}
 					} else {
@@ -143,11 +197,13 @@ func ExtractMenu(
 						if result.RestaurantName == "" && jsonldMeta.RestaurantName != "" {
 							result.RestaurantName = jsonldMeta.RestaurantName
 						}
+						tier = TierWebagent
 						goto tier1Done
 					}
 				}
 			}
 			pageText = md
+			tier = TierHTMLLLM
 		}
 
 		if pdfResult != nil {
@@ -170,6 +226,7 @@ func ExtractMenu(
 							slog.Info("text pass empty; routing to menu image OCR",
 								"url", rawURL, "items", len(imgResult.Items))
 							result = imgResult
+							tier = TierImageOCR
 						}
 					}
 				}
@@ -188,6 +245,7 @@ func ExtractMenu(
 	}
 
 tier1Done:
+	result.ExtractionTier = tier
 	if len(result.Items) == 0 {
 		slog.Warn("no menu items extracted", "url", rawURL)
 		return &result, bodyBytes, nil

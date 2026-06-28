@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -615,5 +616,97 @@ func TestServiceExtractor_ExtractImage_503ReturnsServiceError(t *testing.T) {
 	}
 	if !IsBackendUnavailable(err) {
 		t.Errorf("expected IsBackendUnavailable, got: %v", err)
+	}
+}
+
+// ── Rendered-fetch path ──────────────────────────────────────────────────────
+
+func TestServiceExtractor_ImplementsHTMLRenderer(t *testing.T) {
+	var _ HTMLRenderer = (*ServiceExtractor)(nil)
+}
+
+func TestServiceExtractor_FetchRenderedHTML_Success(t *testing.T) {
+	const wantHTML = "<html><body>Menu: Pizza, Pasta</body></html>"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/webagent/fetch" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"html":         wantHTML,
+			"content_type": "text/html; charset=utf-8",
+		})
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	res, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	if err != nil {
+		t.Fatalf("FetchRenderedHTML: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, _ := io.ReadAll(res.Body)
+	if string(body) != wantHTML {
+		t.Errorf("body = %q, want %q", string(body), wantHTML)
+	}
+	if res.ContentType != "text/html; charset=utf-8" {
+		t.Errorf("content_type = %q", res.ContentType)
+	}
+}
+
+func TestServiceExtractor_FetchRenderedHTML_503_IsRenderTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(serviceErrorEnvelope{
+			Error: serviceErrorDetail{Code: "browser_busy", Message: "all workers busy", RequestID: "r1"},
+		})
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsRenderTransient(err) {
+		t.Errorf("503 from render endpoint must be IsRenderTransient; got: %v", err)
+	}
+}
+
+func TestServiceExtractor_FetchRenderedHTML_504_IsRenderTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_ = json.NewEncoder(w).Encode(serviceErrorEnvelope{
+			Error: serviceErrorDetail{Code: "fetch_timeout", Message: "render timed out", RequestID: "r2"},
+		})
+	}))
+	defer srv.Close()
+
+	se := newTestServiceExtractor(t, srv.URL)
+	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsRenderTransient(err) {
+		t.Errorf("504 from render endpoint must be IsRenderTransient; got: %v", err)
+	}
+}
+
+func TestIsRenderTransient_NotForOtherErrors(t *testing.T) {
+	if IsRenderTransient(nil) {
+		t.Error("nil should not be transient")
+	}
+	if IsRenderTransient(fmt.Errorf("some generic error")) {
+		t.Error("non-serviceError should not be transient")
+	}
+	// 502 fetch_failed is not transient (hard block, not browser-busy).
+	notTransient := &serviceError{statusCode: http.StatusBadGateway, code: "fetch_failed", message: "blocked"}
+	if IsRenderTransient(notTransient) {
+		t.Error("502 should not be IsRenderTransient")
 	}
 }

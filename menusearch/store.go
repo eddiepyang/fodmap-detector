@@ -27,6 +27,9 @@ var updateDiscoveryURLsSQL string
 //go:embed store/sql/update_scrape_result.sql
 var updateScrapeResultSQL string
 
+//go:embed store/sql/set_extraction_tier.sql
+var setExtractionTierSQL string
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -84,6 +87,14 @@ func (s *Store) UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL strin
 
 func (s *Store) UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error {
 	_, err := s.pool.Exec(ctx, updateScrapeResultSQL, camis, status, itemCount, lastError)
+	return err
+}
+
+// SetExtractionTier records which cascade tier produced a successful scrape
+// (see pipeline.Tier* constants) for tier-mix telemetry. An empty tier clears
+// the column. Best-effort: telemetry only, never blocks the scrape result.
+func (s *Store) SetExtractionTier(ctx context.Context, camis, tier string) error {
+	_, err := s.pool.Exec(ctx, setExtractionTierSQL, camis, tier)
 	return err
 }
 

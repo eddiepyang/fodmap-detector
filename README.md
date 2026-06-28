@@ -12,28 +12,7 @@ A full-stack application (Go HTTP API backend and React SPA frontend) featuring 
 
 ---
 
-## Architecture
 
-The menu pipeline is split across two services:
-
-**Go service** (`fodmap-detector`) is responsible for:
-- **Discovery** — Gemini API call to find menu URLs for each restaurant
-- **Fetching** — HTTP GET of plain HTML and PDF menu pages
-- **JSON-LD extraction (Tier 0)** — structured menu data embedded in the page is extracted directly in Go, skipping the Python service entirely
-- **Job orchestration** — River queue, retries, status tracking in Postgres
-- **Storage** — upserts menu items into Weaviate / pgvector
-
-**Python service** (`../scraper`, running on `:8765`) is responsible for:
-- **Fetching JS-rendered pages** — headless Chrome via the webagent; Go never sees the raw HTML for these
-- **Parsing HTML/text menus** — page text is sent to `/v1/extractions:structure`, which calls the service's own LLM (configured independently, defaults to Gemini)
-- **PDF menus** — inspect page count → OCR each page → structure
-- **Image menus** — OCR the image → structure
-
-The Python service owns all LLM configuration for parsing. The Go service only invokes it via its REST API and stores the results.
-
-**Retry cost controls:**
-- Discovery worker: if a retry finds URLs already stored in Postgres (Gemini succeeded but the subsequent write/enqueue failed), it skips the Gemini call and goes straight to re-enqueueing scrape jobs. Configurable via `discovery-max-no-url-attempts` (default 3) to stop retrying when no URL is ever found.
-- Python structuring: an in-process LRU cache (`SCRAPER_STRUCTURING_CACHE_SIZE`, default 512) returns cached results for repeated inputs, avoiding redundant LLM calls on River retries.
 
 ## Tech Stack
 
@@ -75,6 +54,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [Project Structure](docs/guides/project-structure.md) - Detailed breakdown of Go packages and sub-systems.
 - [RBAC & Admin Console](docs/guides/admin-console.md) - Details on admin API endpoints and role management.
 - [API Reference](docs/guides/api-reference.md) - HTTP endpoints, auth, and search.
+- [Pipeline Architecture](docs/guides/pipeline-architecture.md) - High-level overview of the Go and Python data pipeline.
 - [CLI Reference](docs/guides/cli-reference.md) - Commands for indexing, scraping, and chatting.
 - [Pipeline CLI Guide](docs/guides/pipeline-cli.md) - Administering the discovery and scrape pipelines.
 - [Data Model & Pipeline](docs/guides/data-model.md) - Core data structures and inputs.

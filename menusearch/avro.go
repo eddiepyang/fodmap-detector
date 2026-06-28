@@ -122,6 +122,7 @@ type MenuExtractionRecord struct {
 	JobID            string
 	Attempt          int
 	DiscoveryEventID string
+	ExtractionTier   string // cascade tier that produced the result (pipeline.Tier*)
 }
 
 // WriteMenuExtractionAvro writes a single menu extraction record to the bronze layer.
@@ -166,6 +167,7 @@ func WriteMenuExtractionAvro(ctx context.Context, destPath string, rec MenuExtra
 		"job_id":             rec.JobID,
 		"attempt":            rec.Attempt,
 		"discovery_event_id": rec.DiscoveryEventID,
+		"extraction_tier":    rec.ExtractionTier,
 		"created_at":         now,
 	}
 
