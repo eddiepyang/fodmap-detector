@@ -159,7 +159,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	// Known first-party ordering platforms are also always kept (JS SPAs that
 	// won't expose content on a plain GET). Drop only when: GET 2xx + not a
 	// whitelisted platform + no menu signal found.
-	confirmed := menuSignalFilter(ctx, httpClient, candidates, logger)
+	confirmed := menuSignalFilter(ctx, httpClient, candidates, result.WebsiteURL, logger)
 
 	// Separate direct restaurant URLs from delivery platform URLs.
 	// Prefer direct URLs; fall back to delivery-platform URLs if nothing else found.
@@ -277,6 +277,10 @@ func dedup(urls []string) []string {
 var nonMenuHosts = []string{
 	// Gemini grounding-redirect artifacts — CRITICAL, must drop first.
 	"vertexaisearch.cloud.google.com",
+	// Brittle aggregators
+	"menupages.com",
+	"allmenus.com",
+	"sirved.com",
 	// Real-estate listings.
 	"loopnet.com",
 	"streeteasy.com",
@@ -466,6 +470,13 @@ var orderingPlatformHosts = []string{
 	"clover.com",
 	"mealkeyway.com",
 	"takeout7.com",
+	"menufy.com",
+	"slicelife.com",
+	"bento.com",
+	"bentobox.com",
+	"getbento.com",
+	"orderahead-app.com",
+	"popmenu.com",
 }
 
 // isOrderingPlatform returns true when the URL's host is a known first-party
@@ -535,10 +546,10 @@ func hasMenuSignal(body []byte) bool {
 // menuSignalFilter runs a plain GET on each candidate URL and drops those that
 // return a 2xx response with no menu signal AND are not whitelisted ordering
 // platforms. URLs that fail, time out, or return non-2xx are always kept.
-func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, logger *slog.Logger) []string {
+func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, primaryURL string, logger *slog.Logger) []string {
 	out := make([]string, 0, len(urls))
 	for _, u := range urls {
-		if keep, reason := checkMenuSignal(ctx, client, u); keep {
+		if keep, reason := checkMenuSignal(ctx, client, u, primaryURL); keep {
 			if reason != "" {
 				logger.Info("keeping URL (menu signal check)", "url", u, "reason", reason)
 			}
@@ -552,7 +563,11 @@ func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, l
 
 // checkMenuSignal performs the keep/drop decision for a single URL.
 // Returns (keep, reason) where reason is non-empty only for interesting keep paths.
-func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string) (bool, string) {
+func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, primaryURL string) (bool, string) {
+	if primaryURL != "" && rawURL == primaryURL {
+		return true, "primary website URL (always keep)"
+	}
+
 	// Always keep ordering platforms — JS SPAs don't expose menus on plain GET.
 	if isOrderingPlatform(rawURL) {
 		return true, "ordering-platform whitelist"

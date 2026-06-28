@@ -1,16 +1,17 @@
 Find the menu URL(s) for the restaurant "{{.DBA}}" at {{.Building}} {{.Street}}, {{.Boro}} NY {{.Zipcode}}.
 
 Look for, in order of preference:
-1. The restaurant's own website or first-party online ordering page (Square Online, Toast, .shop/.cafe domains, etc.)
-2. A direct PDF menu link
-3. If no direct website exists, a delivery platform page (DoorDash, Seamless, Grubhub, Uber Eats, etc.) where the menu can be seen
+1. The exact path to the menu on the restaurant's own official website (e.g. https://example.com/menu) rather than just the homepage.
+2. A first-party online ordering page (Square Online, Toast, .shop/.cafe domains, etc.)
+3. A direct PDF menu link
+4. If no direct website exists, a delivery platform page (DoorDash, Seamless, Grubhub, Uber Eats, etc.) where the menu can be seen
 
 If the restaurant has multiple separate menus (e.g., breakfast, lunch, dinner, drinks) on different links or PDFs, return ALL of those distinct menu URLs.
 
 IMPORTANT — only return URLs that belong to the restaurant itself or its first-party ordering/delivery pages. NEVER return:
 - Real-estate listings (LoopNet, StreetEasy, Realtor.com, Zillow, Crexi, etc.)
 - Hotel or accommodation booking sites (Hilton, Marriott, Booking.com, Expedia, Hotels.com, etc.)
-- Review sites or business directories (Yelp is acceptable as a last resort, but NOT Checkle, MapQuest, YellowPages, BBB, etc.)
+- Third-party directories with brittle links (MenuPages, AllMenus, Sirved, YellowPages, Checkle, MapQuest, BBB, etc. Yelp is acceptable only as a last resort)
 - Social media profiles (Facebook, Instagram, TikTok, etc.) unless that is the restaurant's only online presence
 - Search-result pages, redirect URLs, or grounding-citation links (e.g. vertexaisearch.cloud.google.com)
 - Any URL that is not directly about this specific restaurant's menu or ordering
