@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
-func FetchNYCRestaurants(ctx context.Context, area string, appToken string) (io.ReadCloser, error) {
+func FetchNYCRestaurants(ctx context.Context, area string, appToken string, since time.Time) (io.ReadCloser, error) {
 	af, ok := Areas[area]
 	if !ok {
 		return nil, fmt.Errorf("unknown area: %q", area)
@@ -36,6 +37,9 @@ func FetchNYCRestaurants(ctx context.Context, area string, appToken string) (io.
 		return nil, fmt.Errorf("area %q has no NTA or zip restrictions defined", area)
 	}
 	soqlWhere := strings.Join(conditions, " OR ")
+	if !since.IsZero() {
+		soqlWhere = fmt.Sprintf("(%s) AND record_date > '%s'", soqlWhere, since.UTC().Format("2006-01-02T15:04:05.000"))
+	}
 
 	u, err := url.Parse("https://data.cityofnewyork.us/resource/43nn-pn8j.csv")
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,4 +85,10 @@ func (s *Store) UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL strin
 func (s *Store) UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error {
 	_, err := s.pool.Exec(ctx, updateScrapeResultSQL, camis, status, itemCount, lastError)
 	return err
+}
+
+func (s *Store) MaxUpdatedAt(ctx context.Context) (time.Time, error) {
+	var maxTime time.Time
+	err := s.pool.QueryRow(ctx, "SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamp) FROM restaurants").Scan(&maxTime)
+	return maxTime, err
 }

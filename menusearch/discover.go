@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -88,22 +87,6 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 	text := textBuilder.String()
 
-	// Primary: authoritative URLs from GroundingChunks (what Gemini actually cited).
-	var rawURLs []string
-	for _, cand := range res.Candidates {
-		if cand.GroundingMetadata == nil {
-			continue
-		}
-		for _, chunk := range cand.GroundingMetadata.GroundingChunks {
-			if chunk.Web != nil && chunk.Web.URI != "" {
-				rawURLs = append(rawURLs, chunk.Web.URI)
-			}
-		}
-	}
-	// GroundingChunks return vertexaisearch.cloud.google.com redirect URLs —
-	// resolve them to the real restaurant domain before filtering.
-	rawURLs = resolveRedirects(ctx, w.HTTPClient, rawURLs)
-
 	var result struct {
 		WebsiteURL  string   `json:"website_url"`
 		MenuURLs    []string `json:"menu_urls"`
@@ -116,13 +99,13 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	cleanText = strings.TrimPrefix(cleanText, "```")
 	cleanText = strings.TrimSuffix(cleanText, "```")
 	cleanText = strings.TrimSpace(cleanText)
+
+	var rawURLs []string
 	if err := json.Unmarshal([]byte(cleanText), &result); err != nil {
 		slog.Warn("failed to parse discovery JSON, falling back to regex", "err", err)
 		urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
 		for _, u := range urlRe.FindAllString(text, -1) {
-			if !strings.Contains(u, "vertexaisearch") && !strings.Contains(u, "google.com") {
-				rawURLs = append(rawURLs, u)
-			}
+			rawURLs = append(rawURLs, u)
 		}
 	} else {
 		if result.WebsiteURL != "" {
@@ -131,14 +114,28 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		rawURLs = append(rawURLs, result.MenuURLs...)
 	}
 
-	foundURLs := dedupAndFilter(rawURLs)
-	primaryURL := result.WebsiteURL
-	if primaryURL == "" && len(foundURLs) > 0 {
-		primaryURL = foundURLs[0] // fallback
+	// Separate direct restaurant URLs from delivery platform URLs.
+	// Prefer direct URLs; fall back to delivery-platform URLs if nothing else found.
+	var directURLs, deliveryURLs []string
+	for _, u := range dedup(rawURLs) {
+		if isDeliveryURL(u) {
+			deliveryURLs = append(deliveryURLs, u)
+		} else {
+			directURLs = append(directURLs, u)
+		}
 	}
 
-	if len(foundURLs) == 0 && len(rawURLs) > 0 {
-		logger.Info("all grounding chunks were filtered out (likely delivery/directory sites)", "raw_count", len(rawURLs))
+	foundURLs := directURLs
+	urlSource := "gemini"
+	if len(foundURLs) == 0 && len(deliveryURLs) > 0 {
+		foundURLs = deliveryURLs
+		urlSource = "gemini_delivery"
+		logger.Info("no direct URL found, using delivery platform URLs", "count", len(deliveryURLs))
+	}
+
+	primaryURL := result.WebsiteURL
+	if primaryURL == "" && len(foundURLs) > 0 {
+		primaryURL = foundURLs[0]
 	}
 
 	eventID := uuid.NewString()
@@ -160,9 +157,9 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	if len(foundURLs) > 0 {
-		logger.Info("found URL(s)", "count", len(foundURLs), "primary", primaryURL)
+		logger.Info("found URL(s)", "count", len(foundURLs), "primary", primaryURL, "source", urlSource)
 
-		if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, primaryURL, foundURLs, "gemini", result.Address, result.PhoneNumber); err != nil {
+		if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, primaryURL, foundURLs, urlSource, result.Address, result.PhoneNumber); err != nil {
 			return fmt.Errorf("update menu url: %w", err)
 		}
 
@@ -214,73 +211,33 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 	return nil
 }
 
-// resolveRedirects follows HTTP redirects (up to 5 hops) and returns the final
-// destination URLs. Converts Gemini's vertexaisearch redirect URLs into real domains.
-// Ported from scripts/menuscan/main.go.
-func resolveRedirects(ctx context.Context, client *http.Client, urls []string) []string {
-	out := make([]string, 0, len(urls))
-	for _, u := range urls {
-		final := u
-		cur := u
-		for i := 0; i < 5; i++ {
-			req, err := http.NewRequestWithContext(ctx, http.MethodHead, cur, nil)
-			if err != nil {
-				break
-			}
-			req.Header.Set("User-Agent", "fodmap-menusearch/1.0")
-			resp, err := client.Do(req)
-			if err != nil {
-				break
-			}
-			loc := resp.Header.Get("Location")
-			_ = resp.Body.Close()
-			if loc == "" {
-				break
-			}
-			locURL, err := url.Parse(loc)
-			if err != nil {
-				break
-			}
-			if locURL.IsAbs() {
-				final = loc
-			} else {
-				base, _ := url.Parse(cur)
-				if base != nil {
-					final = base.ResolveReference(locURL).String()
-				}
-			}
-			cur = final
-		}
-		out = append(out, final)
-	}
-	return out
-}
-
-// dedupAndFilter deduplicates URLs and drops delivery/social/review platforms,
-// returning own-domain URLs only. Ported from scripts/menuscan/main.go.
-func dedupAndFilter(urls []string) []string {
+// dedup returns urls with duplicates removed, preserving order.
+func dedup(urls []string) []string {
 	seen := make(map[string]struct{}, len(urls))
-	var out []string
+	out := make([]string, 0, len(urls))
 	for _, u := range urls {
 		if _, ok := seen[u]; ok {
 			continue
 		}
 		seen[u] = struct{}{}
-		l := strings.ToLower(u)
-		if strings.Contains(l, "facebook.com") ||
-			strings.Contains(l, "instagram.com") ||
-			strings.Contains(l, "yelp.com") ||
-			strings.Contains(l, "tripadvisor.com") ||
-			strings.Contains(l, "google.com/maps") ||
-			strings.Contains(l, "ubereats.com") ||
-			strings.Contains(l, "doordash.com") ||
-			strings.Contains(l, "grubhub.com") ||
-			strings.Contains(l, "postmates.com") ||
-			strings.Contains(l, "seamless.com") ||
-			strings.Contains(l, "delivery.com") {
-			continue
-		}
 		out = append(out, u)
 	}
 	return out
+}
+
+// isDeliveryURL reports whether u belongs to a third-party delivery or
+// review platform rather than the restaurant's own domain.
+func isDeliveryURL(u string) bool {
+	l := strings.ToLower(u)
+	return strings.Contains(l, "doordash.com") ||
+		strings.Contains(l, "seamless.com") ||
+		strings.Contains(l, "grubhub.com") ||
+		strings.Contains(l, "ubereats.com") ||
+		strings.Contains(l, "postmates.com") ||
+		strings.Contains(l, "delivery.com") ||
+		strings.Contains(l, "yelp.com") ||
+		strings.Contains(l, "tripadvisor.com") ||
+		strings.Contains(l, "facebook.com") ||
+		strings.Contains(l, "instagram.com") ||
+		strings.Contains(l, "google.com/maps")
 }

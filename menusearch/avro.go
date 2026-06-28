@@ -12,6 +12,7 @@ import (
 	"fodmap/search"
 
 	"github.com/google/uuid"
+	"github.com/hamba/avro/v2/ocf"
 )
 
 // WriteNYCRestaurantAvro writes a batch of NYC restaurant records to the bronze layer.
@@ -169,4 +170,62 @@ func WriteMenuExtractionAvro(ctx context.Context, destPath string, rec MenuExtra
 	}
 
 	return writer.Write(record)
+}
+
+// ReadNYCRestaurantAvro reads a batch of NYC restaurant records from the bronze layer.
+func ReadNYCRestaurantAvro(path string) ([]NYCRestaurantRecord, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	decoder, err := ocf.NewDecoder(f)
+	if err != nil {
+		return nil, err
+	}
+
+	var records []NYCRestaurantRecord
+	for decoder.HasNext() {
+		var record map[string]any
+		if err := decoder.Decode(&record); err != nil {
+			return nil, err
+		}
+
+		rec := NYCRestaurantRecord{
+			CAMIS:              safeString(record["camis"]),
+			DBA:                safeString(record["dba"]),
+			Boro:               safeString(record["boro"]),
+			Building:           safeString(record["building"]),
+			Street:             safeString(record["street"]),
+			Zipcode:            safeString(record["zipcode"]),
+			Phone:              safeString(record["phone"]),
+			CuisineDescription: safeString(record["cuisine_description"]),
+			InspectionDate:     safeString(record["inspection_date"]),
+			Latitude:           safeFloat64(record["latitude"]),
+			Longitude:          safeFloat64(record["longitude"]),
+			NTA:                safeString(record["nta"]),
+			RecordDate:         safeString(record["record_date"]),
+		}
+		records = append(records, rec)
+	}
+
+	return records, decoder.Error()
+}
+
+func safeString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func safeFloat64(v any) float64 {
+	switch f := v.(type) {
+	case float64:
+		return f
+	case float32:
+		return float64(f)
+	}
+	return 0
 }
