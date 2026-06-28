@@ -7,6 +7,14 @@ Look for, in order of preference:
 
 If the restaurant has multiple separate menus (e.g., breakfast, lunch, dinner, drinks) on different links or PDFs, return ALL of those distinct menu URLs.
 
+IMPORTANT — only return URLs that belong to the restaurant itself or its first-party ordering/delivery pages. NEVER return:
+- Real-estate listings (LoopNet, StreetEasy, Realtor.com, Zillow, Crexi, etc.)
+- Hotel or accommodation booking sites (Hilton, Marriott, Booking.com, Expedia, Hotels.com, etc.)
+- Review sites or business directories (Yelp is acceptable as a last resort, but NOT Checkle, MapQuest, YellowPages, BBB, etc.)
+- Social media profiles (Facebook, Instagram, TikTok, etc.) unless that is the restaurant's only online presence
+- Search-result pages, redirect URLs, or grounding-citation links (e.g. vertexaisearch.cloud.google.com)
+- Any URL that is not directly about this specific restaurant's menu or ordering
+
 Return ONLY a valid JSON object in the exact format shown below, with no markdown formatting or extra text.
 
 Example format:

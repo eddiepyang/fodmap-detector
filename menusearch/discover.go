@@ -3,14 +3,21 @@ package menusearch
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -113,10 +120,40 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		}
 	}
 
+	// Remove hard-blocked non-menu hosts (grounding redirects, real-estate, hotels, directories).
+	var dedupedURLs []string
+	for _, u := range dedup(rawURLs) {
+		if isNonMenuURL(u) {
+			logger.Info("dropping non-menu URL (blocklist)", "url", u)
+			continue
+		}
+		dedupedURLs = append(dedupedURLs, u)
+	}
+
+	// Probe reachability: drop only genuinely dead domains (DNS failure, ECONNREFUSED, TLS errors).
+	// Keep any URL that returns an HTTP response (even 403/429/5xx) or times out.
+	httpClient := w.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 8 * time.Second}
+	}
+	candidates := reachableMenuURLs(ctx, httpClient, dedupedURLs)
+	for _, u := range dedupedURLs {
+		found := false
+		for _, c := range candidates {
+			if c == u {
+				found = true
+				break
+			}
+		}
+		if !found {
+			logger.Info("dropping dead-domain URL (unreachable)", "url", u)
+		}
+	}
+
 	// Separate direct restaurant URLs from delivery platform URLs.
 	// Prefer direct URLs; fall back to delivery-platform URLs if nothing else found.
 	var directURLs, deliveryURLs []string
-	for _, u := range dedup(rawURLs) {
+	for _, u := range candidates {
 		if isDeliveryURL(u) {
 			deliveryURLs = append(deliveryURLs, u)
 		} else {
@@ -222,6 +259,190 @@ func dedup(urls []string) []string {
 		out = append(out, u)
 	}
 	return out
+}
+
+// nonMenuHosts is a package-level blocklist of host substrings that are NEVER
+// menus. Matched case-insensitively. Extend this slice as new junk hosts appear.
+var nonMenuHosts = []string{
+	// Gemini grounding-redirect artifacts — CRITICAL, must drop first.
+	"vertexaisearch.cloud.google.com",
+	// Real-estate listings.
+	"loopnet.com",
+	"streeteasy.com",
+	"realtor.com",
+	"zillow.com",
+	"crexi.com",
+	// Hotel booking.
+	"hilton.com",
+	"marriott.com",
+	"booking.com",
+	"expedia.com",
+	"hotels.com",
+	// Business directories.
+	"checkle.com",
+	"mapquest.com",
+	"yellowpages.com",
+	"bbb.org",
+}
+
+// isNonMenuURL returns true when the URL's host matches one of the hard-blocked
+// non-menu domains. These URLs must never be used even as fallback.
+func isNonMenuURL(u string) bool {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	for _, blocked := range nonMenuHosts {
+		if host == blocked || strings.HasSuffix(host, "."+blocked) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeadDomainErr returns true when err represents a genuinely dead/unreachable
+// domain: DNS resolution failure, connection refused, or TLS certificate error.
+// HTTP-level errors (4xx, 5xx) and timeouts are NOT dead-domain signals — those
+// are anti-bot blocks that the webagent bypass handles downstream.
+func isDeadDomainErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	// DNS: no such host.
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return true
+	}
+	// Connection refused (port closed, server not listening).
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	// TLS certificate errors (invalid cert, expired, etc.).
+	var certErr x509.CertificateInvalidError
+	if errors.As(err, &certErr) {
+		return true
+	}
+	var unknownAuthErr x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return true
+	}
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return true
+	}
+	// tls.AlertError covers handshake failures surfaced by the TLS package.
+	var tlsAlert tls.AlertError
+	return errors.As(err, &tlsAlert)
+}
+
+// reachableMenuURLs probes each URL and returns those that are NOT dead domains.
+// A URL is kept if it returns any HTTP response (including 403/429/5xx) or if
+// the probe times out — those indicate live anti-bot protected servers. Only
+// genuine dead-domain errors (DNS NXDOMAIN, ECONNREFUSED, TLS errors) cause a
+// URL to be dropped. Probes run concurrently with a concurrency limit of 5.
+func reachableMenuURLs(ctx context.Context, client *http.Client, urls []string) []string {
+	const concurrency = 5
+
+	type result struct {
+		url  string
+		keep bool
+	}
+
+	results := make([]result, len(urls))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for i, u := range urls {
+		wg.Add(1)
+		go func(idx int, rawURL string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			keep := probeURL(ctx, client, rawURL)
+			results[idx] = result{url: rawURL, keep: keep}
+		}(i, u)
+	}
+	wg.Wait()
+
+	out := make([]string, 0, len(urls))
+	for _, r := range results {
+		if r.keep {
+			out = append(out, r.url)
+		}
+	}
+	return out
+}
+
+// probeURL sends a HEAD (falling back to GET on non-dead-domain errors) and
+// returns true if the host appears live. Private/loopback hosts are skipped
+// (treated as keep=false to avoid SSRF probing).
+func probeURL(ctx context.Context, client *http.Client, rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	// SSRF guard: skip private/loopback hosts.
+	if isPrivateMenuHost(parsed.Hostname()) {
+		return false
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		return true // any HTTP response means the host is live
+	}
+	if isDeadDomainErr(err) {
+		return false
+	}
+	// Non-dead-domain HEAD error (e.g. redirect loop, keep-alive issues):
+	// try GET as fallback before giving up.
+	req2, err2 := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err2 != nil {
+		return true // can't construct GET; assume live (conservative)
+	}
+	resp2, err2 := client.Do(req2)
+	if err2 == nil {
+		_ = resp2.Body.Close()
+		return true
+	}
+	// If the GET also failed, only drop on confirmed dead-domain signal.
+	return !isDeadDomainErr(err2)
+}
+
+// isPrivateMenuHost returns true for loopback and RFC-1918 addresses (SSRF guard).
+func isPrivateMenuHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	privateNets := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"::1/128",
+		"169.254.0.0/16",
+		"fc00::/7",
+	}
+	for _, cidr := range privateNets {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // isDeliveryURL reports whether u belongs to a third-party delivery or
