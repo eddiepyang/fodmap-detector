@@ -8,9 +8,47 @@ import (
 	"strings"
 	"testing"
 
+	"fodmap/pipeline"
 	"fodmap/scraper"
 	"fodmap/search"
+	"fodmap/server"
 )
+
+type testForceRenderFetcher struct {
+	rf scraper.RenderedFetcher
+}
+
+func (f *testForceRenderFetcher) Fetch(ctx context.Context, url string) (scraper.FetchResult, error) {
+	return f.rf.FetchRendered(ctx, url)
+}
+
+func runScrapeWith(
+	ctx context.Context,
+	rawURL string,
+	fetcher scraper.Fetcher,
+	ex scraper.Extractor,
+	store server.MenuStore,
+	embedder search.Embedder,
+	enableVision bool,
+	enableJSRender bool,
+	usePdftotext bool,
+	webagentAdapter string,
+) error {
+	if enableJSRender && webagentAdapter == "" {
+		if rf, ok := fetcher.(scraper.RenderedFetcher); ok {
+			fetcher = &testForceRenderFetcher{rf: rf}
+		}
+	}
+	result, _, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
+	if err != nil {
+		return err
+	}
+	if result != nil && len(result.Items) > 0 {
+		_, err = pipeline.StoreMenu(ctx, result, rawURL, store, embedder)
+		return err
+	}
+	return nil
+}
 
 // pdfExtractorStub implements both scraper.Extractor (for the HTML path) and
 // scraper.PDFExtractor (for the PDF path). It records calls so the test can

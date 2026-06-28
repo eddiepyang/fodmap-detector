@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"fodmap/auth"
@@ -14,6 +15,7 @@ import (
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
+	"google.golang.org/genai"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -160,12 +162,51 @@ var serveCmd = &cobra.Command{
 				chatBackend = cb
 			}
 
+			// Menu search dependencies
+			var genAIClient *genai.Client
+			if os.Getenv("GOOGLE_API_KEY") != "" {
+				genAIClient, err = genai.NewClient(cmd.Context(), nil)
+				if err != nil {
+					return fmt.Errorf("creating genai client: %w", err)
+				}
+			}
+
+			var menuStore server.MenuStore
+			if ms, ok := srv.Searcher().(server.MenuStore); ok {
+				menuStore = ms
+			}
+
+			extractorURL := viper.GetString("extractor-url")
+			extractorModel := viper.GetString("extractor-model")
+			extractorAPIKey := viper.GetString("extractor-api-key")
+			var extractor scraper.Extractor
+			if extractorURL != "" {
+				oaex, _ := scraper.NewOpenAICompatExtractor(extractorURL, extractorModel, extractorAPIKey, "none")
+				if strings.Contains(extractorURL, "generativelanguage") || strings.Contains(extractorURL, "openai") {
+					extractor = oaex
+				} else {
+					extractor = scraper.NewServiceExtractor(extractorURL, oaex, 30*time.Second, 120*time.Second)
+				}
+			}
+
 			var pipelineErr error
 			pipelineResult, pipelineErr = StartMenutrackingPipeline(cmd.Context(), PipelineConfig{
-				DSN:         postgresDSN,
-				Fetcher:     fetcher,
-				VectorSink:  vectorSink,
-				ChatBackend: chatBackend,
+				DSN:                     postgresDSN,
+				Fetcher:                 fetcher,
+				VectorSink:              vectorSink,
+				ChatBackend:             chatBackend,
+				MenuStore:               menuStore,
+				Embedder:                embedder,
+				GenAIClient:             genAIClient,
+				Extractor:               extractor,
+				DiscoveryAvroDestDir:    viper.GetString("discovery-avro-dir"),
+				DiscoveryGeminiModel:    viper.GetString("discovery-gemini-model"),
+				DiscoveryStaggerSeconds: viper.GetInt("discovery-stagger-seconds"),
+				ExtractionAvroDestDir:   viper.GetString("extraction-avro-dir"),
+				EnableVision:            viper.GetBool("enable-vision"),
+				UsePdftotext:            viper.GetBool("use-pdftotext"),
+				WebagentAdapter:         viper.GetString("webagent-adapter"),
+				BronzeDir:               viper.GetString("restaurant-bronze-dir"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -173,6 +214,14 @@ var serveCmd = &cobra.Command{
 
 			// Wire menutracking admin endpoints using the pipeline's pool.
 			srv.SetMenutrackingAdmin(&menutracking.AdminHandler{Pool: pipelineResult.Pool})
+
+			// Wire restaurant store and job queue for the admin REST API.
+			if pipelineResult.RestaurantStore != nil {
+				srv.SetRestaurantStore(pipelineResult.RestaurantStore)
+			}
+			if pipelineResult.RestaurantJobQueue != nil {
+				srv.SetRestaurantJobQueue(pipelineResult.RestaurantJobQueue)
+			}
 		}
 
 		// Start the HTTP server (blocks until SIGTERM or error).
@@ -218,6 +267,17 @@ func init() {
 	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
 	serveCmd.Flags().Bool("enable-pipeline", false, "Enable the menutracking regulatory tracking pipeline (requires postgres-dsn)")
+	serveCmd.Flags().String("extractor-url", "", "OpenAI-compatible LLM endpoint for menu extraction (e.g., https://api.openai.com/v1)")
+	serveCmd.Flags().String("extractor-model", "gpt-4o", "LLM model name for menu extraction")
+	serveCmd.Flags().String("extractor-api-key", "", "API key for menu extraction LLM")
+	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
+	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
+	serveCmd.Flags().Int("discovery-stagger-seconds", 15, "Seconds to stagger scrape jobs for multiple menus from the same restaurant")
+	serveCmd.Flags().String("extraction-avro-dir", "data/bronze/menu_extraction", "Directory for extraction Avro records")
+	serveCmd.Flags().Bool("enable-vision", false, "Enable vision/OCR for image-only menus (requires --extractor-url)")
+	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")
+	serveCmd.Flags().String("webagent-adapter", "", "Webagent adapter (site/target) for JS-rendered menus via Python scraper service")
+	serveCmd.Flags().String("restaurant-bronze-dir", "data/bronze/restaurants", "Directory for raw HTML bronze files from restaurant scrape jobs")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 	_ = viper.BindEnv("admin-email", "ADMIN_EMAIL")

@@ -1,0 +1,15 @@
+Find the official website URL, first-party online ordering page (like Square Online, Toast, or .shop/.cafe domains), and any direct menu PDF links for the restaurant "{{.DBA}}" at {{.Building}} {{.Street}}, {{.Boro}} NY. 
+
+If the restaurant has multiple separate menus (e.g., breakfast, lunch, dinner, drinks) on different links or PDFs, please return ALL of those distinct menu URLs.
+
+Return ONLY a valid JSON object in the exact format shown below, with no markdown formatting or extra text.
+
+Example format:
+{
+  "website_url": "https://www.example-restaurant.com",
+  "menu_urls": [
+    "https://www.toasttab.com/example-restaurant",
+    "https://www.example-restaurant.com/menus/dinner",
+    "https://www.example-restaurant.com/assets/drinks-menu.pdf"
+  ]
+}

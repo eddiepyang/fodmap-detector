@@ -56,6 +56,17 @@ OR (nta='QN31' AND zipcode IN ('11101','11109'))
 - **Single River client:** register `menusearch` workers in the same
   `river.Workers` bundle as `menutracking` — one client, one pool, one
   leader election.
+- **Python/Go split:** Go owns *discovery* (restaurant details → menu URL);
+  the Python `webagent` owns menu *navigation + JS extraction*. JS-rendered
+  pages are delegated to the webagent (`/scrape/{site}/{target}`), **not**
+  rendered in Go (chromedp). The only Python "discovery" code
+  (`scraper/src/scraper/webagent/discovery/`) generates *scraping adapters*
+  (navigation recipes) and stays in Python — it is not menu-URL discovery.
+- **Discovery source of truth:** consolidate the proven discovery logic from
+  `scripts/menuscan/main.go` (`discoverURL` + `resolveRedirects` +
+  `filterDelivery` + `dedup`) into `menusearch/discover.go`. Retire the
+  `menuscan` spike and delete the Python prototypes (`test_gemini.py`,
+  `test_debug.py`, `menu_discovery_prompt.txt`) once `menusearch` lands.
 
 ---
 
@@ -421,17 +432,19 @@ type ScrapeMenuWorker struct {
     river.WorkerDefaults[ScrapeMenuJobArgs]
 
     Pool             *pgxpool.Pool
-    Fetcher          scraper.Fetcher
-    Extractor        scraper.Extractor
+    Fetcher          scraper.Fetcher    // plain HTTPFetcher — webagent owns its own browser
+    Extractor        scraper.Extractor  // ServiceExtractor: JSRenderer + PDFExtractor + ImageExtractor
     MenuStore        server.MenuStore
     Embedder         search.Embedder
     EnableVision     bool
-    EnableJSRender    bool
     UsePdftotext      bool
-    WebagentAdapter   string
+    WebagentAdapter   string  // "site/target" for ScrapeJS → Python webagent
     BronzeDir         string  // override for tests
 }
 ```
+
+JS pages are handled by `ServiceExtractor.ScrapeJS(WebagentAdapter, ...)`
+against the Python webagent — there is no `EnableJSRender`/chromedp field.
 
 ---
 
@@ -472,7 +485,6 @@ func ExtractMenu(
     fetcher scraper.Fetcher,
     ex scraper.Extractor,
     enableVision bool,
-    enableJSRender bool,
     usePdftotext bool,
     webagentAdapter string,
 ) (*scraper.MenuExtractionResult, error)
@@ -506,6 +518,22 @@ Three functions move from `cli/scrape.go` to `pipeline/pipeline.go`:
 The `menuCollectionNS` UUID namespace variable (`cli/scrape.go:426`) moves
 with `ToMenuItems`.
 
+### JS handling: webagent only (no Go chromedp)
+
+Per the Python/Go split, `pipeline.ExtractMenu` keeps the **static** cascade
+(JSON-LD → HTML/text → PDF/OCR via the Python service → embedded-image OCR)
+**plus** the webagent JS-delegation path
+(`scraper.JSRenderer.ScrapeJS` → Python `/scrape/{site}/{target}`,
+`cli/scrape.go:302-326`). The **generic Go chromedp render path**
+(`cli/scrape.go:328-355`, `RenderedFetcher`/`ChromeRenderedFetcher`) is
+**not** carried into `pipeline.ExtractMenu` — JS rendering lives in Python.
+This is why the signature drops `enableJSRender bool` and the worker passes a
+plain `HTTPFetcher` (the webagent owns its own browser).
+
+Note: the standalone `fodmap scrape` CLI may retain its generic chromedp path
+for ad-hoc one-off use; the refactor should preserve that CLI behavior, but
+the `menusearch` worker uses the webagent only.
+
 ### Changes during extraction
 
 - Replace the two `fmt.Printf` calls in `runScrapeWith` (lines 338, 354)
@@ -538,10 +566,11 @@ type GeminiMenuSearcher struct {
 }
 
 func (g *GeminiMenuSearcher) Search(ctx context.Context, dba, building, street, boro string) ([]string, error) {
+    addr := fmt.Sprintf("%s %s, %s NY", building, street, boro)
     prompt := fmt.Sprintf(
-        "Find the menu page URL for %s at %s %s, %s, NY. "+
+        "Find the official website URL for the restaurant %q at %s. "+
             "Return only the URL(s), one per line.",
-        dba, building, street, boro)
+        dba, addr)
 
     cfg := &genai.GenerateContentConfig{
         Tools: []*genai.Tool{
@@ -568,10 +597,20 @@ func (g *GeminiMenuSearcher) Search(ctx context.Context, dba, building, street, 
         }
     }
 
-    // Fallback: extract URLs from response prose via regex.
+    // GroundingChunks return vertexaisearch.cloud.google.com REDIRECT URLs,
+    // not the final destination. Resolve them so we keep the real restaurant
+    // domain. (Ported from scripts/menuscan/main.go:398 resolveRedirects —
+    // omitted in the original snippet; without it every discovered URL is a
+    // google redirect and the delivery filter can't see the real host.)
+    urls = resolveRedirects(ctx, urls)
+
+    // Fallback: extract URLs from response prose via regex, skipping the
+    // vertexaisearch/google redirect hosts.
     urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
     for _, u := range urlRe.FindAllString(resp.Text(), -1) {
-        urls = append(urls, u)
+        if !strings.Contains(u, "vertexaisearch") && !strings.Contains(u, "google.com") {
+            urls = append(urls, u)
+        }
     }
 
     return dedupAndFilter(urls), nil
@@ -582,8 +621,17 @@ func (g *GeminiMenuSearcher) Search(ctx context.Context, dba, building, street, 
 Configurable via `--discover-model` flag / `DISCOVER_MODEL` env.
 
 **URL extraction strategy:** `GroundingChunks` are authoritative (the
-sources Gemini actually cited). The regex fallback catches URLs in prose
-that Gemini mentions but doesn't formally cite. Union both, dedup, filter.
+sources Gemini actually cited), but they are `vertexaisearch` redirect URLs
+that must be resolved to the real domain first (`resolveRedirects`). The
+regex fallback catches URLs in prose that Gemini mentions but doesn't
+formally cite. Union both, resolve, dedup, filter.
+
+**Reuse from `menuscan`:** `resolveRedirects`, `dedupAndFilter` (=
+`filterDelivery` + `dedup`), and the delivery/social drop-list
+(`facebook`/`instagram`/`yelp`/`tripadvisor`/`google.com/maps`/`ubereats`/
+`doordash`/`grubhub`/`postmates`/`seamless`/`delivery.com`) are ported
+verbatim from `scripts/menuscan/main.go` — this is proven discovery code, not
+a fresh implementation.
 
 **Stubbable:** Tests inject a `stubSearcher` implementing `GeminiSearcher`
 with canned URLs.
@@ -813,14 +861,15 @@ store implements `server.RestaurantStore` via structural typing.
 The `ScrapeMenuWorker` needs the same extractor flags as `fodmap scrape`.
 Add these to `serveCmd` (and bind to viper):
 
-- `--extractor-url` — Python scraper service base URL
+- `--extractor-url` — Python scraper service base URL (PDF/OCR **and**
+  webagent JS navigation). Required for JS-only and image/PDF menus.
 - `--llm-url` — OpenAI-compatible LLM endpoint
 - `--llm-model` — LLM model name
 - `--llm-api-key` — LLM API key
 - `--enable-vision` — pure-Go vision fallback
 - `--pdftotext` — system pdftotext fallback
-- `--enable-js-render` — route JS pages to webagent
-- `--webagent-adapter` — webagent adapter ID
+- `--webagent-adapter` — webagent adapter ID ("site/target") for JS pages,
+  delegated to the Python webagent via `ServiceExtractor.ScrapeJS`
 - `--discover-model` — Gemini model for discovery (default: `gemini-2.5-flash`)
 - `--nyc-app-token` — Socrata API app token (optional)
 - `--enable-restaurant-pipeline` — gate the menusearch workers (like
@@ -873,7 +922,15 @@ This mirrors the existing `menutracking` pattern
 - **No new Go deps.** `google.golang.org/genai` is already in `go.mod`
   (v1.51.0). `encoding/csv` and `regexp` are stdlib. River, `hamba/avro/v2`,
   and `github.com/google/uuid` are already deps.
-- **No new Python deps.** The scraper service is unchanged.
+- **No Python changes for discovery** — discovery now lives entirely in Go
+  (`menusearch`). The Python scraper service is unchanged and remains the
+  JS-navigation + PDF/OCR backend (same API: `/scrape/{site}/{target}`,
+  `/v1` PDF/OCR).
+- **Delete throwaway Python prototypes** that were menu-discovery
+  experiments superseded by the Go implementation: `scraper/test_gemini.py`,
+  `scraper/test_debug.py`, `scraper/menu_discovery_prompt.txt`. (The Python
+  `webagent/discovery/` package — *adapter* discovery — is unrelated and
+  stays.)
 
 ---
 
@@ -934,6 +991,16 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
   `MaxWorkers: 5` bounds concurrency; increase if throughput matters. The
   `--extractor-url` flag is passed through to the worker so it uses the
   Python service for hard cases.
+
+- **JS sites require a webagent adapter (no Go render fallback).** With the
+  generic Go chromedp path removed (JS navigation is Python's job), a JS-only
+  menu site that has no per-site webagent adapter yields `no items` from
+  `ScrapeMenuWorker` — there is no generic in-Go render fallback anymore.
+  Adapter generation is the Python `webagent/discovery` agent's job (out of
+  scope here, now a hard dependency for JS sites). Follow-on: auto-discover an
+  adapter before `scrape_menu` for sites the static cascade can't handle. The
+  static cascade (JSON-LD, server-rendered HTML, PDF/OCR, embedded-image OCR)
+  still covers the majority of restaurant sites without an adapter.
 
 - **`EventWriter.Write` float64→float32 coercion.** The existing
   `EventWriter.Write` method (`data/io/event.go:30-38`) blindly coerces
@@ -1044,41 +1111,52 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 
 ## Implementation Order
 
-1. **Migration:** `000002_restaurants.up.sql` — `restaurants` table.
-2. **Avro schemas:** Add `NYCRestaurantSchema`, `GeminiDiscoverySchema`,
-   `MenuExtractionSchema` to `data/schemas/schemas.go`.
-3. **Avro writers:** `menusearch/avro.go` — record builders for each schema.
+1. ~~**Migration:** `000002_restaurants.up.sql` — `restaurants` table.~~
+2. ~~**Avro schemas:** Add `NYCRestaurantSchema`, `GeminiDiscoverySchema`,
+   `MenuExtractionSchema` to `data/schemas/schemas.go`.~~
+3. ~~**Avro writers:** `menusearch/avro.go` — record builders for each schema.
    Use `ocf.NewEncoder` directly for `nyc_restaurant` (bypass
    `EventWriter.Write` float64→float32 coercion on `double` fields). Use
    `EventWriter` for `gemini_discovery` and `menu_extraction` (no `double`
-   fields).
-4. **Server interfaces:** `server/restaurant_store.go` — `RestaurantStore`
-   + `RiverInserter` interfaces + `Restaurant` struct.
-5. **Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
-   embedded SQL. Store implements `server.RestaurantStore`.
-6. **CSV parser:** `menusearch/csv.go` + tests.
-7. **Area filter + Socrata client:** `menusearch/areas.go`,
-   `menusearch/nycdata.go`.
-8. **Refactor:** split `runScrapeWith` from `cli/scrape.go` into
+   fields).~~
+4. ~~**Server interfaces:** `server/restaurant_store.go` — `RestaurantStore`
+   + `RiverInserter` interfaces + `Restaurant` struct.~~
+5. ~~**Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
+   embedded SQL. Store implements `server.RestaurantStore`.~~
+6. ~~**CSV parser:** `menusearch/csv.go` + tests.~~
+7. ~~**Area filter + Socrata client:** `menusearch/areas.go`,
+   `menusearch/nycdata.go`.~~
+8. ~~**Refactor:** split `runScrapeWith` from `cli/scrape.go` into
    `pipeline/pipeline.go` as `ExtractMenu` + `StoreMenu` + `ToMenuItems` +
-   `ExtractPDF`. Replace `fmt.Printf` with `slog.Info`. Update
-   `cli/scrape.go` to call `pipeline.ExtractMenu` then `pipeline.StoreMenu`.
-   Verify `make check` passes — no behavior change.
-9. **CLI import:** `cli/restaurants.go` — `import --area`, `list`,
-   `scrape`, `discover`, `retry` commands.
-10. **Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
+   `ExtractPDF`. Drop the generic Go chromedp render path
+   (`cli/scrape.go:328-355`) from `ExtractMenu`; keep the webagent
+   `ScrapeJS` delegation. Replace `fmt.Printf` with `slog.Info`. Update
+   `cli/scrape.go` to call `pipeline.ExtractMenu` then `pipeline.StoreMenu`
+   (the standalone CLI may keep its own chromedp path). Verify `make check`
+   passes — no behavior change for the CLI.~~
+9. ~~**CLI import:** `cli/restaurants.go` — `import --area`, `list`,
+   `scrape`, `discover`, `retry` commands.~~
+10. ~~**Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
     (job args + `GeminiSearcher` interface + `GeminiMenuSearcher` impl +
-    Avro record writing with `{camis}-{attempt}.avro` filename).
-11. **Scrape worker:** `menusearch/scrape.go` — calls `ExtractMenu`, writes
-    HTML + Avro bronze, then calls `StoreMenu`.
-12. **Worker registration:** Merge `menusearch` workers into the existing
+    Avro record writing with `{camis}-{attempt}.avro` filename). Port
+    `discoverURL` + `resolveRedirects` + `filterDelivery` + `dedup` from
+    `scripts/menuscan/main.go` — including `resolveRedirects` (missing from
+    the earlier `discover.go` snippet, required to unwrap `vertexaisearch`
+    grounding URLs).~~
+11. ~~**Scrape worker:** `menusearch/scrape.go` — calls `ExtractMenu`, writes
+    HTML + Avro bronze, then calls `StoreMenu`.~~
+12. ~~**Worker registration:** Merge `menusearch` workers into the existing
     `StartMenutrackingPipeline` (or a new `StartPipelines` that wraps both).
     Add new flags to `serveCmd` (defaults: `--llm-url=""`, not
     `http://localhost:8000/v1`). Wire `RestaurantStore` to `Server` via
     `srv.SetRestaurantStore(...)`. Follow startup ordering: construct →
-    register → create client → wire `RiverClient` → `Start`.
+    register → create client → wire `RiverClient` → `Start`.~~
 13. **REST API:** `server/restaurants_handler.go` — CRUD + trigger + retry
     endpoints.
 14. **Docs:** update `README.md`, `docs/guides/cli-reference.md`,
     `docs/guides/data-model.md` (Avro schemas), `start.sh`.
-15. **`make check`** passes.
+15. **Cleanup:** delete the throwaway Python prototypes
+    (`scraper/test_gemini.py`, `scraper/test_debug.py`,
+    `scraper/menu_discovery_prompt.txt`) and retire the `scripts/menuscan`
+    spike once `menusearch` discovery is verified against real restaurants.
+16. **`make check`** passes.
