@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -107,25 +108,48 @@ type PipelineConfig struct {
 	DiscoveryAvroDestDir  string
 	DiscoveryGeminiModel  string
 	ExtractionAvroDestDir string
+	EnableVision          bool
+	UsePdftotext          bool
+	WebagentAdapter       string
+	BronzeDir             string
 }
 
 // PipelineResult holds the running pipeline's stop function and references
 // needed for runtime operations like source reloading.
 type PipelineResult struct {
-	Stop func(context.Context) error
-	Pool *pgxpool.Pool
+	Stop               func(context.Context) error
+	Pool               *pgxpool.Pool
+	RestaurantStore    server.RestaurantStore    // nil when menusearch not wired
+	RestaurantJobQueue server.RestaurantJobQueue // nil when menusearch not wired
 }
 
 // deadLetterHandler implements river.ErrorHandler to persist discarded jobs
 // to the menutracking_dead_letter table for long-term audit.
 type deadLetterHandler struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	restaurantStore *menusearch.Store // may be nil when menusearch not wired
+}
+
+func (h *deadLetterHandler) handleFinalScrapeFailure(ctx context.Context, job *rivertype.JobRow, errMsg string) {
+	if h.restaurantStore == nil || job.Kind != "menusearch.scrape_menu" || job.Attempt < job.MaxAttempts {
+		return
+	}
+	var args struct {
+		CAMIS string `json:"camis"`
+	}
+	if jsonErr := json.Unmarshal(job.EncodedArgs, &args); jsonErr != nil || args.CAMIS == "" {
+		return
+	}
+	if storeErr := h.restaurantStore.UpdateScrapeResult(ctx, args.CAMIS, menusearch.StatusFailedScrape, 0, errMsg); storeErr != nil {
+		slog.Warn("menutracking: failed to update scrape status on discard", "camis", args.CAMIS, "err", storeErr)
+	}
 }
 
 func (h *deadLetterHandler) HandleError(ctx context.Context, job *rivertype.JobRow, err error) *river.ErrorHandlerResult {
 	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, job.Kind, json.RawMessage(job.EncodedArgs), err.Error()); dlErr != nil {
 		slog.Warn("menutracking: failed to write dead letter", "err", dlErr)
 	}
+	h.handleFinalScrapeFailure(ctx, job, err.Error())
 	return nil
 }
 
@@ -134,6 +158,7 @@ func (h *deadLetterHandler) HandlePanic(ctx context.Context, job *rivertype.JobR
 	if dlErr := menutracking.DeadLetterHandler(ctx, h.pool, job.Kind, json.RawMessage(job.EncodedArgs), errMsg); dlErr != nil {
 		slog.Warn("menutracking: failed to write dead letter for panic", "err", dlErr)
 	}
+	h.handleFinalScrapeFailure(ctx, job, errMsg)
 	return nil
 }
 
@@ -187,18 +212,34 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		GenAIClient: cfg.GenAIClient,
 		AvroDestDir: cfg.DiscoveryAvroDestDir,
 		GeminiModel: cfg.DiscoveryGeminiModel,
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 	if cfg.GenAIClient != nil {
 		river.AddWorker(workers, discoverWorker)
+		if cfg.MenuStore == nil || cfg.Embedder == nil || cfg.Extractor == nil {
+			slog.Warn("menusearch: discover worker registered but scrape worker is not — discovered URLs will be queued but not processed",
+				"has_menu_store", cfg.MenuStore != nil,
+				"has_embedder", cfg.Embedder != nil,
+				"has_extractor", cfg.Extractor != nil)
+		}
 	}
 
 	scrapeMenuWorker := &menusearch.ScrapeMenuWorker{
-		Store:       menusearch.NewStore(pool),
-		MenuStore:   cfg.MenuStore,
-		Embedder:    cfg.Embedder,
-		Fetcher:     cfg.Fetcher,
-		Extractor:   cfg.Extractor,
-		AvroDestDir: cfg.ExtractionAvroDestDir,
+		Store:           menusearch.NewStore(pool),
+		MenuStore:       cfg.MenuStore,
+		Embedder:        cfg.Embedder,
+		Fetcher:         cfg.Fetcher,
+		Extractor:       cfg.Extractor,
+		AvroDestDir:     cfg.ExtractionAvroDestDir,
+		EnableVision:    cfg.EnableVision,
+		UsePdftotext:    cfg.UsePdftotext,
+		WebagentAdapter: cfg.WebagentAdapter,
+		BronzeDir:       cfg.BronzeDir,
 	}
 	if cfg.MenuStore != nil && cfg.Embedder != nil && cfg.Extractor != nil {
 		river.AddWorker(workers, scrapeMenuWorker)
@@ -234,7 +275,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		Workers:                     workers,
 		PeriodicJobs:                periodicJobs,
 		DiscardedJobRetentionPeriod: 30 * 24 * time.Hour,
-		ErrorHandler:                &deadLetterHandler{pool: pool},
+		ErrorHandler:                &deadLetterHandler{pool: pool, restaurantStore: menusearch.NewStore(pool)},
 	})
 	if err != nil {
 		pool.Close()
@@ -242,6 +283,8 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	}
 	scrapeWorker.RiverClient = riverClient
 	discoverWorker.RiverClient = riverClient
+
+	jobQueue := &menusearch.JobQueue{Client: riverClient}
 
 	if err := riverClient.Start(ctx); err != nil {
 		pool.Close()
@@ -261,8 +304,10 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	}
 
 	return &PipelineResult{
-		Stop: stop,
-		Pool: pool,
+		Stop:               stop,
+		Pool:               pool,
+		RestaurantStore:    menusearch.NewStore(pool),
+		RestaurantJobQueue: jobQueue,
 	}, nil
 }
 

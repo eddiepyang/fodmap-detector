@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -45,3 +46,14 @@ type RestaurantStore interface {
 type RiverInserter interface {
 	Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error)
 }
+
+// RestaurantJobQueue enqueues discovery and scrape jobs for a restaurant.
+// Implemented by menusearch; defined here so server handlers don't import menusearch.
+type RestaurantJobQueue interface {
+	EnqueueDiscover(ctx context.Context, r Restaurant) error
+	EnqueueScrape(ctx context.Context, r Restaurant) error
+}
+
+// ErrJobAlreadyQueued is returned by RestaurantJobQueue methods when River
+// deduplication prevents inserting a duplicate job within the uniqueness window.
+var ErrJobAlreadyQueued = errors.New("job already queued")

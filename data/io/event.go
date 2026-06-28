@@ -42,8 +42,12 @@ func (w *EventWriter) WriteRaw(record any) error {
 	return w.encoder.Encode(record)
 }
 
-// Close closes the underlying writer.
+// Close flushes the OCF encoder and closes the underlying writer.
 func (w *EventWriter) Close() error {
+	if err := w.encoder.Close(); err != nil {
+		_ = w.closer.Close()
+		return err
+	}
 	return w.closer.Close()
 }
 

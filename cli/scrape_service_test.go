@@ -39,7 +39,7 @@ func runScrapeWith(
 			fetcher = &testForceRenderFetcher{rf: rf}
 		}
 	}
-	result, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
+	result, _, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
 	if err != nil {
 		return err
 	}

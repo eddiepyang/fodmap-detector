@@ -3,6 +3,7 @@ package menusearch
 import (
 	"context"
 	_ "embed"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,7 +47,7 @@ func (s *Store) Get(ctx context.Context, camis string) (*server.Restaurant, erro
 		&r.Status, &r.MenuURL, &r.MenuURLSource, &r.ItemCount, &r.ScrapedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

@@ -24,10 +24,10 @@ func WriteNYCRestaurantAvro(ctx context.Context, destPath string, records []NYCR
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	writer, err := io.NewEventWriter(f, schemas.NYCRestaurantSchema)
 	if err != nil {
+		_ = f.Close()
 		return fmt.Errorf("new event writer: %w", err)
 	}
 	defer func() { _ = writer.Close() }()
@@ -82,10 +82,10 @@ func WriteGeminiDiscoveryAvro(ctx context.Context, destPath string, rec GeminiDi
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	writer, err := io.NewEventWriter(f, schemas.GeminiDiscoverySchema)
 	if err != nil {
+		_ = f.Close()
 		return fmt.Errorf("new event writer: %w", err)
 	}
 	defer func() { _ = writer.Close() }()
@@ -133,10 +133,10 @@ func WriteMenuExtractionAvro(ctx context.Context, destPath string, rec MenuExtra
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	writer, err := io.NewEventWriter(f, schemas.MenuExtractionSchema)
 	if err != nil {
+		_ = f.Close()
 		return fmt.Errorf("new event writer: %w", err)
 	}
 	defer func() { _ = writer.Close() }()

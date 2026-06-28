@@ -164,7 +164,10 @@ var serveCmd = &cobra.Command{
 			// Menu search dependencies
 			var genAIClient *genai.Client
 			if os.Getenv("GOOGLE_API_KEY") != "" {
-				genAIClient, _ = genai.NewClient(cmd.Context(), nil)
+				genAIClient, err = genai.NewClient(cmd.Context(), nil)
+				if err != nil {
+					return fmt.Errorf("creating genai client: %w", err)
+				}
 			}
 
 			var menuStore server.MenuStore
@@ -193,6 +196,10 @@ var serveCmd = &cobra.Command{
 				DiscoveryAvroDestDir:  viper.GetString("discovery-avro-dir"),
 				DiscoveryGeminiModel:  viper.GetString("discovery-gemini-model"),
 				ExtractionAvroDestDir: viper.GetString("extraction-avro-dir"),
+				EnableVision:          viper.GetBool("enable-vision"),
+				UsePdftotext:          viper.GetBool("use-pdftotext"),
+				WebagentAdapter:       viper.GetString("webagent-adapter"),
+				BronzeDir:             viper.GetString("restaurant-bronze-dir"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -200,6 +207,14 @@ var serveCmd = &cobra.Command{
 
 			// Wire menutracking admin endpoints using the pipeline's pool.
 			srv.SetMenutrackingAdmin(&menutracking.AdminHandler{Pool: pipelineResult.Pool})
+
+			// Wire restaurant store and job queue for the admin REST API.
+			if pipelineResult.RestaurantStore != nil {
+				srv.SetRestaurantStore(pipelineResult.RestaurantStore)
+			}
+			if pipelineResult.RestaurantJobQueue != nil {
+				srv.SetRestaurantJobQueue(pipelineResult.RestaurantJobQueue)
+			}
 		}
 
 		// Start the HTTP server (blocks until SIGTERM or error).
@@ -251,6 +266,10 @@ func init() {
 	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
 	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
 	serveCmd.Flags().String("extraction-avro-dir", "data/bronze/menu_extraction", "Directory for extraction Avro records")
+	serveCmd.Flags().Bool("enable-vision", false, "Enable vision/OCR for image-only menus (requires --extractor-url)")
+	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")
+	serveCmd.Flags().String("webagent-adapter", "", "Webagent adapter (site/target) for JS-rendered menus via Python scraper service")
+	serveCmd.Flags().String("restaurant-bronze-dir", "data/bronze/restaurants", "Directory for raw HTML bronze files from restaurant scrape jobs")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 	_ = viper.BindEnv("admin-email", "ADMIN_EMAIL")

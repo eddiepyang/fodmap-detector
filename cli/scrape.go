@@ -161,7 +161,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		slog.Info("using headless Chrome for JS rendering (generic path; no adapter)")
 	}
 
-	result, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
+	result, _, err := pipeline.ExtractMenu(ctx, rawURL, fetcher, ex, enableVision, usePdftotext, webagentAdapter)
 	if err != nil {
 		return err
 	}

@@ -1111,46 +1111,46 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 
 ## Implementation Order
 
-1. **Migration:** `000002_restaurants.up.sql` — `restaurants` table.
-2. **Avro schemas:** Add `NYCRestaurantSchema`, `GeminiDiscoverySchema`,
-   `MenuExtractionSchema` to `data/schemas/schemas.go`.
-3. **Avro writers:** `menusearch/avro.go` — record builders for each schema.
+1. ~~**Migration:** `000002_restaurants.up.sql` — `restaurants` table.~~
+2. ~~**Avro schemas:** Add `NYCRestaurantSchema`, `GeminiDiscoverySchema`,
+   `MenuExtractionSchema` to `data/schemas/schemas.go`.~~
+3. ~~**Avro writers:** `menusearch/avro.go` — record builders for each schema.
    Use `ocf.NewEncoder` directly for `nyc_restaurant` (bypass
    `EventWriter.Write` float64→float32 coercion on `double` fields). Use
    `EventWriter` for `gemini_discovery` and `menu_extraction` (no `double`
-   fields).
-4. **Server interfaces:** `server/restaurant_store.go` — `RestaurantStore`
-   + `RiverInserter` interfaces + `Restaurant` struct.
-5. **Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
-   embedded SQL. Store implements `server.RestaurantStore`.
-6. **CSV parser:** `menusearch/csv.go` + tests.
-7. **Area filter + Socrata client:** `menusearch/areas.go`,
-   `menusearch/nycdata.go`.
-8. **Refactor:** split `runScrapeWith` from `cli/scrape.go` into
+   fields).~~
+4. ~~**Server interfaces:** `server/restaurant_store.go` — `RestaurantStore`
+   + `RiverInserter` interfaces + `Restaurant` struct.~~
+5. ~~**Types + store:** `menusearch/restaurant.go`, `menusearch/store.go` +
+   embedded SQL. Store implements `server.RestaurantStore`.~~
+6. ~~**CSV parser:** `menusearch/csv.go` + tests.~~
+7. ~~**Area filter + Socrata client:** `menusearch/areas.go`,
+   `menusearch/nycdata.go`.~~
+8. ~~**Refactor:** split `runScrapeWith` from `cli/scrape.go` into
    `pipeline/pipeline.go` as `ExtractMenu` + `StoreMenu` + `ToMenuItems` +
    `ExtractPDF`. Drop the generic Go chromedp render path
    (`cli/scrape.go:328-355`) from `ExtractMenu`; keep the webagent
    `ScrapeJS` delegation. Replace `fmt.Printf` with `slog.Info`. Update
    `cli/scrape.go` to call `pipeline.ExtractMenu` then `pipeline.StoreMenu`
    (the standalone CLI may keep its own chromedp path). Verify `make check`
-   passes — no behavior change for the CLI.
-9. **CLI import:** `cli/restaurants.go` — `import --area`, `list`,
-   `scrape`, `discover`, `retry` commands.
-10. **Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
+   passes — no behavior change for the CLI.~~
+9. ~~**CLI import:** `cli/restaurants.go` — `import --area`, `list`,
+   `scrape`, `discover`, `retry` commands.~~
+10. ~~**Discovery worker:** `menusearch/discover.go` + `menusearch/workers.go`
     (job args + `GeminiSearcher` interface + `GeminiMenuSearcher` impl +
     Avro record writing with `{camis}-{attempt}.avro` filename). Port
     `discoverURL` + `resolveRedirects` + `filterDelivery` + `dedup` from
     `scripts/menuscan/main.go` — including `resolveRedirects` (missing from
     the earlier `discover.go` snippet, required to unwrap `vertexaisearch`
-    grounding URLs).
-11. **Scrape worker:** `menusearch/scrape.go` — calls `ExtractMenu`, writes
-    HTML + Avro bronze, then calls `StoreMenu`.
-12. **Worker registration:** Merge `menusearch` workers into the existing
+    grounding URLs).~~
+11. ~~**Scrape worker:** `menusearch/scrape.go` — calls `ExtractMenu`, writes
+    HTML + Avro bronze, then calls `StoreMenu`.~~
+12. ~~**Worker registration:** Merge `menusearch` workers into the existing
     `StartMenutrackingPipeline` (or a new `StartPipelines` that wraps both).
     Add new flags to `serveCmd` (defaults: `--llm-url=""`, not
     `http://localhost:8000/v1`). Wire `RestaurantStore` to `Server` via
     `srv.SetRestaurantStore(...)`. Follow startup ordering: construct →
-    register → create client → wire `RiverClient` → `Start`.
+    register → create client → wire `RiverClient` → `Start`.~~
 13. **REST API:** `server/restaurants_handler.go` — CRUD + trigger + retry
     endpoints.
 14. **Docs:** update `README.md`, `docs/guides/cli-reference.md`,

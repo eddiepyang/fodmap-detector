@@ -18,7 +18,8 @@ import (
 )
 
 // ExtractMenu fetches the URL, runs the extraction cascade (JSON-LD → HTML/text → PDF/OCR → image),
-// and returns the structured result. This is the "acquire + extract" phase.
+// and returns the structured result and the raw response body.
+// The raw body is nil for webagent JS paths. Callers may write it to the bronze layer.
 func ExtractMenu(
 	ctx context.Context,
 	rawURL string,
@@ -27,18 +28,18 @@ func ExtractMenu(
 	enableVision bool,
 	usePdftotext bool,
 	webagentAdapter string,
-) (*scraper.MenuExtractionResult, error) {
+) (*scraper.MenuExtractionResult, []byte, error) {
 	slog.Info("scraping URL", "url", rawURL)
 
 	fetchRes, err := fetcher.Fetch(ctx, rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch: %w", err)
+		return nil, nil, fmt.Errorf("fetch: %w", err)
 	}
 
 	bodyBytes, err := io.ReadAll(fetchRes.Body)
 	_ = fetchRes.Body.Close()
 	if err != nil {
-		return nil, fmt.Errorf("reading body: %w", err)
+		return nil, nil, fmt.Errorf("reading body: %w", err)
 	}
 
 	ct := fetchRes.ContentType
@@ -71,7 +72,7 @@ func ExtractMenu(
 		if strings.Contains(ct, "pdf") {
 			text, structured, err := ExtractPDF(ctx, bodyBytes, usePdftotext, enableVision, ex)
 			if err != nil {
-				return nil, fmt.Errorf("PDF extraction: %w", err)
+				return nil, bodyBytes, fmt.Errorf("PDF extraction: %w", err)
 			}
 			if structured != nil {
 				pdfResult = structured
@@ -81,7 +82,7 @@ func ExtractMenu(
 		} else {
 			md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(bodyBytes), ct)
 			if err != nil {
-				return nil, fmt.Errorf("HTML conversion: %w", err)
+				return nil, bodyBytes, fmt.Errorf("HTML conversion: %w", err)
 			}
 			noisy := scraper.IsTooNoisy(md)
 			if noisy {
@@ -103,7 +104,7 @@ func ExtractMenu(
 					if iex, ok := ex.(scraper.ImageExtractor); ok {
 						if imgResult, ran, err := extractFromImageURL(ctx, fetcher, iex, menuImgCandidates); ran {
 							if err != nil {
-								return nil, err
+								return nil, bodyBytes, err
 							}
 							result = imgResult
 							result.SourceURL = rawURL
@@ -130,7 +131,7 @@ func ExtractMenu(
 							"url": rawURL,
 						})
 						if jsErr != nil {
-							return nil, fmt.Errorf("webagent JS scrape: %w", jsErr)
+							return nil, bodyBytes, fmt.Errorf("webagent JS scrape: %w", jsErr)
 						}
 						result = jsResult
 						result.SourceURL = rawURL
@@ -156,14 +157,14 @@ func ExtractMenu(
 			var err error
 			result, err = ex.Extract(ctx, pageText)
 			if err != nil {
-				return nil, fmt.Errorf("LLM extraction: %w", err)
+				return nil, bodyBytes, fmt.Errorf("LLM extraction: %w", err)
 			}
 
 			if len(result.Items) == 0 && len(menuImgCandidates) > 0 {
 				if iex, ok := ex.(scraper.ImageExtractor); ok {
 					if imgResult, ran, imgErr := extractFromImageURL(ctx, fetcher, iex, menuImgCandidates); ran {
 						if imgErr != nil {
-							return nil, imgErr
+							return nil, bodyBytes, imgErr
 						}
 						if len(imgResult.Items) > 0 {
 							slog.Info("text pass empty; routing to menu image OCR",
@@ -189,11 +190,11 @@ func ExtractMenu(
 tier1Done:
 	if len(result.Items) == 0 {
 		slog.Warn("no menu items extracted", "url", rawURL)
-		return &result, nil
+		return &result, bodyBytes, nil
 	}
 
 	slog.Info("extracted menu items", "count", len(result.Items), "restaurant", result.RestaurantName)
-	return &result, nil
+	return &result, bodyBytes, nil
 }
 
 // StoreMenu embeds the extracted items and upserts them into the menu store (Weaviate).

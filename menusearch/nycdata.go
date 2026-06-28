@@ -32,6 +32,9 @@ func FetchNYCRestaurants(ctx context.Context, area string, appToken string) (io.
 		conditions = append(conditions, fmt.Sprintf("(nta='%s' AND zipcode IN (%s))", nta, strings.Join(quotedZips, ",")))
 	}
 
+	if len(conditions) == 0 {
+		return nil, fmt.Errorf("area %q has no NTA or zip restrictions defined", area)
+	}
 	soqlWhere := strings.Join(conditions, " OR ")
 
 	u, err := url.Parse("https://data.cityofnewyork.us/resource/43nn-pn8j.csv")

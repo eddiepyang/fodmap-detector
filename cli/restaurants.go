@@ -7,6 +7,7 @@ import (
 	"fodmap/menusearch"
 	"fodmap/server"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -150,12 +151,13 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 		}
 
 		if !skipDiscovery {
-			address := fmt.Sprintf("%s %s, %s, NY %s", rec.Building, rec.Street, rec.Boro, rec.Zipcode)
 			_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-				CAMIS:   rec.CAMIS,
-				DBA:     rec.DBA,
-				Address: address,
-				Attempt: 1,
+				CAMIS:    rec.CAMIS,
+				DBA:      rec.DBA,
+				Building: rec.Building,
+				Street:   rec.Street,
+				Boro:     rec.Boro,
+				Attempt:  1,
 			}, nil)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to enqueue discovery for %s: %v\n", rec.CAMIS, err)
@@ -244,19 +246,18 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
+	if err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, ""); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
 	_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-		CAMIS:   r.CAMIS,
-		URL:     *r.MenuURL,
-		DBA:     r.DBA,
-		Attempt: 1,
+		CAMIS:            r.CAMIS,
+		URL:              *r.MenuURL,
+		DBA:              r.DBA,
+		DiscoveryEventID: uuid.NewString(),
 	}, nil)
 	if err != nil {
 		return fmt.Errorf("enqueue scrape: %w", err)
-	}
-
-	err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, "")
-	if err != nil {
-		return fmt.Errorf("update status: %w", err)
 	}
 
 	fmt.Printf("Enqueued scrape job for %s\n", camis)
@@ -299,12 +300,13 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
-	address := fmt.Sprintf("%s %s, %s, NY %s", safeStr(r.Building), safeStr(r.Street), safeStr(r.Boro), safeStr(r.Zipcode))
 	_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-		CAMIS:   r.CAMIS,
-		DBA:     r.DBA,
-		Address: address,
-		Attempt: 1,
+		CAMIS:    r.CAMIS,
+		DBA:      r.DBA,
+		Building: safeStr(r.Building),
+		Street:   safeStr(r.Street),
+		Boro:     safeStr(r.Boro),
+		Attempt:  1,
 	}, nil)
 	if err != nil {
 		return fmt.Errorf("enqueue discover: %w", err)
@@ -378,10 +380,10 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 
 	if r.MenuURL != nil && *r.MenuURL != "" {
 		_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-			CAMIS:   r.CAMIS,
-			URL:     *r.MenuURL,
-			DBA:     r.DBA,
-			Attempt: 1,
+			CAMIS:            r.CAMIS,
+			URL:              *r.MenuURL,
+			DBA:              r.DBA,
+			DiscoveryEventID: uuid.NewString(),
 		}, nil)
 		if err != nil {
 			return fmt.Errorf("enqueue scrape: %w", err)
@@ -392,12 +394,13 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("Re-enqueued scrape job for %s\n", camis)
 	} else {
-		address := fmt.Sprintf("%s %s, %s, NY %s", safeStr(r.Building), safeStr(r.Street), safeStr(r.Boro), safeStr(r.Zipcode))
 		_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-			CAMIS:   r.CAMIS,
-			DBA:     r.DBA,
-			Address: address,
-			Attempt: 1,
+			CAMIS:    r.CAMIS,
+			DBA:      r.DBA,
+			Building: safeStr(r.Building),
+			Street:   safeStr(r.Street),
+			Boro:     safeStr(r.Boro),
+			Attempt:  1,
 		}, nil)
 		if err != nil {
 			return fmt.Errorf("enqueue discover: %w", err)
