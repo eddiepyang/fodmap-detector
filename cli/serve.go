@@ -183,23 +183,23 @@ var serveCmd = &cobra.Command{
 
 			var pipelineErr error
 			pipelineResult, pipelineErr = StartMenutrackingPipeline(cmd.Context(), PipelineConfig{
-				DSN:                     postgresDSN,
-				Fetcher:                 fetcher,
-				VectorSink:              vectorSink,
-				ChatBackend:             chatBackend,
-				MenuStore:               menuStore,
-				Embedder:                embedder,
-				GenAIClient:             genAIClient,
-				Extractor:               extractor,
+				DSN:                       postgresDSN,
+				Fetcher:                   fetcher,
+				VectorSink:                vectorSink,
+				ChatBackend:               chatBackend,
+				MenuStore:                 menuStore,
+				Embedder:                  embedder,
+				GenAIClient:               genAIClient,
+				Extractor:                 extractor,
 				DiscoveryAvroDestDir:      viper.GetString("discovery-avro-dir"),
 				DiscoveryGeminiModel:      viper.GetString("discovery-gemini-model"),
 				DiscoveryStaggerSeconds:   viper.GetInt("discovery-stagger-seconds"),
 				DiscoveryMaxNoURLAttempts: viper.GetInt("discovery-max-no-url-attempts"),
-				ExtractionAvroDestDir:   viper.GetString("extraction-avro-dir"),
-				EnableVision:            viper.GetBool("enable-vision"),
-				UsePdftotext:            viper.GetBool("use-pdftotext"),
-				WebagentAdapter:         viper.GetString("webagent-adapter"),
-				BronzeDir:               viper.GetString("restaurant-bronze-dir"),
+				ExtractionAvroDestDir:     viper.GetString("extraction-avro-dir"),
+				EnableVision:              viper.GetBool("enable-vision"),
+				UsePdftotext:              viper.GetBool("use-pdftotext"),
+				WebagentAdapter:           viper.GetString("webagent-adapter"),
+				BronzeDir:                 viper.GetString("restaurant-bronze-dir"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -239,7 +239,6 @@ var serveCmd = &cobra.Command{
 		return nil
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
