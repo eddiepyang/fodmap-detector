@@ -251,6 +251,13 @@ var serveCmd = &cobra.Command{
 	},
 }
 
+func resolveLLMURL(extractorURL string) string {
+	if !strings.Contains(extractorURL, "generativelanguage") && !strings.Contains(extractorURL, "openai") {
+		return "https://generativelanguage.googleapis.com/v1beta/openai/"
+	}
+	return extractorURL
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().IntP("port", "p", 8081, "Port to listen on")
