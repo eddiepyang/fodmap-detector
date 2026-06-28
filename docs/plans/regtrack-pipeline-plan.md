@@ -1,6 +1,6 @@
 # Regulatory Tracking Pipeline Plan
 
-**Status:** Proposed
+**Status:** Completed
 
 ## Context
 
