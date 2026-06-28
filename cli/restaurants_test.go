@@ -70,11 +70,6 @@ func TestPaginateRecords(t *testing.T) {
 			if len(got) != tt.wantLength {
 				t.Errorf("paginateRecords() returned %d records, want %d", len(got), tt.wantLength)
 			}
-			if tt.wantLength > 0 {
-				// Verify it's the correct slice by checking pointers or just trusting the length for this simple test.
-				// Since all are empty structs, length is sufficient.
-				// But we can check if it's a subslice by verifying capacity or pointers if we gave them IDs.
-			}
 		})
 	}
 }

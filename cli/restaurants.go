@@ -203,7 +203,7 @@ func paginateRecords(records []menusearch.NYCRestaurantRecord, limit, offset int
 	if limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
-	
+
 	return records
 }
 
