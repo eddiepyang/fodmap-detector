@@ -28,8 +28,8 @@ var discoverPromptTmpl = template.Must(template.New("discover").Parse(discoverPr
 
 type DiscoverMenuURLWorker struct {
 	river.WorkerDefaults[DiscoverMenuURLArgs]
-	Store       *Store
-	GenAIClient *genai.Client
+	Store                *Store
+	GenAIClient          *genai.Client
 	RiverClient          *river.Client[pgx.Tx]
 	HTTPClient           *http.Client
 	AvroDestDir          string

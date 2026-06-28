@@ -191,14 +191,14 @@ var serveCmd = &cobra.Command{
 
 			var pipelineErr error
 			pipelineResult, pipelineErr = StartMenutrackingPipeline(cmd.Context(), PipelineConfig{
-				DSN:                   postgresDSN,
-				Fetcher:               fetcher,
-				VectorSink:            vectorSink,
-				ChatBackend:           chatBackend,
-				MenuStore:             menuStore,
-				Embedder:              embedder,
-				GenAIClient:           genAIClient,
-				Extractor:             extractor,
+				DSN:                     postgresDSN,
+				Fetcher:                 fetcher,
+				VectorSink:              vectorSink,
+				ChatBackend:             chatBackend,
+				MenuStore:               menuStore,
+				Embedder:                embedder,
+				GenAIClient:             genAIClient,
+				Extractor:               extractor,
 				DiscoveryAvroDestDir:    viper.GetString("discovery-avro-dir"),
 				DiscoveryGeminiModel:    viper.GetString("discovery-gemini-model"),
 				DiscoveryStaggerSeconds: viper.GetInt("discovery-stagger-seconds"),

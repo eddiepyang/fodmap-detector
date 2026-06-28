@@ -11,26 +11,26 @@ import (
 
 // Restaurant represents a row in the restaurants table.
 type Restaurant struct {
-	CAMIS         string     `json:"camis"`
-	DBA           string     `json:"dba"`
-	Boro          *string    `json:"boro"`
-	Building      *string    `json:"building"`
-	Street        *string    `json:"street"`
-	Zipcode       *string    `json:"zipcode"`
-	Phone         *string    `json:"phone"`
-	Cuisine       *string    `json:"cuisine"`
-	Latitude      *float64   `json:"latitude"`
-	Longitude     *float64   `json:"longitude"`
-	NTA           *string    `json:"nta"`
-	Status        string     `json:"status"`
-	WebsiteURL    *string    `json:"website_url"`
-	MenuURLs      []string   `json:"menu_urls"`
-	URLSource     *string    `json:"url_source"`
-	ItemCount     int        `json:"item_count"`
-	ScrapedAt     *time.Time `json:"scraped_at"`
-	LastError     *string    `json:"last_error"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	CAMIS      string     `json:"camis"`
+	DBA        string     `json:"dba"`
+	Boro       *string    `json:"boro"`
+	Building   *string    `json:"building"`
+	Street     *string    `json:"street"`
+	Zipcode    *string    `json:"zipcode"`
+	Phone      *string    `json:"phone"`
+	Cuisine    *string    `json:"cuisine"`
+	Latitude   *float64   `json:"latitude"`
+	Longitude  *float64   `json:"longitude"`
+	NTA        *string    `json:"nta"`
+	Status     string     `json:"status"`
+	WebsiteURL *string    `json:"website_url"`
+	MenuURLs   []string   `json:"menu_urls"`
+	URLSource  *string    `json:"url_source"`
+	ItemCount  int        `json:"item_count"`
+	ScrapedAt  *time.Time `json:"scraped_at"`
+	LastError  *string    `json:"last_error"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // RestaurantStore manages the restaurants table. Implemented by

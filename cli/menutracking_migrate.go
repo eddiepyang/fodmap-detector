@@ -97,14 +97,14 @@ func runMenutrackingAddSource(cmd *cobra.Command, args []string) error {
 
 // PipelineConfig holds the configuration for starting the menutracking pipeline.
 type PipelineConfig struct {
-	DSN                   string
-	Fetcher               scraper.Fetcher
-	VectorSink            menutracking.VectorSink
-	ChatBackend           chat.ChatBackend
-	MenuStore             server.MenuStore
-	Embedder              search.Embedder
-	GenAIClient           *genai.Client
-	Extractor             scraper.Extractor
+	DSN                     string
+	Fetcher                 scraper.Fetcher
+	VectorSink              menutracking.VectorSink
+	ChatBackend             chat.ChatBackend
+	MenuStore               server.MenuStore
+	Embedder                search.Embedder
+	GenAIClient             *genai.Client
+	Extractor               scraper.Extractor
 	DiscoveryAvroDestDir    string
 	DiscoveryGeminiModel    string
 	DiscoveryStaggerSeconds int
