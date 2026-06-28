@@ -94,8 +94,10 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	rawURLs = resolveRedirects(ctx, w.HTTPClient, rawURLs)
 
 	var result struct {
-		WebsiteURL string   `json:"website_url"`
-		MenuURLs   []string `json:"menu_urls"`
+		WebsiteURL  string   `json:"website_url"`
+		MenuURLs    []string `json:"menu_urls"`
+		Address     string   `json:"address"`
+		PhoneNumber string   `json:"phone_number"`
 	}
 
 	cleanText := strings.TrimSpace(text)
@@ -149,7 +151,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	if len(foundURLs) > 0 {
 		logger.Info("found URL(s)", "count", len(foundURLs), "primary", primaryURL)
 
-		if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, primaryURL, foundURLs, "gemini"); err != nil {
+		if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, primaryURL, foundURLs, "gemini", result.Address, result.PhoneNumber); err != nil {
 			return fmt.Errorf("update menu url: %w", err)
 		}
 
@@ -178,7 +180,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	} else {
 		if job.Attempt >= job.MaxAttempts {
 			logger.Info("no URL found after max attempts, marking permanently", "camis", args.CAMIS)
-			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", nil, "gemini"); err != nil {
+			if err := w.Store.UpdateDiscoveryURLs(ctx, args.CAMIS, "", nil, "gemini", "", ""); err != nil {
 				return fmt.Errorf("update no-url status: %w", err)
 			}
 			return nil

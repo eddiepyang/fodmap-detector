@@ -270,6 +270,8 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 			StatedIngredients:  entry.StatedIngredients,
 			HasFullIngredients: entry.HasFullIngredients,
 			SourceURL:          rawURL,
+			Address:            result.Address,
+			PhoneNumber:        result.PhoneNumber,
 			ScrapedAtUTC:       now,
 			Vector:             vectors[i],
 		}

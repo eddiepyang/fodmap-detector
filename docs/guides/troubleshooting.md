@@ -202,4 +202,50 @@ This drops all domain tables. You can then run `db migrate-up` to recreate them.
 ### River's own tables
 River's schema tables (`river_job`, `river_leader`, `river_queue`, `river_client`) are managed separately by `river migrate-up` and are **not** included in `golang-migrate` migrations. Do not attempt to manage them with `db migrate-up/down`.
 
+---
 
+## 7. Menu Scraping Avro Files Missing / Pipeline Stuck
+
+### The Problem
+When running the `menusearch` pipeline or background discovery jobs, the initial `discover_menu_url` jobs may complete successfully, but the subsequent `scrape_menu` jobs fail. As a result, no new Avro files appear in the `data/silver/menus` directory.
+
+### Diagnosing the River Job Queue
+You can inspect the state of the River job queue directly using PostgreSQL in Docker to see if jobs are stuck in a `retryable` state.
+
+**1. View job counts by kind and state:**
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c "select kind, state, count(*) from river_job group by 1, 2;"
+```
+If you see a large number of `menusearch.scrape_menu` jobs in the `retryable` state, they are failing.
+
+**2. Check the specific errors for failing jobs (with expanded display `-x`):**
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -x -c "select errors from river_job where kind='menusearch.scrape_menu' and state='retryable' order by id desc limit 1;"
+```
+
+### Common Causes & Fixes
+
+**Cause A: Extractor API Not Configured**
+If the error is `"job kind is not registered in the client's Workers bundle: menusearch.scrape_menu"`, the server was started without an LLM extractor configured. The pipeline intentionally avoids registering the scrape worker if it has no extractor API to use.
+**Fix:**
+Ensure your `service.yaml` has the extractor configured (e.g., using Gemini for extraction) and your API key is available:
+```yaml
+extractor-url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+extractor-model: "gemini-3-flash-preview"
+```
+*(The server will automatically fall back to the `GOOGLE_API_KEY` environment variable for the `extractor-api-key` if not explicitly set).*
+
+**Cause B: Output Directory Misconfigured**
+If the jobs complete but the files are written to `data/bronze/menu_extraction` instead of `data/silver/menus`, ensure the CLI flag `extraction-avro-dir` defaults to `"data/silver/menus"` or is explicitly passed.
+
+**Cause C: Jobs Are Scheduled For The Future (Staggered)**
+By default, scrape jobs for the same restaurant are staggered (e.g., 15 seconds apart) to prevent rate-limiting. If jobs are in the `available` state but not running, check their `scheduled_at` time:
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c "select state, scheduled_at, now() from river_job where state='available' limit 1;"
+```
+
+### Resetting Jobs to Run Immediately
+If you have fixed a configuration issue and want to force all `retryable` (and future scheduled) jobs to execute immediately, you can reset their state and schedule:
+```bash
+docker compose exec postgres psql -U fodmap -d fodmap -c "update river_job set state='available', attempt=0, max_attempts=5, scheduled_at=now() where state='retryable';"
+```

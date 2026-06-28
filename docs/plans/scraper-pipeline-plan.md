@@ -60,7 +60,11 @@ type MenuEntry struct {
 
 type MenuExtractionResult struct {
     RestaurantName string      `json:"restaurant_name"`
+    City           string      `json:"city,omitempty"`
+    State          string      `json:"state,omitempty"`
     SourceURL      string      `json:"source_url"`
+    Address        string      `json:"address"`
+    PhoneNumber    string      `json:"phone_number"`
     ScrapedAtUTC   string      `json:"scraped_at_utc"`
     Items          []MenuEntry `json:"items"`
 }
@@ -225,6 +229,8 @@ Weaviate collection: RestaurantMenu
   - statedIngredients  (text[])       only ingredients literally on the menu
   - hasFullIngredients (boolean)      false → caller must warn user "ingredients incomplete"
   - sourceUrl          (text)
+  - address            (text)
+  - phoneNumber        (text)
   - scrapedAtUtc       (date)         supports "scraped > 30 days ago" tombstoning
   - vector             (embedding of: "{dishName}. {description}. Ingredients: {stated_ingredients}")
 ```

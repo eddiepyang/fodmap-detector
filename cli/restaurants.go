@@ -2,12 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"fodmap/menusearch"
+	"fodmap/pipeline"
+	"fodmap/scraper"
+	"fodmap/search"
 	"fodmap/server"
 
 	"github.com/google/uuid"
+	"github.com/hamba/avro/v2/ocf"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -32,6 +38,7 @@ func init() {
 	importCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
 	importCmd.Flags().String("nyc-app-token", "", "NYC OpenData App Token")
 	importCmd.Flags().Int("limit", 100, "Limit the number of records to import")
+	importCmd.Flags().Int("offset", 0, "Offset the number of records to import")
 	importCmd.Flags().Bool("skip-discovery", false, "Skip enqueueing discovery jobs")
 	restaurantsCmd.AddCommand(importCmd)
 
@@ -43,6 +50,7 @@ func init() {
 	listCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
 	listCmd.Flags().String("status", "pending_discovery", "Filter by status")
 	listCmd.Flags().Int("limit", 50, "Limit the number of records")
+	listCmd.Flags().Int("offset", 0, "Offset for the records")
 	restaurantsCmd.AddCommand(listCmd)
 
 	scrapeCmd := &cobra.Command{
@@ -72,6 +80,25 @@ func init() {
 	}
 	retryCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
 	restaurantsCmd.AddCommand(retryCmd)
+
+	replayMenusCmd := &cobra.Command{
+		Use:   "replay-menus",
+		Short: "Re-hydrate the menu index from Avro silver layer",
+		RunE:  runReplayMenus,
+	}
+	replayMenusCmd.Flags().String("avro-dir", "data/silver/menus", "Directory containing .avro files")
+	replayMenusCmd.Flags().String("store", "weaviate", "Storage backend: weaviate | postgres | pinecone")
+	replayMenusCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
+	replayMenusCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
+	replayMenusCmd.Flags().String("weaviate-api-key", "", "Weaviate API key")
+	replayMenusCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
+	replayMenusCmd.Flags().String("pinecone-api-key", "", "Pinecone API key")
+	replayMenusCmd.Flags().String("pinecone-index-host", "", "Pinecone index host")
+	replayMenusCmd.Flags().String("embed-backend", "ollama", "Embedding backend: ollama | vectorizer")
+	replayMenusCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama base URL")
+	replayMenusCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
+	replayMenusCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port")
+	restaurantsCmd.AddCommand(replayMenusCmd)
 }
 
 func runImportRestaurants(cmd *cobra.Command, args []string) error {
@@ -120,9 +147,8 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("parse csv: %w", err)
 	}
-	if len(records) > limit {
-		records = records[:limit]
-	}
+	offset, _ := cmd.Flags().GetInt("offset")
+	records = paginateRecords(records, limit, offset)
 
 	fmt.Printf("Fetched %d unique restaurants.\n", len(records))
 
@@ -165,11 +191,28 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// paginateRecords applies limit and offset to a slice of restaurant records.
+func paginateRecords(records []menusearch.NYCRestaurantRecord, limit, offset int) []menusearch.NYCRestaurantRecord {
+	if offset > 0 {
+		if offset >= len(records) {
+			return nil
+		}
+		records = records[offset:]
+	}
+
+	if limit > 0 && len(records) > limit {
+		records = records[:limit]
+	}
+	
+	return records
+}
+
 func runListRestaurants(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	dsn, _ := cmd.Flags().GetString("postgres-dsn")
 	status, _ := cmd.Flags().GetString("status")
 	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
 
 	if dsn == "" {
 		dsn = viper.GetString("POSTGRES_DSN")
@@ -186,7 +229,7 @@ func runListRestaurants(cmd *cobra.Command, args []string) error {
 
 	store := menusearch.NewStore(pool)
 
-	restaurants, err := store.List(ctx, status, "", limit, 0)
+	restaurants, err := store.List(ctx, status, "", limit, offset)
 	if err != nil {
 		return fmt.Errorf("list restaurants: %w", err)
 	}
@@ -402,6 +445,162 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("update status: %w", err)
 		}
 		fmt.Printf("Re-enqueued discovery job for %s\n", camis)
+	}
+
+	return nil
+}
+
+func runReplayMenus(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	avroDir, _ := cmd.Flags().GetString("avro-dir")
+	storeType, _ := cmd.Flags().GetString("store")
+
+	weaviateHost, _ := cmd.Flags().GetString("weaviate")
+	weaviateScheme, _ := cmd.Flags().GetString("weaviate-scheme")
+	weaviateAPIKey, _ := cmd.Flags().GetString("weaviate-api-key")
+	dsn, _ := cmd.Flags().GetString("postgres-dsn")
+	_, _ = cmd.Flags().GetString("pinecone-api-key")
+	_, _ = cmd.Flags().GetString("pinecone-index-host")
+
+	embedBackend, _ := cmd.Flags().GetString("embed-backend")
+	ollamaURL, _ := cmd.Flags().GetString("ollama-url")
+	ollamaModel, _ := cmd.Flags().GetString("ollama-model")
+	vectorizerHost, _ := cmd.Flags().GetString("vectorizer")
+
+	if dsn == "" {
+		dsn = viper.GetString("POSTGRES_DSN")
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to db: %w", err)
+	}
+	defer pool.Close()
+	restaurantStore := menusearch.NewStore(pool)
+
+	var embedder search.Embedder
+	if embedBackend == "vectorizer" {
+		embedder = search.NewVectorizerClient(vectorizerHost)
+	} else {
+		embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
+	}
+	defer func() { _ = embedder.Close() }()
+
+	var menuStore server.MenuStore
+	switch storeType {
+	case "postgres":
+		pc, err := search.NewPostgresClient(dsn, embedder)
+		if err != nil {
+			return fmt.Errorf("postgres client: %w", err)
+		}
+		menuStore = pc
+	case "pinecone":
+		return fmt.Errorf("pinecone does not support menus yet")
+	default:
+		wc, err := search.NewClient(weaviateHost, weaviateScheme, weaviateAPIKey, embedder)
+		if err != nil {
+			return fmt.Errorf("weaviate client: %w", err)
+		}
+		if err := wc.EnsureMenuSchema(ctx); err != nil {
+			return fmt.Errorf("ensure menu schema: %w", err)
+		}
+		menuStore = wc
+	}
+
+	files, err := filepath.Glob(filepath.Join(avroDir, "**", "*.avro"))
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		files, err = filepath.Glob(filepath.Join(avroDir, "*.avro"))
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("Found %d avro files to replay\n", len(files))
+
+	for _, file := range files {
+		f, err := os.Open(file)
+		if err != nil {
+			slog.Error("failed to open file", "path", file, "error", err)
+			continue
+		}
+		decoder, err := ocf.NewDecoder(f)
+		if err != nil {
+			slog.Error("failed to create decoder", "path", file, "error", err)
+			_ = f.Close()
+			continue
+		}
+
+		for decoder.HasNext() {
+			var record map[string]any
+			if err := decoder.Decode(&record); err != nil {
+				slog.Error("failed to decode avro record", "path", file, "error", err)
+				break
+			}
+
+			camis, _ := record["camis"].(string)
+			sourceURL, _ := record["source_url"].(string)
+			restaurantName, _ := record["restaurant_name"].(string)
+
+			itemsAny, ok := record["items"].([]any)
+			if !ok {
+				continue
+			}
+
+			res := scraper.MenuExtractionResult{
+				RestaurantName: restaurantName,
+				SourceURL:      sourceURL,
+				Items:          make([]scraper.MenuEntry, 0, len(itemsAny)),
+			}
+
+			rest, err := restaurantStore.Get(ctx, camis)
+			if err == nil && rest != nil {
+				if rest.Boro != nil {
+					res.City = *rest.Boro
+				}
+				res.State = "NY"
+				if rest.Address != nil {
+					res.Address = *rest.Address
+				}
+				if rest.Phone != nil {
+					res.PhoneNumber = *rest.Phone
+				}
+			}
+
+			for _, itemA := range itemsAny {
+				itemMap, ok := itemA.(map[string]any)
+				if !ok {
+					continue
+				}
+				dishName, _ := itemMap["dish_name"].(string)
+				description, _ := itemMap["description"].(string)
+				hasFull, _ := itemMap["has_full_ingredients"].(bool)
+
+				entry := scraper.MenuEntry{
+					DishName:           dishName,
+					Description:        description,
+					HasFullIngredients: hasFull,
+				}
+				if si, ok := itemMap["stated_ingredients"].([]any); ok {
+					for _, s := range si {
+						if str, ok := s.(string); ok {
+							entry.StatedIngredients = append(entry.StatedIngredients, str)
+						}
+					}
+				}
+				res.Items = append(res.Items, entry)
+			}
+
+			count, err := pipeline.StoreMenu(ctx, &res, sourceURL, menuStore, embedder)
+			if err != nil {
+				slog.Error("failed to store menu items", "camis", camis, "error", err)
+			} else {
+				fmt.Printf("stored %d items for %s\n", count, camis)
+			}
+		}
+		_ = f.Close()
 	}
 
 	return nil

@@ -179,9 +179,13 @@ var serveCmd = &cobra.Command{
 			extractorURL := viper.GetString("extractor-url")
 			extractorModel := viper.GetString("extractor-model")
 			extractorAPIKey := viper.GetString("extractor-api-key")
+			if extractorAPIKey == "" {
+				extractorAPIKey = os.Getenv("GOOGLE_API_KEY")
+			}
 			var extractor scraper.Extractor
 			if extractorURL != "" {
-				oaex, _ := scraper.NewOpenAICompatExtractor(extractorURL, extractorModel, extractorAPIKey, "none")
+				llmURL := resolveLLMURL(extractorURL)
+				oaex, _ := scraper.NewOpenAICompatExtractor(llmURL, extractorModel, extractorAPIKey, "none")
 				if strings.Contains(extractorURL, "generativelanguage") || strings.Contains(extractorURL, "openai") {
 					extractor = oaex
 				} else {
@@ -273,7 +277,7 @@ func init() {
 	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
 	serveCmd.Flags().String("discovery-gemini-model", "gemini-2.5-flash", "Gemini model for menu discovery")
 	serveCmd.Flags().Int("discovery-stagger-seconds", 15, "Seconds to stagger scrape jobs for multiple menus from the same restaurant")
-	serveCmd.Flags().String("extraction-avro-dir", "data/bronze/menu_extraction", "Directory for extraction Avro records")
+	serveCmd.Flags().String("extraction-avro-dir", "data/silver/menus", "Directory for extraction Avro records")
 	serveCmd.Flags().Bool("enable-vision", false, "Enable vision/OCR for image-only menus (requires --extractor-url)")
 	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")
 	serveCmd.Flags().String("webagent-adapter", "", "Webagent adapter (site/target) for JS-rendered menus via Python scraper service")

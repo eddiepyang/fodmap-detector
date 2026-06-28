@@ -11,5 +11,7 @@ Example format:
     "https://www.toasttab.com/example-restaurant",
     "https://www.example-restaurant.com/menus/dinner",
     "https://www.example-restaurant.com/assets/drinks-menu.pdf"
-  ]
+  ],
+  "address": "123 Example St, New York, NY 10001",
+  "phone_number": "(555) 123-4567"
 }
