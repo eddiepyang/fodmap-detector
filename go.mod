@@ -4,6 +4,8 @@ go 1.26.2
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
+	github.com/chromedp/chromedp v0.15.1
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -31,8 +33,6 @@ require (
 )
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc // indirect
-	github.com/chromedp/chromedp v0.15.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
@@ -52,7 +52,7 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/elliotchance/pie/v2 v2.9.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/forPelevin/gomoji v1.2.0 // indirect

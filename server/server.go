@@ -94,7 +94,9 @@ type Server struct {
 	userStore          auth.AdminStore
 	jwtSecret          string
 	adminEmail         string
-	menutrackingAdmin  http.Handler // nil when menutracking is not configured
+	menutrackingAdmin  http.Handler       // nil when menutracking is not configured
+	restaurantStore    RestaurantStore    // nil when menusearch is not configured
+	restaurantJobQueue RestaurantJobQueue // nil when menusearch is not configured
 	ctx                context.Context
 	cancel             context.CancelFunc
 }
@@ -399,6 +401,16 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/v1/conversations/{id}/messages", chatMid)
 	}
 
+	// Restaurant admin endpoints (protected by JWT admin).
+	if s.restaurantStore != nil {
+		mux.Handle("POST /api/v1/restaurants", adminMid(s.restaurantCreateHandler))
+		mux.Handle("GET /api/v1/restaurants", adminMid(s.restaurantListHandler))
+		mux.Handle("GET /api/v1/restaurants/{camis}", adminMid(s.restaurantGetHandler))
+		mux.Handle("POST /api/v1/restaurants/{camis}/discover", adminMid(s.restaurantTriggerDiscoverHandler))
+		mux.Handle("POST /api/v1/restaurants/{camis}/scrape", adminMid(s.restaurantTriggerScrapeHandler))
+		mux.Handle("POST /api/v1/restaurants/{camis}/retry", adminMid(s.restaurantRetryHandler))
+	}
+
 	// Menutracking admin endpoints (protected by JWT or ChatAPIKey).
 	if s.menutrackingAdmin != nil {
 		adminMid := chain(
@@ -423,6 +435,16 @@ func (s *Server) ChatBackend() chat.ChatBackend {
 // startup to wire the admin endpoints.
 func (s *Server) SetMenutrackingAdmin(h http.Handler) {
 	s.menutrackingAdmin = h
+}
+
+// SetRestaurantStore wires the restaurant store for admin REST handlers.
+func (s *Server) SetRestaurantStore(rs RestaurantStore) {
+	s.restaurantStore = rs
+}
+
+// SetRestaurantJobQueue wires the job queue for restaurant discover/scrape triggers.
+func (s *Server) SetRestaurantJobQueue(q RestaurantJobQueue) {
+	s.restaurantJobQueue = q
 }
 
 // Searcher returns the underlying search client, or nil if search is not

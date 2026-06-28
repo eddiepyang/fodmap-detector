@@ -11,6 +11,8 @@ coverage*
 coverage.*
 *.out
 .env
+*.html
+*.pdf
 
 # Jupyter notebooks
 *.ipynb

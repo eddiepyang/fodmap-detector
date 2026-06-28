@@ -66,19 +66,19 @@ type classification struct {
 	ImgURL    string `json:"img_url,omitempty"`
 	Notes     string `json:"notes,omitempty"`
 	// FindMenuImage precision signals
-	ImgCandidates  int  `json:"img_candidates"`
-	ImgGuardFired  bool `json:"img_guard_fired"` // 0 items from an image candidate
-	Flaky          bool `json:"flaky,omitempty"`
+	ImgCandidates int  `json:"img_candidates"`
+	ImgGuardFired bool `json:"img_guard_fired"` // 0 items from an image candidate
+	Flaky         bool `json:"flaky,omitempty"`
 }
 
 // taxonomy buckets
 const (
-	classNoSite             = "no-site"
-	classNoMenu             = "no-menu"
-	classImageMenu          = "image-menu"
-	classJSTextDeeplink     = "js-text-deeplink"
+	classNoSite              = "no-site"
+	classNoMenu              = "no-menu"
+	classImageMenu           = "image-menu"
+	classJSTextDeeplink      = "js-text-deeplink"
 	classInteractionRequired = "interaction-required"
-	classDeliveryOnly       = "delivery-only"
+	classDeliveryOnly        = "delivery-only"
 )
 
 func main() {
@@ -108,7 +108,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "build extractor: %v\n", err)
 		os.Exit(2)
 	}
-	fetcher := scraper.NewHTTPFetcher(true) // ignore robots for the probe
+	fetcher := scraper.NewHTTPFetcher(true)                // ignore robots for the probe
 	gem, err := genai.NewClient(context.Background(), nil) // uses GOOGLE_API_KEY
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gemini client: %v\n", err)

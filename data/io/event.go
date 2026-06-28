@@ -37,8 +37,17 @@ func (w *EventWriter) Write(record map[string]any) error {
 	return w.encoder.Encode(record)
 }
 
-// Close closes the underlying writer.
+// WriteRaw encodes a record directly without float64->float32 coercion.
+func (w *EventWriter) WriteRaw(record any) error {
+	return w.encoder.Encode(record)
+}
+
+// Close flushes the OCF encoder and closes the underlying writer.
 func (w *EventWriter) Close() error {
+	if err := w.encoder.Close(); err != nil {
+		_ = w.closer.Close()
+		return err
+	}
 	return w.closer.Close()
 }
 

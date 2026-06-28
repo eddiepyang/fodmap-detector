@@ -36,3 +36,73 @@ type Review struct {
 	Cool       int32   `parquet:"name=cool, inname=cool, type=INT32"`
 	Text       string  `parquet:"name=text, inname=text, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 }
+
+// NYCRestaurantSchema is the Avro schema for Socrata CSV ingestion.
+var NYCRestaurantSchema = `{
+    "type": "record",
+    "name": "nyc_restaurant",
+    "fields": [
+        {"name": "camis", "type": "string"},
+        {"name": "dba", "type": "string"},
+        {"name": "boro", "type": "string"},
+        {"name": "building", "type": "string"},
+        {"name": "street", "type": "string"},
+        {"name": "zipcode", "type": "string"},
+        {"name": "phone", "type": "string"},
+        {"name": "cuisine_description", "type": "string"},
+        {"name": "inspection_date", "type": "string"},
+        {"name": "latitude", "type": "double"},
+        {"name": "longitude", "type": "double"},
+        {"name": "nta", "type": "string"},
+        {"name": "record_date", "type": "string"},
+        {"name": "event_id", "type": "string"},
+        {"name": "created_at", "type": "string"}
+    ]
+}`
+
+// GeminiDiscoverySchema is the Avro schema for Gemini discovery results.
+var GeminiDiscoverySchema = `{
+    "type": "record",
+    "name": "gemini_discovery",
+    "fields": [
+        {"name": "camis", "type": "string"},
+        {"name": "dba", "type": "string"},
+        {"name": "prompt", "type": "string"},
+        {"name": "response_text", "type": "string"},
+        {"name": "source_urls", "type": {"type": "array", "items": "string"}},
+        {"name": "model", "type": "string"},
+        {"name": "event_id", "type": "string"},
+        {"name": "job_id", "type": "string"},
+        {"name": "attempt", "type": "int"},
+        {"name": "created_at", "type": "string"}
+    ]
+}`
+
+// MenuExtractionSchema is the Avro schema for post-LLM scraped menu results.
+var MenuExtractionSchema = `{
+    "type": "record",
+    "name": "menu_extraction",
+    "fields": [
+        {"name": "camis", "type": "string"},
+        {"name": "source_url", "type": "string"},
+        {"name": "restaurant_name", "type": "string"},
+        {"name": "items", "type": {
+            "type": "array",
+            "items": {
+                "type": "record",
+                "name": "menu_item",
+                "fields": [
+                    {"name": "dish_name", "type": "string"},
+                    {"name": "description", "type": "string"},
+                    {"name": "stated_ingredients", "type": {"type": "array", "items": "string"}},
+                    {"name": "has_full_ingredients", "type": "boolean"}
+                ]
+            }
+        }},
+        {"name": "event_id", "type": "string"},
+        {"name": "job_id", "type": "string"},
+        {"name": "attempt", "type": "int"},
+        {"name": "discovery_event_id", "type": "string"},
+        {"name": "created_at", "type": "string"}
+    ]
+}`

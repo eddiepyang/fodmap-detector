@@ -1,13 +1,13 @@
 {
 	"folders": [
 		{
+			"path": "../fodmap-chat"
+		},
+		{
 			"path": "."
 		},
 		{
-			"path": "../fodmap-chat"
+			"path": "../scraper"
 		}
-	],
-	"settings": {
-		"telemetry.feedback.enabled": false
-	}
+	]
 }
