@@ -18,7 +18,6 @@ import (
 	"github.com/hamba/avro/v2/ocf"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -90,7 +89,8 @@ func init() {
 		RunE:  runReplayMenus,
 	}
 	replayMenusCmd.Flags().String("avro-dir", "data/silver/menus", "Directory containing .avro files")
-	replayMenusCmd.Flags().String("store", "weaviate", "Storage backend: weaviate | postgres | pinecone")
+	replayMenusCmd.Flags().String("store", "weaviate", "Storage backend (deprecated alias for --menu-store): weaviate | postgres | pinecone")
+	replayMenusCmd.Flags().String("menu-store", "", "Menu store backend: postgres | weaviate | dual (preferred over --store)")
 	replayMenusCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
 	replayMenusCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
 	replayMenusCmd.Flags().String("weaviate-api-key", "", "Weaviate API key")
@@ -134,7 +134,7 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 
 	store := menusearch.NewStore(pool)
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	riverClient, err := newRiverClient(pool, &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -313,7 +313,7 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restaurant %s has no menu URLs", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	riverClient, err := newRiverClient(pool, &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -370,7 +370,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restaurant %s not found", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	riverClient, err := newRiverClient(pool, &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -449,7 +449,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restaurant %s not found", camis)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	riverClient, err := newRiverClient(pool, &river.Config{})
 	if err != nil {
 		return fmt.Errorf("create river client: %w", err)
 	}
@@ -535,25 +535,25 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = embedder.Close() }()
 
-	var menuStore server.MenuStore
-	switch storeType {
-	case "postgres":
-		pc, err := search.NewPostgresClient(dsn, embedder)
-		if err != nil {
-			return fmt.Errorf("postgres client: %w", err)
+	// Menu store selection. --menu-store is preferred; --store is the legacy
+	// alias (weaviate|postgres|pinecone) preserved for backward compat.
+	menuStoreType, _ := cmd.Flags().GetString("menu-store")
+	if menuStoreType == "" {
+		menuStoreType = storeType
+		if menuStoreType == "pinecone" {
+			return fmt.Errorf("pinecone does not support menus yet; use --menu-store=postgres|weaviate|dual")
 		}
-		menuStore = pc
-	case "pinecone":
-		return fmt.Errorf("pinecone does not support menus yet")
-	default:
-		wc, err := search.NewClient(weaviateHost, weaviateScheme, weaviateAPIKey, embedder)
-		if err != nil {
-			return fmt.Errorf("weaviate client: %w", err)
-		}
-		if err := wc.EnsureMenuSchema(ctx); err != nil {
-			return fmt.Errorf("ensure menu schema: %w", err)
-		}
-		menuStore = wc
+	}
+	menuStore, err := server.NewMenuStore(ctx, server.MenuStoreConfig{
+		Type:           menuStoreType,
+		PostgresDSN:    dsn,
+		WeaviateHost:   weaviateHost,
+		WeaviateScheme: weaviateScheme,
+		WeaviateAPIKey: weaviateAPIKey,
+		Embedder:       embedder,
+	})
+	if err != nil {
+		return fmt.Errorf("building menu store: %w", err)
 	}
 
 	var files []string

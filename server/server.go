@@ -79,7 +79,8 @@ type MenuStore interface {
 }
 
 type Server struct {
-	searcher           Searcher // nil when Weaviate is not configured
+	searcher           Searcher  // nil when Weaviate is not configured
+	menuStore          MenuStore // nil when no dedicated MenuStore configured; cli falls back to type-asserting searcher
 	catalogStore       CatalogStore
 	port               int
 	chatBackend        chat.ChatBackend // nil when chat is not configured
@@ -115,6 +116,13 @@ type Config struct {
 	PostgresDSN       string          // required; used by both auth and the FODMAP catalog store
 	Embedder          search.Embedder // embedding provider (LlamaEmbedder or VectorizerClient)
 	CatalogStore      CatalogStore    // canonical FODMAP ingredient store
+
+	// MenuStore selection. MenuStoreType is "postgres" (default), "weaviate",
+	// or "dual". When empty, the legacy Searcher selection below is used for
+	// menu writes too (type-asserted in cli/serve.go). When set, a dedicated
+	// MenuStore is built via NewMenuStore and the Searcher selection is used
+	// only for the review/fodmap search surfaces.
+	MenuStoreType string
 
 	// Chat endpoint configuration.
 	GeminiAPIKey       string  // Gemini API key; omit to disable /chat
@@ -172,6 +180,25 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if err := s.searcher.EnsureFodmapSchema(ctx); err != nil {
 			slog.Warn("ensure fodmap schema failed", "error", err)
 		}
+	}
+
+	// Build a dedicated MenuStore when --menu-store is set. When empty,
+	// callers fall back to type-asserting s.searcher as a MenuStore (legacy
+	// behavior preserved so existing deployments don't need to set the flag).
+	if cfg.MenuStoreType != "" {
+		ms, err := NewMenuStore(ctx, MenuStoreConfig{
+			Type:           cfg.MenuStoreType,
+			PostgresDSN:    cfg.PostgresDSN,
+			WeaviateHost:   cfg.WeaviateHost,
+			WeaviateScheme: cfg.WeaviateScheme,
+			WeaviateAPIKey: cfg.WeaviateAPIKey,
+			Embedder:       cfg.Embedder,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("initializing menu store: %w", err)
+		}
+		s.menuStore = ms
+		slog.Info("menu store enabled", "type", cfg.MenuStoreType)
 	}
 
 	if err := s.seedAndReload(ctx); err != nil {
@@ -452,6 +479,13 @@ func (s *Server) SetRestaurantJobQueue(q RestaurantJobQueue) {
 // to access additional methods.
 func (s *Server) Searcher() Searcher {
 	return s.searcher
+}
+
+// MenuStore returns the dedicated MenuStore when one was configured via
+// Config.MenuStoreType, else nil. Callers fall back to type-asserting
+// Searcher() as a MenuStore when this returns nil (legacy behavior).
+func (s *Server) MenuStore() MenuStore {
+	return s.menuStore
 }
 
 // Start registers routes and begins serving HTTP requests. It blocks until

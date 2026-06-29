@@ -106,16 +106,27 @@ func (e *stubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float3
 	}
 	out := make([][]float32, len(texts))
 	for i := range out {
-		out[i] = []float32{0.1, 0.2}
+		out[i] = stubVec768(0.1, 0.2)
 	}
 	return out, nil
 }
 
 func (e *stubEmbedder) EmbedSingle(_ context.Context, _ string) ([]float32, error) {
-	return []float32{0.1, 0.2}, nil
+	if e.err != nil {
+		return nil, e.err
+	}
+	return stubVec768(0.1, 0.2), nil
 }
 
 func (e *stubEmbedder) Close() error { return nil }
+
+// stubVec768 returns a 768-dim vector matching menu_items.embedding.
+func stubVec768(a, b float32) []float32 {
+	v := make([]float32, 768)
+	v[0] = a
+	v[1] = b
+	return v
+}
 
 func TestToMenuItems_Basic(t *testing.T) {
 	result := scraper.MenuExtractionResult{

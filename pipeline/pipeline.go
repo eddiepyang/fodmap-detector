@@ -306,6 +306,15 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 		if err != nil {
 			return nil, fmt.Errorf("embedding batch [%d:%d]: %w", i, end, err)
 		}
+		// Defense-in-depth: reject wrong-dim vectors before upsert so a
+		// misconfigured embedder can't silently corrupt the index.
+		for j, v := range batchVectors {
+			if got := len(v); got != search.ExpectedEmbeddingDim {
+				return nil, fmt.Errorf(
+					"embedding batch [%d:%d]: vector %d has dim %d, expected %d",
+					i, end, i+j, got, search.ExpectedEmbeddingDim)
+			}
+		}
 		vectors = append(vectors, batchVectors...)
 	}
 

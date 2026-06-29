@@ -200,7 +200,13 @@ go run . db migrate-down
 This drops all domain tables. You can then run `db migrate-up` to recreate them.
 
 ### River's own tables
-River's schema tables (`river_job`, `river_leader`, `river_queue`, `river_client`) are managed separately by `river migrate-up` and are **not** included in `golang-migrate` migrations. Do not attempt to manage them with `db migrate-up/down`.
+River's schema tables (`river_job`, `river_leader`, `river_queue`, `river_client`) are managed separately by `river migrate-up` and live in the `river` schema. They are **not** included in `golang-migrate` migrations. Do not attempt to manage them with `db migrate-up/down`.
+
+> **Migrating from `public` (existing deployments):** this build moved River
+> tables into the `river` schema. `db migrate-up` detects an existing
+> deployment (river_job in public but not in river) and hard-errors with the
+> one-time `ALTER TABLE ... SET SCHEMA river` steps. Run them, then re-run
+> `db migrate-up`. See [docs/plans/river-schema-and-dual-write-plan.md](../plans/river-schema-and-dual-write-plan.md).
 
 ---
 
@@ -224,7 +230,7 @@ The menu pipeline (discovery + scraping) runs as River jobs inside PostgreSQL. A
 
 ```bash
 docker compose exec postgres psql -U fodmap -d fodmap -c \
-  "SELECT kind, state, count(*) FROM river_job GROUP BY 1, 2 ORDER BY 1, 2;"
+  "SELECT kind, state, count(*) FROM river.river_job GROUP BY 1, 2 ORDER BY 1, 2;"
 ```
 
 Key job kinds in the pipeline:
@@ -237,14 +243,14 @@ Key job kinds in the pipeline:
 # Most recent error on retryable scrape jobs
 docker compose exec postgres psql -U fodmap -d fodmap -x -c \
   "SELECT id, args->>'camis' AS camis, attempt, max_attempts, errors->-1->>'error' AS last_error
-   FROM river_job
+   FROM river.river_job
    WHERE kind = 'menusearch.scrape_menu' AND state = 'retryable'
    ORDER BY id DESC LIMIT 5;"
 
 # Same for discovery jobs
 docker compose exec postgres psql -U fodmap -d fodmap -x -c \
   "SELECT id, args->>'dba' AS dba, attempt, max_attempts, errors->-1->>'error' AS last_error
-   FROM river_job
+   FROM river.river_job
    WHERE kind = 'menusearch.discover_menu_url' AND state = 'retryable'
    ORDER BY id DESC LIMIT 5;"
 ```
@@ -267,7 +273,7 @@ Scrape jobs are staggered by `discovery-stagger-seconds` (default 15 s per URL).
 ```bash
 docker compose exec postgres psql -U fodmap -d fodmap -c \
   "SELECT kind, count(*), min(scheduled_at), max(scheduled_at)
-   FROM river_job WHERE state = 'scheduled' GROUP BY 1;"
+   FROM river.river_job WHERE state = 'scheduled' GROUP BY 1;"
 ```
 
 ### Check restaurant pipeline status
@@ -326,7 +332,7 @@ This is normal: scrape jobs for multiple URLs from the same restaurant are sched
 
 ```bash
 docker compose exec postgres psql -U fodmap -d fodmap -c \
-  "UPDATE river_job SET state='available', scheduled_at=now()
+  "UPDATE river.river_job SET state='available', scheduled_at=now()
    WHERE kind='menusearch.scrape_menu' AND state='scheduled';"
 ```
 
@@ -336,6 +342,6 @@ After fixing a configuration issue, force all retrying jobs to re-run now:
 
 ```bash
 docker compose exec postgres psql -U fodmap -d fodmap -c \
-  "UPDATE river_job SET state='available', attempt=0, scheduled_at=now()
+  "UPDATE river.river_job SET state='available', attempt=0, scheduled_at=now()
    WHERE state='retryable' AND kind IN ('menusearch.discover_menu_url','menusearch.scrape_menu');"
 ```

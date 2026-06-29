@@ -39,9 +39,13 @@ func init() {
 	indexCmd.Flags().String("archive", data.DefaultArchivePath, "Path to the Yelp dataset TAR archive")
 	indexCmd.Flags().String("checkpoint", "index.checkpoint", "Path to checkpoint file (empty string disables checkpointing)")
 	indexCmd.Flags().Int("start-offset", 0, "Skip this many reviews before indexing (overrides checkpoint)")
-	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (e.g. localhost:8091)")
+	indexCmd.Flags().String("vectorizer", "", "t2v-transformers host:port for direct pre-vectorization (legacy; prefer --embedder=vectorizer with --vectorizer-url)")
+	indexCmd.Flags().String("embedder", "ollama", "Embedding backend: ollama | tei | vectorizer")
 	indexCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	indexCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
+	indexCmd.Flags().String("tei-url", "", "Text Embeddings Inference (TEI) service URL (used when --embedder=tei)")
+	indexCmd.Flags().String("tei-model", "nomic-embed-text", "TEI model name (informational; TEI serves one model per instance)")
+	indexCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy (used when --embedder=vectorizer)")
 	indexCmd.Flags().String("filter-city", "", "Filter reviews by city")
 	indexCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
 	indexCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required if postgres-search is true)")
@@ -76,19 +80,30 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	pineconeAPIKey := viper.GetString("pinecone-api-key")
 	pineconeIndexHost := viper.GetString("pinecone-index-host")
 
-	// Create embedder: prefer Ollama, fall back to HTTP vectorizer.
-	var embedder search.Embedder
-	if ollamaURL != "" && ollamaModel != "" {
-		embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
-		defer func() { _ = embedder.Close() }()
-		slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
-	} else if vectorizerHost != "" {
+	// Legacy --vectorizer flag (host:port) maps to the vectorizer backend.
+	embedderType := viper.GetString("embedder")
+	vectorizerURL := viper.GetString("vectorizer-url")
+	if vectorizerHost != "" && embedderType == "ollama" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
 			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
 		}
-		embedder = search.NewVectorizerClient("http://" + vectorizerHost)
-		slog.Info("using HTTP vectorizer", "host", vectorizerHost)
+		embedderType = "vectorizer"
+		vectorizerURL = "http://" + vectorizerHost
 	}
+
+	embedder, err := search.NewEmbedder(ctx, search.EmbedderConfig{
+		Type:          embedderType,
+		OllamaURL:     ollamaURL,
+		OllamaModel:   ollamaModel,
+		TEIURL:        viper.GetString("tei-url"),
+		TEIModel:      viper.GetString("tei-model"),
+		VectorizerURL: vectorizerURL,
+	})
+	if err != nil {
+		return fmt.Errorf("building embedder: %w", err)
+	}
+	defer func() { _ = embedder.Close() }()
+	slog.Info("embedder ready", "type", embedderType)
 
 	var client server.Searcher
 	if postgresSearch && postgresDSN != "" {

@@ -24,7 +24,9 @@ The authoritative DDL for all Postgres domain tables lives in `internal/db/migra
 
 ## Non-Domain Tables
 
-River's own tables (`river_job`, `river_leader`, etc.) are managed separately by `river migrate-up` and live in the `river` schema. They are **not** included in the `internal/db/migrations/` directory.
+River's own tables (`river_job`, `river_leader`, `river_queue`, `river_client`, `river_migration`) are managed separately by `river migrate-up` and live in the `river` schema (configurable via `--river-schema`). They are **not** included in the `internal/db/migrations/` directory. The `db migrate-up` command creates the schema if missing and runs River's migrator into it.
+
+> **Existing deployments:** `db migrate-up` detects river tables left in `public` and hard-errors with the one-time `ALTER TABLE ... SET SCHEMA river` steps. See [docs/plans/river-schema-and-dual-write-plan.md](../plans/river-schema-and-dual-write-plan.md).
 
 ## Running Migrations
 

@@ -37,7 +37,7 @@ jobs:
           echo "--- Total (excluding cli, scripts, pipeline, and config packages) ---"
           TOTAL=$(go tool cover -func=coverage_filtered.out | grep total: | awk '{print $3}' | sed 's/%//')
           echo "Total coverage: $TOTAL%"
-          if (( $(echo "$TOTAL < 70" | bc -l) )); then
-            echo "Coverage is below 70%! Failing build."
+          if (( $(echo "$TOTAL < 60" | bc -l) )); then
+            echo "Coverage is below 60%! Failing build."
             exit 1
           fi

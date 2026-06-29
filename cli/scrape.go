@@ -31,7 +31,8 @@ func init() {
 	rootCmd.AddCommand(scrapeCmd)
 
 	// Storage backend
-	scrapeCmd.Flags().String("store", "weaviate", "Storage backend: weaviate | postgres | pinecone")
+	scrapeCmd.Flags().String("menu-store", "", "Menu store backend: postgres | weaviate | dual (preferred over --store)")
+	scrapeCmd.Flags().String("store", "weaviate", "Storage backend (deprecated alias for --menu-store): weaviate | postgres | pinecone")
 	scrapeCmd.Flags().String("weaviate", "localhost:8090", "Weaviate host:port")
 	scrapeCmd.Flags().String("weaviate-scheme", "http", "Weaviate scheme (http or https)")
 	scrapeCmd.Flags().String("weaviate-api-key", "", "Weaviate API key")
@@ -40,10 +41,14 @@ func init() {
 	scrapeCmd.Flags().String("pinecone-index-host", "", "Pinecone index host")
 
 	// Embedding backend
-	scrapeCmd.Flags().String("embed-backend", "ollama", "Embedding backend: ollama | vectorizer")
+	scrapeCmd.Flags().String("embedder", "ollama", "Embedding backend: ollama | tei | vectorizer")
+	scrapeCmd.Flags().String("embed-backend", "ollama", "Embedding backend (deprecated alias for --embedder): ollama | vectorizer")
 	scrapeCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama base URL")
 	scrapeCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
-	scrapeCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port")
+	scrapeCmd.Flags().String("vectorizer", "", "HTTP vectorizer host:port (legacy; prefer --embedder=vectorizer with --vectorizer-url)")
+	scrapeCmd.Flags().String("vectorizer-url", "", "HTTP vectorizer base URL (used when --embedder=vectorizer)")
+	scrapeCmd.Flags().String("tei-url", "", "Text Embeddings Inference (TEI) service URL (used when --embedder=tei)")
+	scrapeCmd.Flags().String("tei-model", "nomic-embed-text", "TEI model name (informational; TEI serves one model per instance)")
 
 	// LLM extraction backend — any OpenAI-compatible endpoint.
 	// Default targets vLLM (vllm-metal on Mac, vLLM on the 5080): unlike Ollama's
@@ -108,27 +113,52 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	pdfTimeout := viper.GetDuration("extractor-pdf-timeout")
 	webagentAdapter := viper.GetString("webagent-adapter")
 
-	// Build embedder.
-	var embedder search.Embedder
-	if vectorizerHost != "" {
+	// Build embedder. Legacy --vectorizer flag (host:port) maps to the
+	// vectorizer backend; --embedder is the canonical selector.
+	embedderType := viper.GetString("embedder")
+	vectorizerURL := viper.GetString("vectorizer-url")
+	if vectorizerHost != "" && embedderType == "ollama" {
 		if _, _, err := net.SplitHostPort(vectorizerHost); err != nil {
 			return fmt.Errorf("invalid --vectorizer value %q: must be host:port", vectorizerHost)
 		}
-		embedder = search.NewVectorizerClient("http://" + vectorizerHost)
-		slog.Info("using HTTP vectorizer", "host", vectorizerHost)
-	} else {
-		embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
-		slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
+		embedderType = "vectorizer"
+		vectorizerURL = "http://" + vectorizerHost
+	}
+	embedder, err := search.NewEmbedder(ctx, search.EmbedderConfig{
+		Type:          embedderType,
+		OllamaURL:     ollamaURL,
+		OllamaModel:   ollamaModel,
+		TEIURL:        viper.GetString("tei-url"),
+		TEIModel:      viper.GetString("tei-model"),
+		VectorizerURL: vectorizerURL,
+	})
+	if err != nil {
+		return fmt.Errorf("building embedder: %w", err)
 	}
 	defer func() { _ = embedder.Close() }()
+	slog.Info("embedder ready", "type", embedderType)
 
-	// Build MenuStore.
-	store, err := buildMenuStore(ctx, weaviateHost, weaviateScheme, weaviateAPIKey, embedder)
+	// Build MenuStore. --menu-store selects postgres|weaviate|dual; when
+	// empty, the legacy --store flag is consulted for backward compat.
+	menuStoreType := viper.GetString("menu-store")
+	if menuStoreType == "" {
+		menuStoreType = viper.GetString("store")
+		// Legacy --store values: weaviate|postgres|pinecone. Map to the new
+		// factory (pinecone is unsupported for menus -> error).
+		if menuStoreType == "pinecone" {
+			return fmt.Errorf("pinecone does not support menus yet; use --menu-store=postgres|weaviate|dual")
+		}
+	}
+	store, err := server.NewMenuStore(ctx, server.MenuStoreConfig{
+		Type:           menuStoreType,
+		PostgresDSN:    viper.GetString("postgres-dsn"),
+		WeaviateHost:   weaviateHost,
+		WeaviateScheme: weaviateScheme,
+		WeaviateAPIKey: weaviateAPIKey,
+		Embedder:       embedder,
+	})
 	if err != nil {
 		return fmt.Errorf("building store: %w", err)
-	}
-	if err := store.EnsureMenuSchema(ctx); err != nil {
-		return fmt.Errorf("schema init: %w", err)
 	}
 
 	// Build extractor. When --extractor-url is set, all extraction routes to
@@ -243,13 +273,4 @@ type forceRenderFetcher struct {
 
 func (f *forceRenderFetcher) Fetch(ctx context.Context, url string) (scraper.FetchResult, error) {
 	return f.rf.FetchRendered(ctx, url)
-}
-
-// buildMenuStore constructs a Weaviate-backed MenuStore.
-func buildMenuStore(_ context.Context, host, scheme, apiKey string, embedder search.Embedder) (server.MenuStore, error) {
-	client, err := search.NewClient(host, scheme, apiKey, embedder)
-	if err != nil {
-		return nil, fmt.Errorf("weaviate client: %w", err)
-	}
-	return client, nil
 }
