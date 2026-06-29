@@ -128,7 +128,7 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	prepChunk.ExpectExec().
-		WithArgs("rev1", "Great food!", pgvector.NewVector([]float32{0.1, 0.2, 0.3})).
+		WithArgs("rev1", "Great food!", pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3})).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectCommit()
@@ -174,7 +174,7 @@ func TestPostgresClient_BatchUpsertFodmap(t *testing.T) {
 			pq.Array([]string{"Fructans"}),
 			"High in fructans",
 			pq.Array([]string{"garlic-infused olive oil", "garlic chives"}),
-			pgvector.NewVector([]float32{0.1, 0.2, 0.3}),
+			pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -204,7 +204,7 @@ func TestPostgresClient_SearchFodmap(t *testing.T) {
 	}
 
 	mock.ExpectQuery("SELECT ingredient, level, groups, notes, substitutions, \\(1 - \\(embedding <=> \\$1\\)\\) AS certainty FROM fodmap_ingredients").
-		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3})).
+		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3})).
 		WillReturnRows(sqlmock.NewRows([]string{"ingredient", "level", "groups", "notes", "substitutions", "certainty"}).
 			AddRow("garlic", "high", "{Fructans}", "High in fructans", "{garlic-infused olive oil,garlic chives}", 0.95))
 
@@ -243,7 +243,7 @@ func TestPostgresClient_Businesses(t *testing.T) {
 	}
 
 	mock.ExpectQuery("WITH chunk_scores AS \\(").
-		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), "%Pizza%", "%New York%", "NY", 10).
+		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}), "%Pizza%", "%New York%", "NY", 10).
 		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "categories", "avg_stars", "avg_certainty"}).
 			AddRow("bus1", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
 
@@ -280,7 +280,7 @@ func TestPostgresClient_Reviews(t *testing.T) {
 	}
 
 	mock.ExpectQuery("WITH best_chunks AS \\(").
-		WithArgs(pgvector.NewVector([]float32{0.1, 0.2, 0.3}), "bus1", pq.Array([]string{"rev1"}), 5).
+		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}), "bus1", pq.Array([]string{"rev1"}), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"review_id", "business_id", "business_name", "city", "state", "text", "chunk_text", "certainty"}).
 			AddRow("rev1", "bus1", "Joe's Pizza", "New York", "NY", "Great pizza!", "Great pizza chunk", 0.95))
 

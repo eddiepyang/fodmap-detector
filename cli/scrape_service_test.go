@@ -282,6 +282,101 @@ func TestRunScrapeWith_NoisyHTMLRoutesToWebagent(t *testing.T) {
 	}
 }
 
+// spaShellFetcher serves a Wix-style SPA shell: ~370 runes of visible
+// boilerplate (above the 200-rune tooShort floor, so tooShort does NOT fire)
+// and long prose lines (IsTooNoisy is false), with a large inlined-JS bundle
+// that drives the raw-bytes-to-visible-runes ratio above the jsShellMinRatio
+// threshold. The menu content is injected client-side by the
+// restaurant-menus-showcase-ooi widget, so the static body has no menu. Only
+// the IsJSShell check routes this to the webagent — making this a genuine
+// regression test for the IsJSShell detector (the old tooShort<200 and
+// IsTooNoisy gates would both leave it on the empty LLM text path).
+type spaShellFetcher struct{}
+
+func (f *spaShellFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	visible := `<html><head><title>3Greeks Grill | Gyro and Souvlaki</title>
+<link rel="stylesheet" href="https://static.parastorage.com/services/x.css"/></head>
+<body><div id="SITE_CONTAINER"><h1>3Greeks Grill | Gyro and Souvlaki</h1>
+<p>WELCOME Καλη Ορεξη (718) 729-8900 35-61 Vernon Blvd, Long Island City, NY 11106</p>
+<p>Request a catering order at Catering@3greeksgrill.com. Use tab to navigate through the menu items. More</p>
+<p>HOME MENU CONTACT. High quality Greek Gyro and Souvlaki platters and sandwiches as well as other Greek specialty foods.</p>`
+	// Emulate a real Wix page's minified bundle + inlined __INITIAL_STATE__
+	// (~190KB) so the raw-to-visible ratio crosses jsShellMinRatio. Wrapped in
+	// <script> so ConvertHTMLToMarkdown strips it from the visible text.
+	bundle := `<script>var b=function(){return ` + strings.Repeat("1+", 6000) +
+		`0};window.__INITIAL_STATE__={"p":"` + strings.Repeat("x", 180000) + `"}</script>`
+	body := visible + bundle + `</div></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(body))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func TestRunScrapeWith_SpaShellRoutesToWebagent(t *testing.T) {
+	// Regression: a Wix-style SPA shell that passes the old tooShort<200 gate
+	// (it has ~320 runes of visible boilerplate) must still route to the
+	// webagent JS path via the IsJSShell detector. Before the IsJSShell check
+	// was added, this fell through to the LLM text pass and returned 0 items.
+	js := &jsRendererStub{
+		jsResult: scraper.MenuExtractionResult{
+			RestaurantName: "3Greeks Grill",
+			Items: []scraper.MenuEntry{
+				{DishName: "Gyro", StatedIngredients: []string{}},
+				{DishName: "Souvlaki", StatedIngredients: []string{}},
+			},
+		},
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://www.3greeksgrill.com",
+		&spaShellFetcher{},
+		js,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false,         // enableVision
+		true,          // enableJSRender
+		false,         // usePdftotext
+		"site/target", // webagentAdapter
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith spa shell: %v", err)
+	}
+	if js.scrapeCalls != 1 {
+		t.Errorf("ScrapeJS called %d times; want 1 (SPA shell must route to webagent)", js.scrapeCalls)
+	}
+	if js.extractCalls != 0 {
+		t.Errorf("ex.Extract called %d times; want 0 (webagent path skips the LLM pass)",
+			js.extractCalls)
+	}
+}
+
+func TestRunScrapeWith_SpaShellWithoutAdapterFallsBackToExtract(t *testing.T) {
+	// Guard: when no webagentAdapter is configured, an SPA shell must degrade
+	// gracefully to the LLM text pass (no panic, no webagent call). This is
+	// the same contract as TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract.
+	ex := &extractorStub{
+		result: scraper.MenuExtractionResult{Items: []scraper.MenuEntry{{DishName: "x"}}},
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://www.3greeksgrill.com",
+		&spaShellFetcher{},
+		ex,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, // enableVision
+		true,  // enableJSRender
+		false, // usePdftotext
+		"",    // no webagentAdapter — must fall through to the LLM text pass
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith spa shell no-adapter: %v", err)
+	}
+	if ex.called != 1 {
+		t.Errorf("ex.Extract called %d times; want 1 (no adapter → text pass)", ex.called)
+	}
+}
+
 func TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract(t *testing.T) {
 	ex := &extractorStub{
 		result: scraper.MenuExtractionResult{Items: []scraper.MenuEntry{{DishName: "x"}}},

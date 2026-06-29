@@ -9,14 +9,20 @@ Return ONLY a JSON object with this exact structure (no markdown, no explanation
     {
       "dish": "Dish name exactly as written",
       "description": "Full description verbatim from the menu",
+      "price": 12.50,
+      "section": "Appetizers",
       "stated_ingredients": ["ingredient1", "ingredient2"],
-      "has_full_ingredients": true
+      "has_full_ingredients": true,
+      "modifiers": [{"name": "Large", "price": 2.00}]
     }
   ]
 }
 
 Rules:
 - Only include actual food or drink menu items (ignore navigation, hours, contact info, addresses, section headers, category labels, and price/size-only rows)
+- price is the numeric price as written (no currency symbol). Omit if not present.
+- section is the menu section heading the item appears under (e.g. "Appetizers", "Mains"). Omit if there are no sections.
+- modifiers are size choices, add-ons, or variants with their own name and optional price (e.g. {"name": "Large", "price": 2.00}). Omit if none.
 - stated_ingredients must only contain words literally present in the menu text for that item
 - has_full_ingredients is true only when the menu explicitly lists ingredients/components
 - Keep dish names and descriptions verbatim from the source

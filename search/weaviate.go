@@ -1042,33 +1042,55 @@ func formatGraphQLErrors(errs []*models.GraphQLError) string {
 const menuCollectionName = "RestaurantMenu"
 
 // EnsureMenuSchema creates the RestaurantMenu Weaviate collection if absent.
+// If the collection already exists (e.g. from a prior deployment that pre-dates
+// the price/modifiers properties), it checks for and adds any missing properties
+// so schema evolution doesn't require dropping and recreating the collection.
 // It is idempotent — safe to call on every scrape-command startup.
 func (c *Client) EnsureMenuSchema(ctx context.Context) error {
-	_, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
+	desiredProps := []*models.Property{
+		{Name: "menuItemId", DataType: []string{"text"}},
+		{Name: "businessId", DataType: []string{"text"}},
+		{Name: "menuSection", DataType: []string{"text"}},
+		{Name: "restaurantName", DataType: []string{"text"}},
+		{Name: "city", DataType: []string{"text"}},
+		{Name: "state", DataType: []string{"text"}},
+		{Name: "dishName", DataType: []string{"text"}},
+		{Name: "description", DataType: []string{"text"}},
+		{Name: "price", DataType: []string{"number"}},
+		{Name: "statedIngredients", DataType: []string{"text[]"}},
+		{Name: "hasFullIngredients", DataType: []string{"boolean"}},
+		{Name: "modifiers", DataType: []string{"text[]"}},
+		{Name: "sourceUrl", DataType: []string{"text"}},
+		{Name: "address", DataType: []string{"text"}},
+		{Name: "phoneNumber", DataType: []string{"text"}},
+		{Name: "scrapedAtUtc", DataType: []string{"text"}},
+	}
+
+	existing, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
 	if err == nil {
+		// Collection exists — check for missing properties and add them.
+		existingNames := make(map[string]bool, len(existing.Properties))
+		for _, p := range existing.Properties {
+			existingNames[p.Name] = true
+		}
+		for _, dp := range desiredProps {
+			if !existingNames[dp.Name] {
+				slog.Info("adding missing weaviate property to RestaurantMenu", "property", dp.Name)
+				if err := c.wv.Schema().PropertyCreator().
+					WithClassName(menuCollectionName).
+					WithProperty(dp).
+					Do(ctx); err != nil {
+					slog.Warn("failed to add missing weaviate property", "property", dp.Name, "error", err)
+				}
+			}
+		}
 		return nil
 	}
+
 	class := &models.Class{
 		Class:      menuCollectionName,
 		Vectorizer: "none",
-		Properties: []*models.Property{
-			{Name: "menuItemId", DataType: []string{"text"}},
-			{Name: "businessId", DataType: []string{"text"}},
-			{Name: "menuSection", DataType: []string{"text"}},
-			{Name: "restaurantName", DataType: []string{"text"}},
-			{Name: "city", DataType: []string{"text"}},
-			{Name: "state", DataType: []string{"text"}},
-			{Name: "dishName", DataType: []string{"text"}},
-			{Name: "description", DataType: []string{"text"}},
-			{Name: "price", DataType: []string{"number"}},
-			{Name: "statedIngredients", DataType: []string{"text[]"}},
-			{Name: "hasFullIngredients", DataType: []string{"boolean"}},
-			{Name: "modifiers", DataType: []string{"text[]"}},
-			{Name: "sourceUrl", DataType: []string{"text"}},
-			{Name: "address", DataType: []string{"text"}},
-			{Name: "phoneNumber", DataType: []string{"text"}},
-			{Name: "scrapedAtUtc", DataType: []string{"text"}},
-		},
+		Properties: desiredProps,
 	}
 	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
 		return fmt.Errorf("creating menu schema: %w", err)
@@ -1132,7 +1154,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 	}
 	fields := []graphql.Field{
 		{Name: "menuItemId"}, {Name: "businessId"}, {Name: "restaurantName"},
-		{Name: "dishName"}, {Name: "description"}, {Name: "price"},
+		{Name: "menuSection"}, {Name: "dishName"}, {Name: "description"}, {Name: "price"},
 		{Name: "statedIngredients"}, {Name: "hasFullIngredients"}, {Name: "modifiers"},
 		{Name: "sourceUrl"}, {Name: "city"}, {Name: "state"},
 		{Name: "_additional { certainty }"},
@@ -1167,6 +1189,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 			MenuItemID:         stringField(m, "menuItemId"),
 			BusinessID:         stringField(m, "businessId"),
 			RestaurantName:     stringField(m, "restaurantName"),
+			MenuSection:        stringField(m, "menuSection"),
 			DishName:           stringField(m, "dishName"),
 			Description:        stringField(m, "description"),
 			Price:              float64Field(m, "price"),

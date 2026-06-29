@@ -118,6 +118,9 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	} else {
 		if result.WebsiteURL != "" {
 			rawURLs = append(rawURLs, result.WebsiteURL)
+			// Append common menu paths as fallback candidates for direct domain crawling
+			base := strings.TrimSuffix(result.WebsiteURL, "/")
+			rawURLs = append(rawURLs, base+"/menu", base+"/menu/", base+"/menus")
 		}
 		if len(result.MenuURLs) > 0 {
 			rawURLs = append(rawURLs, result.MenuURLs...)
@@ -262,14 +265,16 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 }
 
 // dedup returns urls with duplicates removed, preserving order.
+// Trailing slashes and leading/trailing spaces are normalized during comparison.
 func dedup(urls []string) []string {
 	seen := make(map[string]struct{}, len(urls))
 	out := make([]string, 0, len(urls))
 	for _, u := range urls {
-		if _, ok := seen[u]; ok {
+		canonical := strings.TrimSuffix(strings.TrimSpace(u), "/")
+		if _, ok := seen[canonical]; ok {
 			continue
 		}
-		seen[u] = struct{}{}
+		seen[canonical] = struct{}{}
 		out = append(out, u)
 	}
 	return out

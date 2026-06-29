@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hamba/avro/v2/ocf"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/spf13/cobra"
@@ -82,6 +83,17 @@ func init() {
 	}
 	retryCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
 	restaurantsCmd.AddCommand(retryCmd)
+
+	retryAllFailedCmd := &cobra.Command{
+		Use:   "retry-all-failed",
+		Short: "Re-queue all restaurants with status failed_scrape",
+		RunE:  runRetryAllFailed,
+	}
+	retryAllFailedCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
+	retryAllFailedCmd.Flags().Int("limit", 0, "Max number of restaurants to retry (0 = all)")
+	retryAllFailedCmd.Flags().Int("batch-size", 500, "Page size for fetching failed restaurants from the DB")
+	retryAllFailedCmd.Flags().Bool("dry-run", false, "List the restaurants that would be retried without enqueuing")
+	restaurantsCmd.AddCommand(retryAllFailedCmd)
 
 	replayMenusCmd := &cobra.Command{
 		Use:   "replay-menus",
@@ -496,6 +508,138 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Re-enqueued discovery job for %s\n", camis)
 	}
 
+	return nil
+}
+
+// runRetryAllFailed re-enqueues all restaurants whose status is failed_scrape.
+// It paginates through the restaurants table (batch-size at a time) so a large
+// failure backlog doesn't load everything into memory. Each restaurant is
+// re-queued using the same logic as runRetryRestaurant: if it still has menu
+// URLs, scrape jobs are enqueued; otherwise a discovery job is enqueued.
+func runRetryAllFailed(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	dsn, _ := cmd.Flags().GetString("postgres-dsn")
+	maxRetries, _ := cmd.Flags().GetInt("limit")
+	batchSize, _ := cmd.Flags().GetInt("batch-size")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	if dsn == "" {
+		dsn = viper.GetString("POSTGRES_DSN")
+	}
+	if dsn == "" {
+		return fmt.Errorf("must specify --postgres-dsn")
+	}
+	if batchSize <= 0 {
+		return fmt.Errorf("--batch-size must be greater than 0")
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to db: %w", err)
+	}
+	defer pool.Close()
+
+	store := menusearch.NewStore(pool)
+
+	// Only build the River client when we're actually enqueuing.
+	var riverClient *river.Client[pgx.Tx]
+	if !dryRun {
+		riverClient, err = newRiverClient(pool, &river.Config{})
+		if err != nil {
+			return fmt.Errorf("create river client: %w", err)
+		}
+	}
+
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	var total, scraped, discovered, failed int
+	offset := 0
+	for {
+		remaining := batchSize
+		if maxRetries > 0 {
+			remaining = min(batchSize, maxRetries-total)
+			if remaining <= 0 {
+				break
+			}
+		}
+
+		restaurants, err := store.List(ctx, menusearch.StatusFailedScrape, "", remaining, offset)
+		if err != nil {
+			return fmt.Errorf("list failed restaurants at offset %d: %w", offset, err)
+		}
+		if len(restaurants) == 0 {
+			break
+		}
+
+		for _, r := range restaurants {
+			total++
+			if dryRun {
+				fmt.Printf("[dry-run] would retry %s (%s)\n", r.CAMIS, r.DBA)
+				continue
+			}
+
+			if len(r.MenuURLs) > 0 {
+				eventID := uuid.NewString()
+				enqueueErr := false
+				for _, u := range r.MenuURLs {
+					_, e := riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
+						CAMIS:            r.CAMIS,
+						URL:              u,
+						DBA:              r.DBA,
+						DiscoveryEventID: eventID,
+					}, &river.InsertOpts{MaxAttempts: maxAttempts})
+					if e != nil {
+						slog.Error("failed to enqueue scrape job", "camis", r.CAMIS, "url", u, "error", e)
+						enqueueErr = true
+					}
+				}
+				if enqueueErr {
+					failed++
+					continue
+				}
+				if e := store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, ""); e != nil {
+					slog.Warn("failed to update status after re-enqueue", "camis", r.CAMIS, "error", e)
+				}
+				scraped++
+			} else {
+				_, e := riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
+					CAMIS:    r.CAMIS,
+					DBA:      r.DBA,
+					Building: safeStr(r.Building),
+					Street:   safeStr(r.Street),
+					Boro:     safeStr(r.Boro),
+					Zipcode:  safeStr(r.Zipcode),
+					Attempt:  1,
+				}, &river.InsertOpts{MaxAttempts: maxAttempts})
+				if e != nil {
+					slog.Error("failed to enqueue discover job", "camis", r.CAMIS, "error", e)
+					failed++
+					continue
+				}
+				if e := store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusPendingDiscovery, 0, ""); e != nil {
+					slog.Warn("failed to update status after re-enqueue", "camis", r.CAMIS, "error", e)
+				}
+				discovered++
+			}
+		}
+
+		if maxRetries > 0 && total >= maxRetries {
+			break
+		}
+		if len(restaurants) < batchSize {
+			break
+		}
+		offset += batchSize
+	}
+
+	fmt.Printf("Retry summary: %d total, %d re-scraped, %d re-discovered, %d failed to enqueue\n",
+		total, scraped, discovered, failed)
+	if dryRun {
+		fmt.Println("(dry-run: no jobs were actually enqueued)")
+	}
 	return nil
 }
 

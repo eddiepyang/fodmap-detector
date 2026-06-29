@@ -17,8 +17,10 @@ func TestDedup_DeduplicatesPreservesOrder(t *testing.T) {
 	input := []string{
 		"https://a.com",
 		"https://b.com",
-		"https://a.com",
+		"https://a.com/",
 		"https://c.com",
+		" https://b.com ",
+		"https://c.com/",
 	}
 	got := dedup(input)
 	want := []string{"https://a.com", "https://b.com", "https://c.com"}

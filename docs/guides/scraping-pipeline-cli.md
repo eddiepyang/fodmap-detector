@@ -101,3 +101,8 @@ If a restaurant fails at any point in the pipeline (e.g., website 404, LLM extra
 ```sh
 go run . restaurants retry 50012345
 ```
+  
+```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+go run . restaurants retry-all-failed
+```

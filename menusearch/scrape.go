@@ -131,7 +131,7 @@ func (w *ScrapeMenuWorker) tryDirectoryExpansion(
 	rootResult *scraper.MenuExtractionResult,
 	logger *slog.Logger,
 ) (bool, error) {
-	logger.Info("directory expansion: root URL yielded 0 items; attempting sub-URL extraction")
+	logger.Info(fmt.Sprintf("directory expansion of %s: root URL %s yielded 0 items; attempting sub-URL extraction", args.CAMIS, args.URL))
 
 	// Obtain HTML for anchor parsing.  rawBody is populated by the normal fetch
 	// path.  For JS-rendered pages the pipeline returns nil rawBody — in that

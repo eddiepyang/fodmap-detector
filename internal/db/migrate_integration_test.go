@@ -74,16 +74,17 @@ func TestMigrate_Integration(t *testing.T) {
 	if dirty {
 		t.Fatalf("migration state dirty at version %d", v)
 	}
-	if v != 1 {
-		t.Fatalf("expected version 1 after up, got %d", v)
+	if v == 0 {
+		t.Fatalf("expected version > 0 after up, got %d", v)
 	}
 
-	// Every table from the baseline should now exist.
+	// Every table should now exist.
 	wantTables := []string{
 		"users", "user_profiles", "conversations", "messages",
 		"reviews", "review_chunks", "fodmap_ingredients",
 		"fodmap_catalog", "fodmap_meta",
 		"sources", "extraction_rules", "regulatory_updates", "menutracking_dead_letter",
+		"restaurants", "menu_items",
 	}
 	for _, tbl := range wantTables {
 		if !tableExists(t, db, tbl) {
@@ -96,12 +97,16 @@ func TestMigrate_Integration(t *testing.T) {
 		t.Fatalf("second MigrateUp should be a no-op: %v", err)
 	}
 
-	// Down one step: rolls back the baseline and drops the domain tables.
-	if err := MigrateDown(db); err != nil {
-		t.Fatalf("MigrateDown: %v", err)
+	// Down: roll back all steps one by one to ensure every down migration works cleanly.
+	for i := uint(0); i < v; i++ {
+		if err := MigrateDown(db); err != nil {
+			t.Fatalf("MigrateDown at step %d (reverting to version %d): %v", i+1, v-1-i, err)
+		}
 	}
-	if tableExists(t, db, "users") {
-		t.Error("expected users table to be dropped after MigrateDown")
+	for _, tbl := range wantTables {
+		if tableExists(t, db, tbl) {
+			t.Errorf("expected table %q to be dropped after full rollback", tbl)
+		}
 	}
 
 	// Up again: the full cycle re-creates everything cleanly.

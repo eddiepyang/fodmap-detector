@@ -20,7 +20,7 @@ type EmbedderConfig struct {
 }
 
 // ExpectedEmbeddingDim is the vector dimension the menu pipeline expects.
-// It matches the menu_items.embedding vector(768) column. If a different
+// It matches the menu_items.embedding halfvec(768) column. If a different
 // embedder/model is configured, NewEmbedder's startup ping fails fast rather
 // than silently inserting wrong-dim vectors.
 const ExpectedEmbeddingDim = 768
@@ -64,7 +64,7 @@ func NewEmbedder(ctx context.Context, cfg EmbedderConfig) (Embedder, error) {
 	if got := len(vec); got != ExpectedEmbeddingDim {
 		_ = e.Close()
 		return nil, fmt.Errorf(
-			"embedder returned %d-dim vectors, expected %d (menu_items.embedding is vector(%d)); "+
+			"embedder returned %d-dim vectors, expected %d (menu_items.embedding is halfvec(%d)); "+
 				"check the model served by the %q backend",
 			got, ExpectedEmbeddingDim, ExpectedEmbeddingDim, cfg.Type)
 	}

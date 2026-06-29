@@ -145,7 +145,12 @@ func ExtractMenu(
 			}
 
 			tooShort := len([]rune(strings.TrimSpace(md))) < 200
-			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort
+			jsShell := scraper.IsJSShell(md, string(bodyBytes))
+			if jsShell {
+				slog.Info("HTML is a JS-framework shell; menu hydrates client-side",
+					"url", rawURL, "visible_runes", len([]rune(strings.TrimSpace(md))))
+			}
+			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort || jsShell
 
 			menuImgCandidates, _ = scraper.FindMenuImages(bodyBytes, ct, rawURL)
 

@@ -128,7 +128,7 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `chunk_id` | `SERIAL` | `PRIMARY KEY` |
 | `review_id` | `TEXT` | `REFERENCES reviews(review_id) ON DELETE CASCADE` |
 | `chunk_text` | `TEXT` | |
-| `embedding` | `vector(768)` | |
+| `embedding` | `halfvec(768)` | |
 
 **`fodmap_ingredients`**
 
@@ -139,7 +139,7 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `groups` | `TEXT[]` | |
 | `notes` | `TEXT` | |
 | `substitutions` | `TEXT[]` | |
-| `embedding` | `vector(768)` | |
+| `embedding` | `halfvec(768)` | |
 
 **`fodmap_catalog`**
 
@@ -207,7 +207,7 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `address` | `TEXT` | |
 | `phone_number` | `TEXT` | |
 | `scraped_at_utc` | `TEXT` | |
-| `embedding` | `VECTOR(768)` | |
+| `embedding` | `HALFVEC(768)` | |
 
 ### Regulatory Menu Tracking
 

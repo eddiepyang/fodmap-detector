@@ -332,6 +332,41 @@ func IsTooNoisy(md string) bool {
 	return float64(short)/float64(total) > 0.70
 }
 
+// jsShellMinRawBytes is the minimum raw HTML size at which a tiny visible-text
+// body is plausibly the product of a JS bundle (scripts, asset hosts, inlined
+// state) rather than a genuinely small static page. Below this, the ratio is
+// meaningless (a 50-byte "closed" page is not a shell, just small).
+const jsShellMinRawBytes = 50_000
+
+// jsShellMinRatio is the raw-bytes-to-visible-runes ratio above which the page
+// is a JS shell: the static HTML is dominated by script bundles / inlined
+// state while the actual menu content is injected client-side. Real content
+// pages cluster at 1–200×; JS shells at >1000×. The 500× threshold sits in a
+// wide empty gap with no observed overlap in either direction.
+const jsShellMinRatio = 500
+
+// IsJSShell reports whether the page is a JS-framework shell whose menu
+// content is injected client-side and therefore missing from the static HTML.
+//
+// Heuristic: the raw HTML is large (≥ jsShellMinRawBytes) yet yields little
+// visible text, so the raw-bytes-to-visible-runes ratio exceeds
+// jsShellMinRatio. This is framework-agnostic — it does not depend on a
+// maintained list of framework markers, so it does not rot when Wix renames
+// an asset host or a new SPA framework appears. The 500-rune visible floor
+// keeps it orthogonal to the 200-rune tooShort gate: a 200–500 rune Wix
+// homepage (which passes tooShort) is still flagged, while a real content
+// page (> 500 runes of prose) is left on the normal LLM text path.
+func IsJSShell(md, rawHTML string) bool {
+	visible := utf8.RuneCountInString(strings.TrimSpace(md))
+	if visible >= 500 {
+		return false
+	}
+	if len(rawHTML) < jsShellMinRawBytes {
+		return false
+	}
+	return len(rawHTML)/max(visible, 1) > jsShellMinRatio
+}
+
 // truncateText trims s to at most maxChars characters, logging a warning when
 // truncation occurs.
 func truncateText(s string, maxChars int) string {
