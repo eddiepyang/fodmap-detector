@@ -21,9 +21,35 @@ START_SCRAPER=true ./start.sh
 ```
 This script handles starting Docker dependencies (PostgreSQL, Weaviate), migrating databases, launching the Python OCR service on port 8765, and starting the Go server with `--enable-pipeline`.
 
-Alternatively, if you are running services manually, ensure the background worker is enabled:
+Alternatively, if you are running services manually:
+
+**Python scraper service** — the webagent (headless-browser) path must be enabled, otherwise blocked sites (403/429) and JS-rendered directory pages cannot be rendered and will silently fail:
 ```sh
-go run . serve --enable-pipeline --postgres-dsn "postgres://user:pass@localhost:5432/fodmap"
+# from the scraper repo
+SCRAPER_WEBAGENT_ENABLED=true \
+WEBAGENT_MAX_FETCH_CONCURRENCY=4 \
+uv run uvicorn scraper.app:app --port 8765
+```
+- `SCRAPER_WEBAGENT_ENABLED=true` — **required** for the anti-block rendered-fetch fallback and for directory/paginated-menu fanout on JS sites. Without it `POST /fetch` returns 503 and those paths fail.
+- `WEBAGENT_MAX_FETCH_CONCURRENCY` — number of persistent headless browsers in the pool (default 4). It also caps the Go-side directory-fanout concurrency. Each worker is a full browser, so size it to available RAM/CPU.
+- Optional escalation: `uv add camoufox` installs the heavier anti-bot tier; enable it with `WEBAGENT_USE_CAMOUFOX=true` (opt-in — installing the package alone does not change the backend). Leave it off for the default Chromium backend.
+
+**Go server** — enable the worker and point it at the extractor:
+```sh
+go run . serve --enable-pipeline \
+  --postgres-dsn "postgres://user:pass@localhost:5432/fodmap" \
+  --extractor-url http://localhost:8765 \
+  --enable-vision \
+  --webagent-adapter <site/target>   # optional; see below
+```
+- `--extractor-url` is what wires up the webagent. With it set, the server's extractor implements the rendered-fetch fallback: blocked pages (403/429) and directory pages on JS sites are rendered via the Python webagent's `POST /fetch` automatically — **no extra Go flag needed**. (The webagent must be enabled on the Python side; see above.)
+- `--webagent-adapter <site/target>` is **optional** and routes empty/too-noisy HTML to the per-site `ScrapeJS` path instead. It must name a registered adapter; omit it to rely on the generic rendered-fetch fallback, which is sufficient for the directory-fanout and 403/429 paths.
+
+### 3. Directory / paginated menus
+When a discovered URL is a **directory** (it links out to sub-menus or PDFs rather than listing items), the scrape job extracts 0 items at the root, then automatically discovers same-domain sub-URLs, validates them, fetches each through the full cascade, and aggregates the items into a single result. See [`docs/plans/paginated-menu-handling.md`](../plans/paginated-menu-handling.md). To confirm it ran, look for `extraction_tier = directory_fanout`:
+```sh
+go run . restaurants list --status scraped   # then inspect tier, or query Postgres:
+# SELECT camis, dba, item_count, extraction_tier FROM restaurants WHERE extraction_tier = 'directory_fanout';
 ```
 
 ## Managing Restaurants
