@@ -115,10 +115,11 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		urlRe := regexp.MustCompile(`https?://[^\s)+"']+`)
 		rawURLs = append(rawURLs, urlRe.FindAllString(text, -1)...)
 	} else {
+		if result.WebsiteURL != "" {
+			rawURLs = append(rawURLs, result.WebsiteURL)
+		}
 		if len(result.MenuURLs) > 0 {
 			rawURLs = append(rawURLs, result.MenuURLs...)
-		} else if result.WebsiteURL != "" {
-			rawURLs = append(rawURLs, result.WebsiteURL)
 		}
 	}
 
@@ -564,7 +565,7 @@ func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, p
 // checkMenuSignal performs the keep/drop decision for a single URL.
 // Returns (keep, reason) where reason is non-empty only for interesting keep paths.
 func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, primaryURL string) (bool, string) {
-	if primaryURL != "" && rawURL == primaryURL {
+	if primaryURL != "" && strings.TrimSuffix(rawURL, "/") == strings.TrimSuffix(primaryURL, "/") {
 		return true, "primary website URL (always keep)"
 	}
 

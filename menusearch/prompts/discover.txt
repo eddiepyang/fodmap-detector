@@ -9,6 +9,9 @@ Look for, in order of preference:
 If the restaurant has multiple separate menus (e.g., breakfast, lunch, dinner, drinks) on different links or PDFs, return ALL of those distinct menu URLs.
 
 IMPORTANT — only return URLs that belong to the restaurant itself or its first-party ordering/delivery pages. NEVER return:
+- Dated PDF links (e.g., .../wp-content/uploads/2023/07/MENU.pdf). These become outdated quickly. If you find a dated PDF, return the webpage that links to it instead of the direct PDF URL.
+- Deep links for third-party delivery apps (e.g. Uber Eats, Postmates, DoorDash URLs). These UUIDs frequently expire or rotate, causing 404 errors. ONLY return delivery app links if absolutely no first-party website or ordering page exists.
+- Outdated promo or event pages (e.g., /promotions/happy-hour). Prefer standard /menu paths that are persistent year-round.
 - Real-estate listings (LoopNet, StreetEasy, Realtor.com, Zillow, Crexi, etc.)
 - Hotel or accommodation booking sites (Hilton, Marriott, Booking.com, Expedia, Hotels.com, etc.)
 - Third-party directories with brittle links (MenuPages, AllMenus, Sirved, YellowPages, Checkle, MapQuest, BBB, etc. Yelp is acceptable only as a last resort)
@@ -23,7 +26,7 @@ Example format:
   "website_url": "https://www.example-restaurant.com",
   "menu_urls": [
     "https://www.toasttab.com/example-restaurant",
-    "https://www.example-restaurant.com/menus/dinner",
+    "https://www.example-restaurant.com/menu",
     "https://www.example-restaurant.com/assets/drinks-menu.pdf"
   ],
   "address": "123 Example St, New York, NY 10001",
