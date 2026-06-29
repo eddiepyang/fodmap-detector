@@ -201,6 +201,7 @@ var serveCmd = &cobra.Command{
 				UsePdftotext:              viper.GetBool("use-pdftotext"),
 				WebagentAdapter:           viper.GetString("webagent-adapter"),
 				BronzeDir:                 viper.GetString("restaurant-bronze-dir"),
+				ScrapeMaxAttempts:         viper.GetInt("scrape-max-attempts"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -271,6 +272,7 @@ func init() {
 	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")
 	serveCmd.Flags().String("webagent-adapter", "", "Webagent adapter (site/target) for JS-rendered menus via Python scraper service")
 	serveCmd.Flags().String("restaurant-bronze-dir", "data/bronze/restaurants", "Directory for raw HTML bronze files from restaurant scrape jobs")
+	serveCmd.Flags().Int("scrape-max-attempts", 3, "Max attempts for scraping and discovery jobs in the pipeline")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 	_ = viper.BindEnv("admin-email", "ADMIN_EMAIL")

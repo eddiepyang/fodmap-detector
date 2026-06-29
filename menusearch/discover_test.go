@@ -446,7 +446,7 @@ func TestIsPrivateMenuHost(t *testing.T) {
 		{"8.8.8.8", false},
 		{"1.1.1.1", false},
 		{"restaurant.com", false}, // non-IP hostname
-		{"172.32.0.1", false},    // outside 172.16.0.0/12
+		{"172.32.0.1", false},     // outside 172.16.0.0/12
 	}
 	for _, tc := range cases {
 		got := isPrivateMenuHost(tc.host)

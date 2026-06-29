@@ -44,6 +44,7 @@ type DiscoverMenuURLWorker struct {
 	GeminiModel          string
 	ScrapeStaggerSeconds int
 	MaxNoURLAttempts     int
+	MaxAttempts          int
 }
 
 func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
@@ -246,6 +247,7 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 			DBA:              args.DBA,
 			DiscoveryEventID: eventID,
 		}, &river.InsertOpts{
+			MaxAttempts: w.MaxAttempts,
 			UniqueOpts: river.UniqueOpts{
 				ByArgs:   true,
 				ByPeriod: 30 * 24 * time.Hour,

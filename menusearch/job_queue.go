@@ -13,7 +13,8 @@ import (
 
 // JobQueue implements server.RestaurantJobQueue using the River client.
 type JobQueue struct {
-	Client *river.Client[pgx.Tx]
+	Client      *river.Client[pgx.Tx]
+	MaxAttempts int
 }
 
 // EnqueueDiscover inserts a discover_menu_url job for the given restaurant.
@@ -29,6 +30,7 @@ func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) err
 		Attempt:  1,
 	}
 	opts := &river.InsertOpts{
+		MaxAttempts: q.MaxAttempts,
 		UniqueOpts: river.UniqueOpts{
 			ByArgs:   true,
 			ByPeriod: 30 * 24 * time.Hour,
@@ -58,6 +60,7 @@ func (q *JobQueue) EnqueueScrape(ctx context.Context, r server.Restaurant) error
 			DBA:   r.DBA,
 		}
 		opts := &river.InsertOpts{
+			MaxAttempts: q.MaxAttempts,
 			UniqueOpts: river.UniqueOpts{
 				ByArgs:   true,
 				ByPeriod: 30 * 24 * time.Hour,

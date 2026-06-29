@@ -203,6 +203,10 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 		}
 
 		if !skipDiscovery {
+			maxAttempts := viper.GetInt("scrape-max-attempts")
+			if maxAttempts <= 0 {
+				maxAttempts = 3
+			}
 			_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
 				CAMIS:    rec.CAMIS,
 				DBA:      rec.DBA,
@@ -211,7 +215,7 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 				Boro:     rec.Boro,
 				Zipcode:  rec.Zipcode,
 				Attempt:  1,
-			}, nil)
+			}, &river.InsertOpts{MaxAttempts: maxAttempts})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to enqueue discovery for %s: %v\n", rec.CAMIS, err)
 			}
@@ -319,13 +323,17 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 	}
 
 	eventID := uuid.NewString()
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
 	for _, u := range r.MenuURLs {
 		_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
 			CAMIS:            r.CAMIS,
 			URL:              u,
 			DBA:              r.DBA,
 			DiscoveryEventID: eventID,
-		}, nil)
+		}, &river.InsertOpts{MaxAttempts: maxAttempts})
 		if err != nil {
 			return fmt.Errorf("enqueue river job for %s: %w", u, err)
 		}
@@ -367,6 +375,10 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
 	_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
 		CAMIS:    r.CAMIS,
 		DBA:      r.DBA,
@@ -375,7 +387,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		Boro:     safeStr(r.Boro),
 		Zipcode:  safeStr(r.Zipcode),
 		Attempt:  1,
-	}, nil)
+	}, &river.InsertOpts{MaxAttempts: maxAttempts})
 	if err != nil {
 		return fmt.Errorf("enqueue discover: %w", err)
 	}
@@ -442,6 +454,10 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
 	if len(r.MenuURLs) > 0 {
 		eventID := uuid.NewString()
 		for _, u := range r.MenuURLs {
@@ -450,7 +466,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 				URL:              u,
 				DBA:              r.DBA,
 				DiscoveryEventID: eventID,
-			}, nil)
+			}, &river.InsertOpts{MaxAttempts: maxAttempts})
 			if err != nil {
 				return fmt.Errorf("enqueue scrape %s: %w", u, err)
 			}
@@ -469,7 +485,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 			Boro:     safeStr(r.Boro),
 			Zipcode:  safeStr(r.Zipcode),
 			Attempt:  1,
-		}, nil)
+		}, &river.InsertOpts{MaxAttempts: maxAttempts})
 		if err != nil {
 			return fmt.Errorf("enqueue discover: %w", err)
 		}

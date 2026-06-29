@@ -114,6 +114,7 @@ type PipelineConfig struct {
 	UsePdftotext              bool
 	WebagentAdapter           string
 	BronzeDir                 string
+	ScrapeMaxAttempts         int
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -216,6 +217,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		GeminiModel:          cfg.DiscoveryGeminiModel,
 		ScrapeStaggerSeconds: cfg.DiscoveryStaggerSeconds,
 		MaxNoURLAttempts:     cfg.DiscoveryMaxNoURLAttempts,
+		MaxAttempts:          cfg.ScrapeMaxAttempts,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -263,7 +265,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 					URL:      s.URL,
 					Domain:   s.Domain,
 				}, &river.InsertOpts{
-					MaxAttempts: menutracking.DefaultScrapeMaxAttempts,
+					MaxAttempts: cfg.ScrapeMaxAttempts,
 					UniqueOpts: river.UniqueOpts{
 						ByPeriod: 7 * 24 * time.Hour,
 					},
@@ -288,7 +290,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	scrapeWorker.RiverClient = riverClient
 	discoverWorker.RiverClient = riverClient
 
-	jobQueue := &menusearch.JobQueue{Client: riverClient}
+	jobQueue := &menusearch.JobQueue{Client: riverClient, MaxAttempts: cfg.ScrapeMaxAttempts}
 
 	if err := riverClient.Start(ctx); err != nil {
 		pool.Close()
