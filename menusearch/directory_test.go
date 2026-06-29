@@ -1,7 +1,14 @@
 package menusearch
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
+
+	"fodmap/scraper"
 )
 
 // ── extractMenuSubURLs ───────────────────────────────────────────────────────
@@ -205,5 +212,169 @@ func TestDepthCapStructural(t *testing.T) {
 	b := ScrapeMenuArgs{Depth: 1}
 	if b.Depth != 1 {
 		t.Errorf("Depth should be 1, got %d", b.Depth)
+	}
+}
+
+// ── webagentMaxConcurrency ───────────────────────────────────────────────────
+
+func TestWebagentMaxConcurrency_DefaultWhenUnset(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_ValidValue(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "8")
+	if got := webagentMaxConcurrency(); got != 8 {
+		t.Errorf("want 8, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_InvalidValue(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "notanumber")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4 for non-numeric value, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_ZeroFallsBackToDefault(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "0")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4 for zero, got %d", got)
+	}
+}
+
+// ── extractSubURLs ───────────────────────────────────────────────────────────
+
+type dirStubFetcher struct {
+	body        string
+	contentType string
+	err         error
+}
+
+func (s *dirStubFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	if s.err != nil {
+		return scraper.FetchResult{}, s.err
+	}
+	return scraper.FetchResult{
+		Body:        io.NopCloser(strings.NewReader(s.body)),
+		ContentType: s.contentType,
+	}, nil
+}
+
+type dirStubExtractor struct {
+	result scraper.MenuExtractionResult
+}
+
+func (s *dirStubExtractor) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	return s.result, nil
+}
+
+// dirURLMapFetcher returns preset responses keyed by URL.
+type dirURLResponse struct {
+	body        string
+	contentType string
+	err         error
+}
+
+type dirURLMapFetcher struct {
+	responses map[string]dirURLResponse
+}
+
+func (f *dirURLMapFetcher) Fetch(_ context.Context, rawURL string) (scraper.FetchResult, error) {
+	resp, ok := f.responses[rawURL]
+	if !ok {
+		return scraper.FetchResult{}, errors.New("no stub for URL")
+	}
+	if resp.err != nil {
+		return scraper.FetchResult{}, resp.err
+	}
+	return scraper.FetchResult{
+		Body:        io.NopCloser(strings.NewReader(resp.body)),
+		ContentType: resp.contentType,
+	}, nil
+}
+
+func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// jsonldPage returns a minimal HTML page with a JSON-LD Restaurant menu
+// containing one item with the given name.
+func jsonldPage(itemName string) string {
+	return `<html><body><script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Restaurant","name":"Test",
+ "hasMenu":{"@type":"Menu","hasMenuItem":[
+   {"@type":"MenuItem","name":"` + itemName + `","offers":{"@type":"Offer","price":"10"}}
+ ]}}</script></body></html>`
+}
+
+func TestExtractSubURLs_ReturnsItems(t *testing.T) {
+	fetcher := &dirStubFetcher{body: jsonldPage("Burger"), contentType: "text/html"}
+	ex := &dirStubExtractor{}
+
+	results := extractSubURLs(context.Background(),
+		[]string{"https://restaurant.example.com/menu/lunch"},
+		fetcher, ex, false, false, "", discardLog())
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].url != "https://restaurant.example.com/menu/lunch" {
+		t.Errorf("unexpected URL %q", results[0].url)
+	}
+	if len(results[0].result.Items) != 1 {
+		t.Errorf("expected 1 item, got %v", results[0].result.Items)
+	}
+}
+
+func TestExtractSubURLs_EmptyCandidates(t *testing.T) {
+	results := extractSubURLs(context.Background(), nil,
+		&dirStubFetcher{}, &dirStubExtractor{}, false, false, "", discardLog())
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for nil candidates, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_ZeroItemsFiltered(t *testing.T) {
+	fetcher := &dirStubFetcher{body: `<html><body><p>No menu.</p></body></html>`, contentType: "text/html"}
+	ex := &dirStubExtractor{}
+
+	results := extractSubURLs(context.Background(),
+		[]string{"https://restaurant.example.com/empty"},
+		fetcher, ex, false, false, "", discardLog())
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when sub-URL yields no items, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_FetchErrorTolerated(t *testing.T) {
+	fetcher := &dirStubFetcher{err: errors.New("connection refused")}
+	results := extractSubURLs(context.Background(),
+		[]string{"https://restaurant.example.com/menu/lunch"},
+		&dirStubFetcher{err: errors.New("timeout")}, &dirStubExtractor{},
+		false, false, "", discardLog())
+	_ = fetcher
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when fetch fails, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_ToleratesPartialFailure(t *testing.T) {
+	fetcher := &dirURLMapFetcher{responses: map[string]dirURLResponse{
+		"https://restaurant.example.com/menu/lunch":  {body: jsonldPage("Salad"), contentType: "text/html"},
+		"https://restaurant.example.com/menu/dinner": {err: errors.New("timeout")},
+	}}
+	results := extractSubURLs(context.Background(),
+		[]string{
+			"https://restaurant.example.com/menu/lunch",
+			"https://restaurant.example.com/menu/dinner",
+		},
+		fetcher, &dirStubExtractor{}, false, false, "", discardLog())
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (lunch only), got %d", len(results))
+	}
+	if results[0].url != "https://restaurant.example.com/menu/lunch" {
+		t.Errorf("unexpected URL %q", results[0].url)
 	}
 }

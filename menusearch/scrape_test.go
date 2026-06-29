@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hamba/avro/v2/ocf"
@@ -181,5 +182,38 @@ func TestWriteGeminiDiscoveryAvro_EmptySourceURLs(t *testing.T) {
 	// Should not error — nil SourceURLs is coerced to empty slice in the writer.
 	if err := WriteGeminiDiscoveryAvro(context.Background(), dest, rec); err != nil {
 		t.Fatalf("WriteGeminiDiscoveryAvro with nil SourceURLs: %v", err)
+	}
+}
+
+// ── ScrapeMenuWorker helpers ──────────────────────────────────────────────────
+
+func TestScrapeMenuWorker_BronzeDir_Field(t *testing.T) {
+	t.Setenv("RESTAURANT_BRONZE_DIR", "")
+	w := &ScrapeMenuWorker{BronzeDir: "/custom/bronze"}
+	if got := w.bronzeDir(); got != "/custom/bronze" {
+		t.Errorf("bronzeDir() = %q, want /custom/bronze", got)
+	}
+}
+
+func TestScrapeMenuWorker_BronzeDir_Env(t *testing.T) {
+	t.Setenv("RESTAURANT_BRONZE_DIR", "/env/bronze")
+	w := &ScrapeMenuWorker{}
+	if got := w.bronzeDir(); got != "/env/bronze" {
+		t.Errorf("bronzeDir() = %q, want /env/bronze", got)
+	}
+}
+
+func TestScrapeMenuWorker_BronzeDir_Default(t *testing.T) {
+	t.Setenv("RESTAURANT_BRONZE_DIR", "")
+	w := &ScrapeMenuWorker{}
+	if got := w.bronzeDir(); got != "data/bronze/restaurants" {
+		t.Errorf("bronzeDir() = %q, want data/bronze/restaurants", got)
+	}
+}
+
+func TestScrapeMenuWorker_Timeout(t *testing.T) {
+	w := &ScrapeMenuWorker{}
+	if got := w.Timeout(nil); got != 5*time.Minute {
+		t.Errorf("Timeout() = %v, want 5m", got)
 	}
 }

@@ -3,6 +3,8 @@ package menusearch
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -307,5 +309,229 @@ func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
 	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/about", "")
 	if keep {
 		t.Error("expected 2xx page with no menu signal to be dropped")
+	}
+}
+
+// ── checkMenuSignal: primaryURL pin ──────────────────────────────────────────
+
+func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
+	// The primary-URL check fires before any network call, so no server is needed.
+	client := &http.Client{Timeout: time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client,
+		"https://restaurant.example.com", "https://restaurant.example.com")
+	if !keep {
+		t.Errorf("primary URL must always be kept, got keep=false reason=%q", reason)
+	}
+	if reason != "primary website URL (always keep)" {
+		t.Errorf("unexpected reason %q", reason)
+	}
+}
+
+func TestCheckMenuSignal_PrimaryURLTrailingSlash(t *testing.T) {
+	client := &http.Client{Timeout: time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client,
+		"https://restaurant.example.com/", "https://restaurant.example.com")
+	if !keep {
+		t.Errorf("trailing-slash variant must match primary URL, got keep=false reason=%q", reason)
+	}
+	if reason != "primary website URL (always keep)" {
+		t.Errorf("unexpected reason %q", reason)
+	}
+}
+
+// ── menuSignalFilter ─────────────────────────────────────────────────────────
+
+func TestMenuSignalFilter_EmptyList(t *testing.T) {
+	out := menuSignalFilter(context.Background(), &http.Client{}, nil, "", discoverDiscardLog())
+	if len(out) != 0 {
+		t.Errorf("expected empty output for empty input, got %v", out)
+	}
+}
+
+func TestMenuSignalFilter_KeptAndDropped(t *testing.T) {
+	menuBody := []byte(`<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"MenuItem","name":"Pasta","offers":{"price":"14"}}
+</script></head><body>menu</body></html>`)
+	noSignalBody := []byte(`<html><body><p>About our company</p></body></html>`)
+
+	var menuAddr, noSignalAddr string
+	menuSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(menuBody)
+	}))
+	defer menuSrv.Close()
+	menuAddr = menuSrv.Listener.Addr().String()
+
+	noSigSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(noSignalBody)
+	}))
+	defer noSigSrv.Close()
+	noSignalAddr = noSigSrv.Listener.Addr().String()
+
+	client := &http.Client{
+		Transport: &multiMockTransport{
+			routes: map[string]string{
+				"menu.test":    menuAddr,
+				"generic.test": noSignalAddr,
+			},
+			inner: http.DefaultTransport,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	urls := []string{"http://menu.test/menu", "http://generic.test/about"}
+	out := menuSignalFilter(context.Background(), client, urls, "", discoverDiscardLog())
+	if len(out) != 1 || out[0] != "http://menu.test/menu" {
+		t.Errorf("expected only menu URL kept, got %v", out)
+	}
+}
+
+func TestMenuSignalFilter_PrimaryURLPinned(t *testing.T) {
+	// The primary URL is always kept even without a menu signal.
+	noSignalBody := []byte(`<html><body><p>About us</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(noSignalBody)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	primary := "http://restaurant.test/about"
+	out := menuSignalFilter(context.Background(), client, []string{primary}, primary, discoverDiscardLog())
+	if len(out) != 1 || out[0] != primary {
+		t.Errorf("expected primary URL kept, got %v", out)
+	}
+}
+
+// multiMockTransport routes requests based on the request host.
+type multiMockTransport struct {
+	routes map[string]string // host → backend addr
+	inner  http.RoundTripper
+}
+
+func (m *multiMockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	cloned := req.Clone(req.Context())
+	if addr, ok := m.routes[req.URL.Hostname()]; ok {
+		cloned.URL.Host = addr
+		cloned.Host = addr
+	}
+	return m.inner.RoundTrip(cloned)
+}
+
+// discoverDiscardLog returns a slog.Logger that discards all output.
+func discoverDiscardLog() *slog.Logger {
+	return slog.New(slog.NewTextHandler(discardWriter{}, nil))
+}
+
+type discardWriter struct{}
+
+func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// ── isPrivateMenuHost ────────────────────────────────────────────────────────
+
+func TestIsPrivateMenuHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"localhost", true},
+		{"127.0.0.1", true},
+		{"192.168.1.1", true},
+		{"10.0.0.1", true},
+		{"172.16.0.1", true},
+		{"169.254.1.1", true},
+		{"::1", true},
+		{"8.8.8.8", false},
+		{"1.1.1.1", false},
+		{"restaurant.com", false}, // non-IP hostname
+		{"172.32.0.1", false},    // outside 172.16.0.0/12
+	}
+	for _, tc := range cases {
+		got := isPrivateMenuHost(tc.host)
+		if got != tc.want {
+			t.Errorf("isPrivateMenuHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+// ── probeURL ─────────────────────────────────────────────────────────────────
+
+func TestProbeURL_PrivateHostSkipped(t *testing.T) {
+	// Private/loopback hosts must return false (SSRF guard) without any network call.
+	if probeURL(context.Background(), &http.Client{}, "http://localhost/menu") {
+		t.Error("expected probeURL=false for localhost (SSRF guard)")
+	}
+	if probeURL(context.Background(), &http.Client{}, "http://192.168.1.1/menu") {
+		t.Error("expected probeURL=false for RFC-1918 address")
+	}
+}
+
+func TestProbeURL_LiveServerReturnsTrue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	if !probeURL(context.Background(), client, "http://restaurant.test/menu") {
+		t.Error("expected probeURL=true for live server")
+	}
+}
+
+func TestProbeURL_DeadPortReturnsFalse(t *testing.T) {
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: "127.0.0.1:1", inner: http.DefaultTransport},
+		Timeout:   3 * time.Second,
+	}
+	if probeURL(context.Background(), client, "http://dead.test/menu") {
+		t.Error("expected probeURL=false for ECONNREFUSED port")
+	}
+}
+
+// headFailTransport returns an error for HEAD but routes GET to a real backend.
+type headFailTransport struct {
+	backendAddr string
+	inner       http.RoundTripper
+}
+
+func (t *headFailTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodHead {
+		return nil, errors.New("HEAD not supported")
+	}
+	cloned := req.Clone(req.Context())
+	cloned.URL.Host = t.backendAddr
+	cloned.Host = t.backendAddr
+	return t.inner.RoundTrip(cloned)
+}
+
+func TestProbeURL_GETFallbackSucceeds(t *testing.T) {
+	// HEAD fails with a non-dead-domain error; GET succeeds → true.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &headFailTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	if !probeURL(context.Background(), client, "http://restaurant.test/menu") {
+		t.Error("expected probeURL=true when HEAD fails but GET succeeds")
+	}
+}
+
+// ── checkMenuSignal: SSRF guard ───────────────────────────────────────────────
+
+func TestCheckMenuSignal_PrivateHostDropped(t *testing.T) {
+	// Private/loopback hosts are dropped by the SSRF guard before any network call.
+	client := &http.Client{Timeout: time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client, "http://192.168.1.1/menu", "")
+	if keep {
+		t.Errorf("private host must be dropped, got keep=true reason=%q", reason)
 	}
 }
