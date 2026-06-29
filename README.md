@@ -65,6 +65,7 @@ We have split our documentation into separate guides and plans for easier readin
 - [Server Design](docs/guides/server.md) - Server design and API docs.
 - [LLM Serving](docs/guides/llm-serving.md) - LLM serving architectures.
 - [Troubleshooting & Diagnostics](docs/guides/troubleshooting.md) - Common issues, Weaviate diagnostic queries, and schema migration steps.
+- [Hosting & Cost Analysis](docs/guides/hosting-cost-analysis.md) - Cost-effective single-box hosting, pgvector vs Weaviate sizing, and why not GCP/Kubernetes.
 
 ### Plans & Roadmaps
 
