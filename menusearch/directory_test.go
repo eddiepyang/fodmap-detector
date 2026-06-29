@@ -1,7 +1,15 @@
 package menusearch
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/url"
+	"strings"
 	"testing"
+
+	"fodmap/scraper"
 )
 
 // ── extractMenuSubURLs ───────────────────────────────────────────────────────
@@ -205,5 +213,255 @@ func TestDepthCapStructural(t *testing.T) {
 	b := ScrapeMenuArgs{Depth: 1}
 	if b.Depth != 1 {
 		t.Errorf("Depth should be 1, got %d", b.Depth)
+	}
+}
+
+// ── webagentMaxConcurrency ───────────────────────────────────────────────────
+
+func TestWebagentMaxConcurrency_DefaultWhenUnset(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_ValidValue(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "8")
+	if got := webagentMaxConcurrency(); got != 8 {
+		t.Errorf("want 8, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_InvalidValue(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "notanumber")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4 for non-numeric value, got %d", got)
+	}
+}
+
+func TestWebagentMaxConcurrency_ZeroFallsBackToDefault(t *testing.T) {
+	t.Setenv("WEBAGENT_MAX_FETCH_CONCURRENCY", "0")
+	if got := webagentMaxConcurrency(); got != 4 {
+		t.Errorf("want default 4 for zero, got %d", got)
+	}
+}
+
+// ── hasMenuPathKeyword ───────────────────────────────────────────────────────
+
+func TestHasMenuPathKeyword(t *testing.T) {
+	cases := []struct {
+		path, href string
+		want       bool
+	}{
+		{"/menu/lunch", "", true},
+		{"/dinner-specials", "", true},
+		{"/food/items", "", true},
+		{"/brunch-menu", "", true},
+		{"/assets/drinks.pdf", "", true},
+		{"/cocktails", "", true},
+		{"/about", "", false},
+		{"/contact", "", false},
+		{"/reservations", "", false},
+		{"", "menu-page", true}, // keyword in href text
+	}
+	for _, tc := range cases {
+		got := hasMenuPathKeyword(tc.path, tc.href)
+		if got != tc.want {
+			t.Errorf("hasMenuPathKeyword(%q, %q) = %v, want %v", tc.path, tc.href, got, tc.want)
+		}
+	}
+}
+
+// ── normaliseURL ─────────────────────────────────────────────────────────────
+
+func TestNormaliseURL(t *testing.T) {
+	cases := []struct {
+		rawURL string
+		want   string
+	}{
+		{"https://restaurant.example.com/menu", "https://restaurant.example.com/menu"},
+		{"https://restaurant.example.com/menu/", "https://restaurant.example.com/menu"},
+		{"https://restaurant.example.com/menu?x=1", "https://restaurant.example.com/menu"},
+		{"https://restaurant.example.com/menu#section", "https://restaurant.example.com/menu"},
+		{"https://RESTAURANT.EXAMPLE.COM/menu", "https://restaurant.example.com/menu"},
+	}
+	for _, tc := range cases {
+		u, err := url.Parse(tc.rawURL)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", tc.rawURL, err)
+		}
+		got := normaliseURL(u)
+		if got != tc.want {
+			t.Errorf("normaliseURL(%q) = %q, want %q", tc.rawURL, got, tc.want)
+		}
+	}
+}
+
+// ── extractSubURLs ───────────────────────────────────────────────────────────
+
+// msStubFetcher implements scraper.Fetcher and returns the same result for every URL.
+type msStubFetcher struct {
+	body        string
+	contentType string
+	err         error
+}
+
+func (s *msStubFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	if s.err != nil {
+		return scraper.FetchResult{}, s.err
+	}
+	return scraper.FetchResult{
+		Body:        io.NopCloser(strings.NewReader(s.body)),
+		ContentType: s.contentType,
+	}, nil
+}
+
+// msStubExtractor implements scraper.Extractor.
+type msStubExtractor struct {
+	result scraper.MenuExtractionResult
+}
+
+func (s *msStubExtractor) Extract(_ context.Context, _ string) (scraper.MenuExtractionResult, error) {
+	return s.result, nil
+}
+
+// msURLMapFetcher returns a preset response per raw URL.
+type msFetchResponse struct {
+	body        string
+	contentType string
+	err         error
+}
+
+type msURLMapFetcher struct {
+	responses map[string]msFetchResponse
+}
+
+func (f *msURLMapFetcher) Fetch(_ context.Context, rawURL string) (scraper.FetchResult, error) {
+	resp, ok := f.responses[rawURL]
+	if !ok {
+		return scraper.FetchResult{}, errors.New("no stub for URL")
+	}
+	if resp.err != nil {
+		return scraper.FetchResult{}, resp.err
+	}
+	return scraper.FetchResult{
+		Body:        io.NopCloser(strings.NewReader(resp.body)),
+		ContentType: resp.contentType,
+	}, nil
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// menuJSONLDHTML returns a minimal HTML page with a JSON-LD Restaurant menu
+// that contains one item named itemName.
+func menuJSONLDHTML(itemName string) string {
+	return `<html><body>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Restaurant","name":"Test Resto",
+ "hasMenu":{"@type":"Menu","hasMenuItem":[
+   {"@type":"MenuItem","name":"` + itemName + `","offers":{"@type":"Offer","price":"10"}}
+ ]}}
+</script>
+</body></html>`
+}
+
+func TestExtractSubURLs_ReturnsItems(t *testing.T) {
+	fetcher := &msStubFetcher{body: menuJSONLDHTML("Burger"), contentType: "text/html"}
+	ex := &msStubExtractor{}
+
+	results := extractSubURLs(
+		context.Background(),
+		[]string{"https://restaurant.example.com/menu/lunch"},
+		fetcher, ex, false, false, "",
+		discardLogger(),
+	)
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].url != "https://restaurant.example.com/menu/lunch" {
+		t.Errorf("unexpected URL %q", results[0].url)
+	}
+	if len(results[0].result.Items) != 1 {
+		t.Errorf("expected 1 item, got %v", results[0].result.Items)
+	}
+}
+
+func TestExtractSubURLs_EmptyCandidates(t *testing.T) {
+	results := extractSubURLs(
+		context.Background(),
+		nil,
+		&msStubFetcher{}, &msStubExtractor{}, false, false, "",
+		discardLogger(),
+	)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty candidates, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_ZeroItemsFiltered(t *testing.T) {
+	// HTML with no JSON-LD; extractor returns empty items — must not appear in results.
+	fetcher := &msStubFetcher{body: `<html><body><p>No menu here.</p></body></html>`, contentType: "text/html"}
+	ex := &msStubExtractor{result: scraper.MenuExtractionResult{}}
+
+	results := extractSubURLs(
+		context.Background(),
+		[]string{"https://restaurant.example.com/empty"},
+		fetcher, ex, false, false, "",
+		discardLogger(),
+	)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when sub-URL yields no items, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_FetchErrorFiltered(t *testing.T) {
+	// A fetch error must be tolerated — the URL is silently skipped.
+	fetcher := &msStubFetcher{err: errors.New("connection refused")}
+	ex := &msStubExtractor{}
+
+	results := extractSubURLs(
+		context.Background(),
+		[]string{"https://restaurant.example.com/menu/lunch"},
+		fetcher, ex, false, false, "",
+		discardLogger(),
+	)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when fetch fails, got %d", len(results))
+	}
+}
+
+func TestExtractSubURLs_ToleratesPartialFailure(t *testing.T) {
+	// One URL succeeds; the other times out. Only the successful URL must appear.
+	fetcher := &msURLMapFetcher{
+		responses: map[string]msFetchResponse{
+			"https://restaurant.example.com/menu/lunch": {
+				body:        menuJSONLDHTML("Salad"),
+				contentType: "text/html",
+			},
+			"https://restaurant.example.com/menu/dinner": {
+				err: errors.New("timeout"),
+			},
+		},
+	}
+	ex := &msStubExtractor{}
+
+	results := extractSubURLs(
+		context.Background(),
+		[]string{
+			"https://restaurant.example.com/menu/lunch",
+			"https://restaurant.example.com/menu/dinner",
+		},
+		fetcher, ex, false, false, "",
+		discardLogger(),
+	)
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (lunch only), got %d", len(results))
+	}
+	if results[0].url != "https://restaurant.example.com/menu/lunch" {
+		t.Errorf("unexpected URL %q", results[0].url)
 	}
 }

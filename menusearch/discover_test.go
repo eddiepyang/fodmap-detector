@@ -309,3 +309,49 @@ func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
 		t.Error("expected 2xx page with no menu signal to be dropped")
 	}
 }
+
+func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
+	// The primary URL must be kept regardless of page content — the check fires
+	// before any network call, so a non-dialing client is safe here.
+	client := &http.Client{Timeout: time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client,
+		"https://restaurant.example.com", "https://restaurant.example.com")
+	if !keep {
+		t.Errorf("primary URL must always be kept, got keep=false reason=%q", reason)
+	}
+	if reason != "primary website URL (always keep)" {
+		t.Errorf("unexpected reason %q, want %q", reason, "primary website URL (always keep)")
+	}
+}
+
+func TestCheckMenuSignal_PrimaryURLTrailingSlashNormalised(t *testing.T) {
+	// A trailing slash on either side must not prevent the primary URL match.
+	client := &http.Client{Timeout: time.Second}
+	keep, reason := checkMenuSignal(context.Background(), client,
+		"https://restaurant.example.com/", "https://restaurant.example.com")
+	if !keep {
+		t.Errorf("primary URL with trailing slash must be kept, got keep=false reason=%q", reason)
+	}
+	if reason != "primary website URL (always keep)" {
+		t.Errorf("unexpected reason %q", reason)
+	}
+}
+
+func TestCheckMenuSignal_EmptyPrimaryURLSkipsPin(t *testing.T) {
+	// When primaryURL is empty, the pin check must not fire — a no-signal 2xx
+	// page must still be dropped normally.
+	body := []byte(`<html><body><p>Generic page with no menu content.</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/about", "")
+	if keep {
+		t.Error("expected page to be dropped when primaryURL is empty and there is no menu signal")
+	}
+}
