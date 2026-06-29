@@ -64,17 +64,29 @@ func TestFetchWithFallback_SuccessNoFallback(t *testing.T) {
 	}
 }
 
-func TestFetchWithFallback_404_NoFallback(t *testing.T) {
-	// 404 must not trigger the rendered-fetch fallback.
-	renderer := &rendererExtractor{}
+func TestFetchWithFallback_404_CallsFallback(t *testing.T) {
+	// Any fetch error should now trigger the rendered-fetch fallback.
+	wantHTML := "<html>rendered 404 page</html>"
+	renderer := &rendererExtractor{
+		renderResult: scraper.FetchResult{
+			Body:        io.NopCloser(strings.NewReader(wantHTML)),
+			ContentType: "text/html",
+		},
+	}
 	fetcher := &stubFetcher{err: &scraper.HTTPStatusError{StatusCode: 404, URL: "https://example.com"}}
 
-	_, _, err := fetchWithFallback(context.Background(), "https://example.com", fetcher, renderer)
-	if err == nil {
-		t.Fatal("expected error")
+	body, ct, err := fetchWithFallback(context.Background(), "https://example.com", fetcher, renderer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if renderer.called {
-		t.Error("rendered-fetch must NOT be called on 404")
+	if !renderer.called {
+		t.Error("rendered-fetch must be called on 404")
+	}
+	if string(body) != wantHTML {
+		t.Errorf("body = %q, want %q", string(body), wantHTML)
+	}
+	if ct != "text/html" {
+		t.Errorf("content-type = %q, want text/html", ct)
 	}
 }
 

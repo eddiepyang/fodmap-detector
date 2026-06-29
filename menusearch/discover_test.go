@@ -253,7 +253,7 @@ func TestCheckMenuSignal_403Kept(t *testing.T) {
 		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
 		Timeout:   5 * time.Second,
 	}
-	keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu")
+	keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu", "")
 	if !keep {
 		t.Errorf("expected 403 response to be kept, got keep=false reason=%q", reason)
 	}
@@ -263,7 +263,7 @@ func TestCheckMenuSignal_OrderingPlatformKept(t *testing.T) {
 	// A whitelisted ordering platform must be kept regardless of body content.
 	// We don't even need a real server — the whitelist check fires before the GET.
 	client := &http.Client{Timeout: 1 * time.Second}
-	keep, reason := checkMenuSignal(context.Background(), client, "https://order.toasttab.com/online/my-place")
+	keep, reason := checkMenuSignal(context.Background(), client, "https://order.toasttab.com/online/my-place", "")
 	if !keep {
 		t.Errorf("expected ordering platform to be kept, got keep=false reason=%q", reason)
 	}
@@ -285,7 +285,7 @@ func TestCheckMenuSignal_2xxWithSignalKept(t *testing.T) {
 		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
 		Timeout:   5 * time.Second,
 	}
-	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu")
+	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu", "")
 	if !keep {
 		t.Error("expected 2xx page with menu signal to be kept")
 	}
@@ -304,7 +304,7 @@ func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
 		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
 		Timeout:   5 * time.Second,
 	}
-	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/about")
+	keep, _ := checkMenuSignal(context.Background(), client, "http://restaurant.test/about", "")
 	if keep {
 		t.Error("expected 2xx page with no menu signal to be dropped")
 	}

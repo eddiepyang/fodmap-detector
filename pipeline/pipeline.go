@@ -22,11 +22,12 @@ import (
 // LLM/OCR/browser paths) can be measured. Keep these stable — they are written
 // to the DB and queried in aggregate.
 const (
-	TierJSONLD   = "jsonld"    // Tier 0: schema.org JSON-LD menu (pure Go, no LLM)
-	TierHTMLLLM  = "html_llm"  // Tier 1: HTML→Markdown → LLM structuring
-	TierPDF      = "pdf"       // PDF cascade (text-layer / pdftotext / service / vision)
-	TierImageOCR = "image_ocr" // embedded menu image → OCR
-	TierWebagent = "webagent"  // JS-rendered page via the webagent browser pool
+	TierJSONLD          = "jsonld"           // Tier 0: schema.org JSON-LD menu (pure Go, no LLM)
+	TierHTMLLLM         = "html_llm"         // Tier 1: HTML→Markdown → LLM structuring
+	TierPDF             = "pdf"              // PDF cascade (text-layer / pdftotext / service / vision)
+	TierImageOCR        = "image_ocr"        // embedded menu image → OCR
+	TierWebagent        = "webagent"         // JS-rendered page via the webagent browser pool
+	TierDirectoryFanout = "directory_fanout" // directory page: items aggregated from multiple sub-URLs
 )
 
 // fetchWithFallback attempts a normal HTTP fetch and, on a 403 or 429 status
@@ -50,25 +51,21 @@ func fetchWithFallback(
 		return bodyBytes, fetchRes.ContentType, nil
 	}
 
-	// On 403/429, try the rendered-fetch fallback if available.
-	var statusErr *scraper.HTTPStatusError
-	if errors.As(err, &statusErr) &&
-		(statusErr.StatusCode == 403 || statusErr.StatusCode == 429) {
-		if renderer, ok := ex.(scraper.HTMLRenderer); ok {
-			slog.Info("HTTP fetch blocked; falling back to rendered-fetch",
-				"url", rawURL, "status", statusErr.StatusCode)
-			renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL)
-			if renderErr != nil {
-				// Preserve the render error, but wrap with context.
-				return nil, "", fmt.Errorf("rendered-fetch fallback: %w", renderErr)
-			}
-			bodyBytes, readErr := io.ReadAll(renderRes.Body)
-			_ = renderRes.Body.Close()
-			if readErr != nil {
-				return nil, "", fmt.Errorf("reading rendered body: %w", readErr)
-			}
-			return bodyBytes, renderRes.ContentType, nil
+	// Try the rendered-fetch fallback if available on fetch error (blocks, 404, or connection errors).
+	if renderer, ok := ex.(scraper.HTMLRenderer); ok {
+		slog.Info("HTTP fetch blocked or failed; falling back to rendered-fetch",
+			"url", rawURL, "err", err)
+		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL)
+		if renderErr != nil {
+			// Preserve the render error, but wrap with context.
+			return nil, "", fmt.Errorf("rendered-fetch fallback: %w", renderErr)
 		}
+		bodyBytes, readErr := io.ReadAll(renderRes.Body)
+		_ = renderRes.Body.Close()
+		if readErr != nil {
+			return nil, "", fmt.Errorf("reading rendered body: %w", readErr)
+		}
+		return bodyBytes, renderRes.ContentType, nil
 	}
 
 	return nil, "", fmt.Errorf("fetch: %w", err)
