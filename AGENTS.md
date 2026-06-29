@@ -31,7 +31,7 @@ URL inline; the canonical content is already extracted there.
 - `.rules/static-assets.md` — `//go:embed` for text/prompts/templates
 - `.rules/sql.md` — SQL in `.sql` files, `//go:embed`, golang-migrate, River tables
 - `.rules/api.md` — Go 1.22+ method+path routing, plan before changing contracts
-- `.rules/testing.md` — TDD, `make check`, stubs not mocks, per-feature tests, external-HTTP base URL var
+- `.rules/testing.md` — TDD, `make test`, stubs not mocks, per-feature tests, external-HTTP base URL var
 - `.rules/testing-extras.md` — test double naming, shadowing, package size
 - `.rules/usage.md` — usage messages
 
@@ -56,6 +56,10 @@ rather than inlining it in this file.
 ## Git Workflow
 
 - Always pull the latest changes from `main` (`git pull origin main`) before starting a new task or creating a branch.
+
+## Verification
+
+- **Run `make test` after any code change** — it runs `golangci-lint` then `go test ./... -count=1 -v`. Do not skip it for docs/markdown-only edits, but any `.go` file, migration, or `Makefile` change must pass `make test` before being considered done. If a test fails due to an environment issue (e.g. missing Postgres), call it out explicitly rather than working around it.
 
 ## Go version upgrades
 

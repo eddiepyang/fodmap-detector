@@ -280,7 +280,7 @@ func StoreMenu(
 // ToMenuItems converts a MenuExtractionResult to []search.MenuItem, embedding each item's text vector.
 func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawURL string, embedder search.Embedder) ([]search.MenuItem, error) {
 	businessID := scraper.BusinessID(rawURL)
-	section := scraper.MenuSection(rawURL)
+	urlSection := scraper.MenuSection(rawURL) // fallback when the extractor didn't provide one
 	now := result.ScrapedAtUTC
 
 	texts := make([]string, len(result.Items))
@@ -322,6 +322,16 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 	for i, entry := range result.Items {
 		idKey := businessID + entry.DishName
 		id := uuid.NewSHA1(menuCollectionNS, []byte(idKey)).String()
+		// Prefer the section name extracted by the structuring step; fall
+		// back to the URL-derived section when the extractor didn't provide one.
+		section := entry.Section
+		if section == "" {
+			section = urlSection
+		}
+		mods := make([]search.Modifier, len(entry.Modifiers))
+		for j, m := range entry.Modifiers {
+			mods[j] = search.Modifier{Name: m.Name, Price: m.Price}
+		}
 		items[i] = search.MenuItem{
 			MenuItemID:         id,
 			BusinessID:         businessID,
@@ -331,8 +341,10 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 			State:              result.State,
 			DishName:           entry.DishName,
 			Description:        entry.Description,
+			Price:              entry.Price,
 			StatedIngredients:  entry.StatedIngredients,
 			HasFullIngredients: entry.HasFullIngredients,
+			Modifiers:          mods,
 			SourceURL:          rawURL,
 			Address:            result.Address,
 			PhoneNumber:        result.PhoneNumber,

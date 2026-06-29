@@ -295,10 +295,50 @@ func TestExtractJSONLD_MenuType(t *testing.T) {
 	assert.True(t, ok)
 	assert.Len(t, items, 2)
 	assert.Equal(t, "Bruschetta", items[0].DishName)
-	assert.True(t, items[0].HasFullIngredients)
+	// has_full_ingredients is true only when ingredients are literally
+	// listed, not when a description is present (safety signal — design §8.2).
+	assert.False(t, items[0].HasFullIngredients)
 	assert.Equal(t, "Calamari", items[1].DishName)
 	assert.False(t, items[1].HasFullIngredients)
 	_ = meta
+}
+
+func TestExtractJSONLD_PriceAndIngredients(t *testing.T) {
+	htmlBody := `<html><head>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Menu",
+  "hasMenuSection": [{
+    "name": "Mains",
+    "hasMenuItem": [
+      {"@type": "MenuItem", "name": "Pasta", "description": "Fresh pasta", "offers": {"price": "14.50"}, "ingredients": ["flour", "egg"]},
+      {"@type": "MenuItem", "name": "Salad", "description": "Green salad", "offers": {"price": 9}}
+    ]
+  }]
+}
+</script>
+</head><body></body></html>`
+
+	items, _, ok := ExtractJSONLD(strings.NewReader(htmlBody))
+	assert.True(t, ok)
+	assert.Len(t, items, 2)
+
+	// String price parsed to float.
+	assert.Equal(t, "Pasta", items[0].DishName)
+	if items[0].Price == nil || *items[0].Price != 14.50 {
+		t.Errorf("item[0].Price = %v, want 14.50", items[0].Price)
+	}
+	// has_full_ingredients true only when ingredients explicitly listed.
+	assert.True(t, items[0].HasFullIngredients)
+
+	// Numeric price handled directly.
+	assert.Equal(t, "Salad", items[1].DishName)
+	if items[1].Price == nil || *items[1].Price != 9.0 {
+		t.Errorf("item[1].Price = %v, want 9.0", items[1].Price)
+	}
+	// No ingredients list → false, even though description is non-empty.
+	assert.False(t, items[1].HasFullIngredients)
 }
 
 func TestExtractJSONLD_RestaurantWithMenu(t *testing.T) {

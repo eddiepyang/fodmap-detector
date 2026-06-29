@@ -199,8 +199,10 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `state` | `TEXT` | |
 | `dish_name` | `TEXT` | `NOT NULL` |
 | `description` | `TEXT` | |
+| `price` | `NUMERIC(10,2)` | |
 | `stated_ingredients` | `TEXT[]` | |
 | `has_full_ingredients` | `BOOLEAN` | `NOT NULL DEFAULT FALSE` |
+| `modifiers` | `JSONB` | `DEFAULT '[]'::jsonb` |
 | `source_url` | `TEXT` | |
 | `address` | `TEXT` | |
 | `phone_number` | `TEXT` | |

@@ -38,13 +38,23 @@ const (
 	minPDFTextChars = 200
 )
 
+// Modifier is a size, add-on, choice, or variant of a menu item with its own
+// price. Only literally-present data is recorded — never inferred.
+type Modifier struct {
+	Name  string   `json:"name"`
+	Price *float64 `json:"price,omitempty"`
+}
+
 // MenuEntry holds a single extracted menu item. Only ingredients literally
 // stated on the menu are recorded — never inferred.
 type MenuEntry struct {
-	DishName           string   `json:"dish"`
-	Description        string   `json:"description"`
-	StatedIngredients  []string `json:"stated_ingredients"`
-	HasFullIngredients bool     `json:"has_full_ingredients"`
+	DishName           string     `json:"dish"`
+	Description        string     `json:"description"`
+	Price              *float64   `json:"price,omitempty"`
+	Section            string     `json:"section,omitempty"`
+	StatedIngredients  []string   `json:"stated_ingredients"`
+	HasFullIngredients bool       `json:"has_full_ingredients"`
+	Modifiers          []Modifier `json:"modifiers,omitempty"`
 }
 
 // MenuExtractionResult is the structured output of the scrape pipeline.

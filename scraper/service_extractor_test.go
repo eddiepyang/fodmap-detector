@@ -146,6 +146,13 @@ func TestServiceExtractor_ExtractPDF_Orchestration(t *testing.T) {
 		t.Errorf("has_full_ingredients mapping wrong: %v, %v",
 			res.Items[0].HasFullIngredients, res.Items[1].HasFullIngredients)
 	}
+	// Section names from the MenuDocument are carried into each item.
+	if res.Items[0].Section != "Appetizers" {
+		t.Errorf("item[0].Section = %q, want %q", res.Items[0].Section, "Appetizers")
+	}
+	if res.Items[1].Section != "Mains" {
+		t.Errorf("item[1].Section = %q, want %q", res.Items[1].Section, "Mains")
+	}
 	if res.RestaurantName != "Test Pizzeria" || res.City != "Austin" || res.State != "TX" {
 		t.Errorf("restaurant meta: %+v", res)
 	}
@@ -374,6 +381,48 @@ func TestMapStructureToResult_NilIngredientsBecomesEmpty(t *testing.T) {
 	}
 	if res.Items[0].StatedIngredients == nil {
 		t.Error("nil ingredients should become non-nil empty slice")
+	}
+}
+
+func TestMapStructureToResult_PriceAndModifiers(t *testing.T) {
+	price := 12.5
+	modPrice := 3.0
+	res := mapStructureToResult(structureResult{
+		Menu: menuDocument{
+			Sections: []menuSection{{
+				Name: "Mains",
+				Items: []menuItem{{
+					Name:               "Burger",
+					Description:        "Beef patty",
+					Price:              &price,
+					StatedIngredients:  []string{"beef", "bun"},
+					HasFullIngredients: true,
+					Modifiers: []serviceModifier{
+						{Name: "Large", Price: &modPrice},
+						{Name: "Extra cheese"},
+					},
+				}},
+			}},
+		},
+	})
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	item := res.Items[0]
+	if item.Price == nil || *item.Price != 12.5 {
+		t.Errorf("Price = %v, want 12.5", item.Price)
+	}
+	if item.Section != "Mains" {
+		t.Errorf("Section = %q, want %q", item.Section, "Mains")
+	}
+	if len(item.Modifiers) != 2 {
+		t.Fatalf("Modifiers = %d, want 2", len(item.Modifiers))
+	}
+	if item.Modifiers[0].Name != "Large" || item.Modifiers[0].Price == nil || *item.Modifiers[0].Price != 3.0 {
+		t.Errorf("modifier[0] = %+v", item.Modifiers[0])
+	}
+	if item.Modifiers[1].Name != "Extra cheese" || item.Modifiers[1].Price != nil {
+		t.Errorf("modifier[1] = %+v", item.Modifiers[1])
 	}
 }
 

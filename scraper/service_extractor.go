@@ -113,11 +113,18 @@ type menuSection struct {
 	Items []menuItem `json:"items"`
 }
 
+type serviceModifier struct {
+	Name  string   `json:"name"`
+	Price *float64 `json:"price,omitempty"`
+}
+
 type menuItem struct {
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	StatedIngredients  []string `json:"stated_ingredients"`
-	HasFullIngredients bool     `json:"has_full_ingredients"`
+	Name               string            `json:"name"`
+	Description        string            `json:"description"`
+	Price              *float64          `json:"price,omitempty"`
+	StatedIngredients  []string          `json:"stated_ingredients"`
+	HasFullIngredients bool              `json:"has_full_ingredients"`
+	Modifiers          []serviceModifier `json:"modifiers,omitempty"`
 }
 
 type menuDocument struct {
@@ -275,7 +282,9 @@ func pageBlob(p extractPageResult) string {
 }
 
 // mapStructureToResult flattens the service MenuDocument into the detector's
-// flat MenuExtractionResult.
+// flat MenuExtractionResult. The section name from each MenuSection is
+// carried into each item's Section field so multi-section menus preserve
+// their structure (the storage layer tags each item with its section).
 func mapStructureToResult(s structureResult) MenuExtractionResult {
 	result := MenuExtractionResult{
 		RestaurantName: s.Menu.RestaurantName,
@@ -288,11 +297,18 @@ func mapStructureToResult(s structureResult) MenuExtractionResult {
 			if ingredients == nil {
 				ingredients = []string{}
 			}
+			mods := make([]Modifier, len(item.Modifiers))
+			for i, m := range item.Modifiers {
+				mods[i] = Modifier(m)
+			}
 			result.Items = append(result.Items, MenuEntry{
 				DishName:           item.Name,
 				Description:        item.Description,
+				Price:              item.Price,
+				Section:            sec.Name,
 				StatedIngredients:  ingredients,
 				HasFullIngredients: item.HasFullIngredients,
+				Modifiers:          mods,
 			})
 		}
 	}
