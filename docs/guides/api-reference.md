@@ -48,6 +48,14 @@ Default port is `8081`.
 | `POST` | `/api/v1/admin/users/{id}/reset-password` | JWT (Admin) | Generate temporary password (bcrypt hash) |
 | `GET` | `/api/v1/admin/conversations` | JWT (Admin) | List all conversations across the system |
 | `GET` | `/api/v1/admin/conversations/{id}` | JWT (Admin) | Inspect a conversation's messages |
+| `GET` | `/api/v1/admin/ingredients` | JWT (Admin) | List ingredients with filters & pagination |
+| `GET` | `/api/v1/admin/ingredients/stats` | JWT (Admin) | Aggregate counts by FODMAP level & group |
+| `GET` | `/api/v1/admin/ingredients/search-test` | JWT (Admin) | Run semantic search test on ingredient catalog |
+| `GET` | `/api/v1/admin/ingredients/{name}` | JWT (Admin) | Get a single ingredient by name |
+| `POST` | `/api/v1/admin/ingredients` | JWT (Admin) | Create a new ingredient (no duplicates) |
+| `PUT` | `/api/v1/admin/ingredients/{name}` | JWT (Admin) | Update an existing ingredient |
+| `DELETE` | `/api/v1/admin/ingredients/{name}` | JWT (Admin) | Delete an ingredient from the catalog |
+| `POST` | `/api/v1/admin/ingredients/reseed` | JWT (Admin) | Re-seed the catalog from the default database |
 | `GET` | `/api/v1/admin/analytics/overview` | JWT (Admin) | Fetch total, active, suspended users, and signups |
 | `GET` | `/api/v1/admin/analytics/activity` | JWT (Admin) | Fetch daily conversation activity stats |
 
@@ -148,6 +156,103 @@ curl "localhost:8081/api/v1/search/reviews/pad%20thai?alpha=0.2"
 
 On Weaviate, hybrid search uses the native `hybrid` operator with `relativeScoreFusion`. On Pinecone, BM25 re-ranking is applied in-process against the review `text` metadata field and blended with the dense vector score.
 
-See [search.md](search.md) for full API reference and design decisions.
+See [search.md](search.md) for design decisions.
+
+---
+
+#### Admin Endpoints
+
+All admin endpoints require a JWT token belonging to a user with the `admin` role. The server validates the token and re-verifies the user's role and active status in the database on every call.
+
+##### User & Conversation Administration
+
+```sh
+# List users with search, status filter, and pagination
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/admin/users?search=alex&status=active&page=1&limit=20"
+# → {"users": [...], "total": 1, "page": 1, "limit": 20}
+
+# Get detailed user info, message counts, and saved dietary profile
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/users/user_uuid_here
+
+# Toggle user status (active / suspended)
+curl -X PUT -H 'Authorization: Bearer <admin_access_token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"status": "suspended"}' \
+  localhost:8081/api/v1/admin/users/user_uuid_here/status
+# → {"message": "status updated successfully"}
+
+# Permanently delete a user account, cascading delete to all conversations and messages
+curl -X DELETE -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/users/user_uuid_here
+# → {"message": "user deleted permanently"}
+
+# Reset a user's password, returning a new random plaintext temporary password
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/users/user_uuid_here/reset-password
+# → {"temporary_password": "..."}
+
+# List all conversations in the system
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/admin/conversations?search=celiac&page=1&limit=20"
+
+# Get conversation transcript messages
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/conversations/conv_uuid_here
+```
+
+##### Ingredient Catalog Administration
+
+```sh
+# List catalog ingredients with filters and pagination
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/admin/ingredients?search=garlic&level=high&group=fructan&page=1&limit=20"
+
+# Get catalog stats (total counts, counts by FODMAP level and group)
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/ingredients/stats
+# → {"total_count": 102, "level_counts": {"high": 45, ...}, "group_counts": {...}}
+
+# Create a new ingredient entry in the catalog (auto-syncs to search index)
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredient": "shallot", "level": "high", "groups": ["fructan"], "notes": "High in fructans", "substitutions": ["chives", "green onion tops"]}' \
+  localhost:8081/api/v1/admin/ingredients
+# → returns 201 Created on success; returns 409 Conflict if duplicate
+
+# Update an existing ingredient (name is immutable, other fields can be updated)
+curl -X PUT -H 'Authorization: Bearer <admin_access_token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredient": "shallot", "level": "moderate", "groups": ["fructan"], "notes": "Moderate in small amounts", "substitutions": ["chives"]}' \
+  localhost:8081/api/v1/admin/ingredients/shallot
+
+# Delete an ingredient from the catalog
+curl -X DELETE -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/ingredients/shallot
+# → {"message": "ingredient deleted"}
+
+# Test-run a semantic search query against the ingredient catalog
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/admin/ingredients/search-test?q=onion"
+# → returns matched ingredient name, details, and certainty score
+
+# Re-seed the catalog database from the static Go dataset (FodmapDB) and rebuild index
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/ingredients/reseed
+```
+
+##### Analytics Overview & Activity
+
+```sh
+# Fetch system user analytics overview (total, active, suspended users, and recent signups)
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/admin/analytics/overview
+# → {"total_users": 15, "active_users": 14, "suspended_users": 1, ...}
+
+# Fetch daily conversation activity stats (defaults to past 30 days, max 90)
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/admin/analytics/activity?days=30"
+```
 
 

@@ -1,6 +1,6 @@
 # Regulatory Tracking Pipeline Plan
 
-**Status:** Completed
+**Status:** Completed — implemented as `menutracking` package
 
 ## Context
 

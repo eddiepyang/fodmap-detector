@@ -1,6 +1,6 @@
 # Plan: Restaurant Menu Discovery & Scraping Pipeline
 
-**Status:** Planning — not yet implemented.
+**Status:** In Progress — NYC OpenData → Gemini web-search discovery → River scrape pipeline (Astoria+LIC scope, Avro bronze/silver layer)
 
 ## Context
 

@@ -30,4 +30,5 @@ Running on `:8765`, responsible for AI structuring and heavy JS rendering:
 
 ## See also
 
+- [data-model.md](data-model.md) — core data structures and flowchart of the fallback tiers.
 - [scrape-diagnostics.md](scrape-diagnostics.md) — operational runbook for tracing a scrape from outcome back to root cause (status/tier queries, bronze/silver inspection, cascade logs, cross-service `request_id` correlation).
