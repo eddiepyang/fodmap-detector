@@ -10,19 +10,33 @@ import (
 )
 
 type NYCRestaurantRecord struct {
-	CAMIS              string
-	DBA                string
-	Boro               string
-	Building           string
-	Street             string
-	Zipcode            string
-	Phone              string
-	CuisineDescription string
-	InspectionDate     string
-	Latitude           float64
-	Longitude          float64
-	NTA                string
-	RecordDate         string
+	CAMIS                string
+	DBA                  string
+	Boro                 string
+	Building             string
+	Street               string
+	Zipcode              string
+	Phone                string
+	CuisineDescription   string
+	InspectionDate       string
+	Action               string
+	ViolationCode        string
+	ViolationDescription string
+	CriticalFlag         string
+	Score                string
+	Grade                string
+	GradeDate            string
+	RecordDate           string
+	InspectionType       string
+	Latitude             float64
+	Longitude            float64
+	CommunityBoard       string
+	CouncilDistrict      string
+	CensusTract          string
+	BIN                  string
+	BBL                  string
+	NTA                  string
+	Location             string
 }
 
 func parseDate(dateStr string) time.Time {
@@ -107,19 +121,33 @@ func ParseNYCCSV(r io.Reader) ([]NYCRestaurantRecord, error) {
 		}
 
 		rec := NYCRestaurantRecord{
-			CAMIS:              camis,
-			DBA:                getCol("dba"),
-			Boro:               boro,
-			Building:           getCol("building"),
-			Street:             getCol("street"),
-			Zipcode:            getCol("zipcode"),
-			Phone:              getCol("phone"),
-			CuisineDescription: getCol("cuisine_description"),
-			InspectionDate:     getCol("inspection_date"),
-			Latitude:           lat,
-			Longitude:          lon,
-			NTA:                getCol("nta"),
-			RecordDate:         getCol("record_date"),
+			CAMIS:                camis,
+			DBA:                  getCol("dba"),
+			Boro:                 boro,
+			Building:             getCol("building"),
+			Street:               getCol("street"),
+			Zipcode:              getCol("zipcode"),
+			Phone:                getCol("phone"),
+			CuisineDescription:   getCol("cuisine_description"),
+			InspectionDate:       getCol("inspection_date"),
+			Action:               getCol("action"),
+			ViolationCode:        getCol("violation_code"),
+			ViolationDescription: getCol("violation_description"),
+			CriticalFlag:         getCol("critical_flag"),
+			Score:                getCol("score"),
+			Grade:                getCol("grade"),
+			GradeDate:            getCol("grade_date"),
+			RecordDate:           getCol("record_date"),
+			InspectionType:       getCol("inspection_type"),
+			Latitude:             lat,
+			Longitude:            lon,
+			CommunityBoard:       getCol("community_board"),
+			CouncilDistrict:      getCol("council_district"),
+			CensusTract:          getCol("census_tract"),
+			BIN:                  getCol("bin"),
+			BBL:                  getCol("bbl"),
+			NTA:                  getCol("nta"),
+			Location:             getCol("location"),
 		}
 
 		if existing, ok := dedup[camis]; ok {

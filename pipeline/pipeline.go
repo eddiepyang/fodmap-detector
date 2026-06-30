@@ -253,7 +253,7 @@ func ExtractMenu(
 				if renderer, ok := ex.(scraper.HTMLRenderer); ok {
 					slog.Info("text pass empty; JS shell re-cascade via rendered-fetch",
 						"url", rawURL, "static_runes", len([]rune(strings.TrimSpace(pageText))))
-		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true})
+					renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true})
 					if renderErr != nil {
 						slog.Warn("JS shell re-cascade: rendered-fetch failed",
 							"url", rawURL, "error", renderErr)

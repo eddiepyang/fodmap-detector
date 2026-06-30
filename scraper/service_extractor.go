@@ -477,8 +477,8 @@ type HTMLRenderer interface {
 
 // renderFetchRequest is the JSON body for POST /v1/webagent/fetch.
 type renderFetchRequest struct {
-	URL          string `json:"url"`
-	NetworkIdle  bool   `json:"network_idle"`
+	URL         string `json:"url"`
+	NetworkIdle bool   `json:"network_idle"`
 }
 
 // renderFetchResponse mirrors the Python response model for /v1/webagent/fetch.

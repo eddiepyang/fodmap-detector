@@ -62,7 +62,7 @@ embed-backend: "ollama"
 
 # Target LLM for extraction (HTML-to-markdown structured parsing)
 llm-url: "http://localhost:8000/v1"
-llm-model: "qwen3-vl"
+llm-model: "mlx-community/Qwen3-VL-8B-Instruct-8bit"
 llm-api-key: ""
 llm-reasoning-effort: "none" # none | low | medium | high (none = fastest, cost-optimal for Gemini)
 

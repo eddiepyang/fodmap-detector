@@ -95,6 +95,19 @@ func init() {
 	retryAllFailedCmd.Flags().Bool("dry-run", false, "List the restaurants that would be retried without enqueuing")
 	restaurantsCmd.AddCommand(retryAllFailedCmd)
 
+	replayRestaurantsCmd := &cobra.Command{
+		Use:   "replay-restaurants",
+		Short: "Replay restaurant upserts and discovery jobs from Avro bronze layer",
+		RunE:  runReplayRestaurants,
+	}
+	replayRestaurantsCmd.Flags().String("avro-file", "", "Path to a specific NYC restaurant .avro file in the bronze layer")
+	replayRestaurantsCmd.Flags().String("bronze-dir", "data/bronze/restaurants", "Directory to scan for .avro files when --avro-file is not set")
+	replayRestaurantsCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
+	replayRestaurantsCmd.Flags().Int("limit", 0, "Limit the number of records to replay across all files (0 = all)")
+	replayRestaurantsCmd.Flags().Int("offset", 0, "Offset the number of records to replay across all files")
+	replayRestaurantsCmd.Flags().Bool("skip-discovery", false, "Skip enqueueing discovery jobs")
+	restaurantsCmd.AddCommand(replayRestaurantsCmd)
+
 	replayMenusCmd := &cobra.Command{
 		Use:   "replay-menus",
 		Short: "Re-hydrate the menu index from Avro silver layer",
@@ -639,6 +652,141 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 		total, scraped, discovered, failed)
 	if dryRun {
 		fmt.Println("(dry-run: no jobs were actually enqueued)")
+	}
+	return nil
+}
+
+// runReplayRestaurants replays the restaurant upsert + discovery-enqueue flow
+// from NYC restaurant records persisted in the bronze Avro layer, skipping the
+// NYC OpenData fetch. It mirrors the tail of runImportRestaurants: read records,
+// upsert each one, and (optionally) enqueue a DiscoverMenuURL job.
+func runReplayRestaurants(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	avroFile, _ := cmd.Flags().GetString("avro-file")
+	bronzeDir, _ := cmd.Flags().GetString("bronze-dir")
+	dsn, _ := cmd.Flags().GetString("postgres-dsn")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	skipDiscovery, _ := cmd.Flags().GetBool("skip-discovery")
+
+	if dsn == "" {
+		dsn = viper.GetString("POSTGRES_DSN")
+	}
+	if dsn == "" {
+		return fmt.Errorf("must specify --postgres-dsn")
+	}
+
+	var files []string
+	if avroFile != "" {
+		if _, err := os.Stat(avroFile); err != nil {
+			return fmt.Errorf("stat avro file: %w", err)
+		}
+		files = []string{avroFile}
+	} else {
+		if _, err := os.Stat(bronzeDir); err != nil {
+			return fmt.Errorf("stat bronze dir: %w", err)
+		}
+		err := filepath.WalkDir(bronzeDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && filepath.Ext(path) == ".avro" {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("walk bronze dir: %w", err)
+		}
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no .avro files found")
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to db: %w", err)
+	}
+	defer pool.Close()
+
+	store := menusearch.NewStore(pool)
+
+	var riverClient *river.Client[pgx.Tx]
+	if !skipDiscovery {
+		riverClient, err = newRiverClient(pool, &river.Config{})
+		if err != nil {
+			return fmt.Errorf("create river client: %w", err)
+		}
+	}
+
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	fmt.Printf("Replaying %d avro file(s)\n", len(files))
+
+	// Read all records first so --limit/--offset apply globally across files,
+	// not per-file (offset=10 would otherwise skip the first 10 of every file).
+	var allRecords []menusearch.NYCRestaurantRecord
+	for _, file := range files {
+		fmt.Printf("Reading %s\n", file)
+		records, err := menusearch.ReadNYCRestaurantAvro(file)
+		if err != nil {
+			slog.Error("failed to read avro file", "path", file, "error", err)
+			continue
+		}
+		fmt.Printf("  -> %d records\n", len(records))
+		allRecords = append(allRecords, records...)
+	}
+
+	records := paginateRecords(allRecords, limit, offset)
+	totalRecords := len(records)
+	var totalUpserted, totalEnqueued int
+
+	for _, rec := range records {
+		err := store.Upsert(ctx, server.Restaurant{
+			CAMIS:     rec.CAMIS,
+			DBA:       rec.DBA,
+			Boro:      strPtr(rec.Boro),
+			Building:  strPtr(rec.Building),
+			Street:    strPtr(rec.Street),
+			Zipcode:   strPtr(rec.Zipcode),
+			Phone:     strPtr(rec.Phone),
+			Cuisine:   strPtr(rec.CuisineDescription),
+			Latitude:  floatPtr(rec.Latitude),
+			Longitude: floatPtr(rec.Longitude),
+			NTA:       strPtr(rec.NTA),
+			Status:    menusearch.StatusPendingDiscovery,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to upsert %s: %v\n", rec.CAMIS, err)
+			continue
+		}
+		totalUpserted++
+
+		if !skipDiscovery {
+			_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
+				CAMIS:    rec.CAMIS,
+				DBA:      rec.DBA,
+				Building: rec.Building,
+				Street:   rec.Street,
+				Boro:     rec.Boro,
+				Zipcode:  rec.Zipcode,
+				Attempt:  1,
+			}, &river.InsertOpts{MaxAttempts: maxAttempts})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to enqueue discovery for %s: %v\n", rec.CAMIS, err)
+				continue
+			}
+			totalEnqueued++
+		}
+	}
+
+	fmt.Printf("Replay summary: %d records read, %d upserted, %d discovery jobs enqueued\n",
+		totalRecords, totalUpserted, totalEnqueued)
+	if skipDiscovery {
+		fmt.Println("(--skip-discovery: no discovery jobs were enqueued)")
 	}
 	return nil
 }
