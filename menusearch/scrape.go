@@ -143,7 +143,7 @@ func (w *ScrapeMenuWorker) tryDirectoryExpansion(
 			logger.Info("directory expansion: no rendered HTML available and extractor is not an HTMLRenderer; skipping expansion")
 			return false, nil
 		}
-		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, args.URL)
+		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, args.URL, scraper.RenderOptions{})
 		if renderErr != nil {
 			logger.Warn("directory expansion: FetchRenderedHTML failed; skipping expansion", "error", renderErr)
 			return false, nil

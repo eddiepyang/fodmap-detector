@@ -128,7 +128,16 @@ if [ -n "$CONFLICTING_PID" ]; then
     kill -9 $CONFLICTING_PID 2>/dev/null || true
     sleep 1
 fi
-ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" ADMIN_EMAIL="admin@example.com" go run . serve &
+
+# Always rebuild the binary so the running server reflects the current source.
+# `go run` uses the build cache and may skip recompilation when the cached
+# binary appears up-to-date; building an explicit binary first guarantees a
+# fresh compile on every start.
+BINARY="$(mktemp -t fodmap-detector-server.XXXXXX)"
+trap 'rm -f "$BINARY"' EXIT
+echo "    Building server binary..."
+go build -o "$BINARY" . || { echo "    ERROR: go build failed"; exit 1; }
+ENABLE_PIPELINE=true WEAVIATE=localhost:8090 POSTGRES_DSN="$POSTGRES_DSN" ADMIN_EMAIL="admin@example.com" "$BINARY" serve &
 SERVER_PID=$!
 
 echo ""

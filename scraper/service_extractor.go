@@ -403,6 +403,18 @@ func (s *ServiceExtractor) structure(ctx context.Context, mergedText string) (st
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return res, fmt.Errorf("decode structure response: %w", err)
 	}
+	itemCount := 0
+	for _, sec := range res.Menu.Sections {
+		itemCount += len(sec.Items)
+	}
+	slog.Info("service extractions:structure response",
+		"backend", res.Backend,
+		"schema_revision", res.SchemaRevision,
+		"sections", len(res.Menu.Sections),
+		"items", itemCount,
+		"restaurant", res.Menu.RestaurantName,
+		"input_chars", len(mergedText),
+	)
 	return res, nil
 }
 
@@ -444,18 +456,29 @@ func decodeServiceError(resp *http.Response) error {
 
 // ── webagent rendered-fetch (anti-scraping bypass) ─────────────────────────
 
+// RenderOptions controls rendered-fetch behavior.
+type RenderOptions struct {
+	// NetworkIdle waits for networkidle after domcontentloaded before
+	// serializing content. Needed for JS widgets (e.g. Wix
+	// restaurant-menus-showcase-ooi) that fetch menu data via XHR after the
+	// DOM is ready. Best-effort: if networkidle never fires, returns whatever
+	// content is available.
+	NetworkIdle bool
+}
+
 // HTMLRenderer is implemented by extractors that can render an arbitrary URL
 // in a headless browser and return the HTML. ServiceExtractor implements it.
 // The capability is checked at runtime with a type assertion so the pipeline
 // can fall back gracefully when the extractor is nil or the service is not
 // configured.
 type HTMLRenderer interface {
-	FetchRenderedHTML(ctx context.Context, rawURL string) (FetchResult, error)
+	FetchRenderedHTML(ctx context.Context, rawURL string, opts RenderOptions) (FetchResult, error)
 }
 
 // renderFetchRequest is the JSON body for POST /v1/webagent/fetch.
 type renderFetchRequest struct {
-	URL string `json:"url"`
+	URL          string `json:"url"`
+	NetworkIdle  bool   `json:"network_idle"`
 }
 
 // renderFetchResponse mirrors the Python response model for /v1/webagent/fetch.
@@ -470,8 +493,8 @@ type renderFetchResponse struct {
 // pageClient timeout. Errors from the Python service (BrowserBusy 503,
 // FetchTimeout 504, WafBlocked 503) surface as *serviceError so callers can
 // apply retryable-error classification via IsBackendUnavailable.
-func (s *ServiceExtractor) FetchRenderedHTML(ctx context.Context, rawURL string) (FetchResult, error) {
-	body, err := json.Marshal(renderFetchRequest{URL: rawURL})
+func (s *ServiceExtractor) FetchRenderedHTML(ctx context.Context, rawURL string, opts RenderOptions) (FetchResult, error) {
+	body, err := json.Marshal(renderFetchRequest{URL: rawURL, NetworkIdle: opts.NetworkIdle})
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("marshal render request: %w", err)
 	}

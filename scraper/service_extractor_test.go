@@ -692,7 +692,7 @@ func TestServiceExtractor_FetchRenderedHTML_Success(t *testing.T) {
 	defer srv.Close()
 
 	se := newTestServiceExtractor(t, srv.URL)
-	res, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	res, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu", RenderOptions{})
 	if err != nil {
 		t.Fatalf("FetchRenderedHTML: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestServiceExtractor_FetchRenderedHTML_503_IsRenderTransient(t *testing.T) 
 	defer srv.Close()
 
 	se := newTestServiceExtractor(t, srv.URL)
-	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu", RenderOptions{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -737,7 +737,7 @@ func TestServiceExtractor_FetchRenderedHTML_504_IsRenderTransient(t *testing.T) 
 	defer srv.Close()
 
 	se := newTestServiceExtractor(t, srv.URL)
-	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu")
+	_, err := se.FetchRenderedHTML(context.Background(), "https://example.com/menu", RenderOptions{})
 	if err == nil {
 		t.Fatal("expected error")
 	}

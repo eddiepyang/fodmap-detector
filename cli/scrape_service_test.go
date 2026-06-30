@@ -313,41 +313,83 @@ func (f *spaShellFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResul
 }
 
 func TestRunScrapeWith_SpaShellRoutesToWebagent(t *testing.T) {
-	// Regression: a Wix-style SPA shell that passes the old tooShort<200 gate
-	// (it has ~320 runes of visible boilerplate) must still route to the
-	// webagent JS path via the IsJSShell detector. Before the IsJSShell check
-	// was added, this fell through to the LLM text pass and returned 0 items.
-	js := &jsRendererStub{
-		jsResult: scraper.MenuExtractionResult{
-			RestaurantName: "3Greeks Grill",
-			Items: []scraper.MenuEntry{
-				{DishName: "Gyro", StatedIngredients: []string{}},
-				{DishName: "Souvlaki", StatedIngredients: []string{}},
-			},
-		},
+	// A Wix-style SPA shell (IsJSShell) with a webagentAdapter set must NOT
+	// preemptively route to ScrapeJS — that would skip the text pass and risk
+	// dilution on pages that have real static content. Instead the text pass
+	// runs first (returns 0 items for the shell), then the post-empty
+	// re-cascade fires via FetchRenderedHTML, which returns hydrated HTML
+	// that the LLM extracts items from.
+	// ScrapeJS must NOT be called — the re-cascade uses the generic
+	// HTMLRenderer path, not the per-site adapter.
+	ex := &spaShellRendererExtractor{
+		renderHTML: hydratedMenuHTML,
 	}
 	err := runScrapeWith(
 		context.Background(),
 		"https://www.3greeksgrill.com",
 		&spaShellFetcher{},
-		js,
+		ex,
 		&stubMenuStore{},
 		stubEmbedder{},
 		false,         // enableVision
 		true,          // enableJSRender
 		false,         // usePdftotext
-		"site/target", // webagentAdapter
+		"site/target", // webagentAdapter — must NOT trigger preemptive ScrapeJS
 	)
 	if err != nil {
 		t.Fatalf("runScrapeWith spa shell: %v", err)
 	}
-	if js.scrapeCalls != 1 {
-		t.Errorf("ScrapeJS called %d times; want 1 (SPA shell must route to webagent)", js.scrapeCalls)
+	if ex.extractCalls != 2 {
+		t.Errorf("Extract called %d times; want 2 (static shell → 0, then hydrated HTML → items)",
+			ex.extractCalls)
 	}
-	if js.extractCalls != 0 {
-		t.Errorf("ex.Extract called %d times; want 0 (webagent path skips the LLM pass)",
-			js.extractCalls)
+	if ex.renderCalled {
+		// renderCalled is fine — the re-cascade uses FetchRenderedHTML
+	} else {
+		t.Error("FetchRenderedHTML was not called (post-empty re-cascade must run)")
 	}
+}
+
+// hydratedMenuHTML is the rendered DOM after JS runs — a real menu appeared.
+const hydratedMenuHTML = `<html><body><h1>3Greeks Grill</h1><h2>Appetizers</h2><ul>` +
+	`<li>Gyro $5</li><li>Souvlaki $6</li></ul></body></html>`
+
+// spaShellRendererExtractor implements scraper.Extractor + scraper.HTMLRenderer
+// + scraper.JSRenderer for the SPA-shell re-cascade test. Extract returns 0
+// items on the first call (static shell) and real items on the second (hydrated
+// HTML). ScrapeJS records if it was called (it must NOT be for a JS shell).
+type spaShellRendererExtractor struct {
+	extractCalls int
+	renderCalled bool
+	scrapeCalled bool
+	renderHTML   string
+}
+
+func (e *spaShellRendererExtractor) Extract(_ context.Context, text string) (scraper.MenuExtractionResult, error) {
+	e.extractCalls++
+	if e.extractCalls == 1 {
+		return scraper.MenuExtractionResult{}, nil // static shell → 0 items
+	}
+	return scraper.MenuExtractionResult{
+		RestaurantName: "3Greeks Grill",
+		Items: []scraper.MenuEntry{
+			{DishName: "Gyro", StatedIngredients: []string{}},
+			{DishName: "Souvlaki", StatedIngredients: []string{}},
+		},
+	}, nil
+}
+
+func (e *spaShellRendererExtractor) FetchRenderedHTML(_ context.Context, _ string, _ scraper.RenderOptions) (scraper.FetchResult, error) {
+	e.renderCalled = true
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(e.renderHTML))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func (e *spaShellRendererExtractor) ScrapeJS(_ context.Context, _ string, _ map[string]any) (scraper.MenuExtractionResult, error) {
+	e.scrapeCalled = true
+	return scraper.MenuExtractionResult{}, nil
 }
 
 func TestRunScrapeWith_SpaShellWithoutAdapterFallsBackToExtract(t *testing.T) {

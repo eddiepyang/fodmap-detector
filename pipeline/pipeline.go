@@ -55,7 +55,7 @@ func fetchWithFallback(
 	if renderer, ok := ex.(scraper.HTMLRenderer); ok {
 		slog.Info("HTTP fetch blocked or failed; falling back to rendered-fetch",
 			"url", rawURL, "err", err)
-		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL)
+		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{})
 		if renderErr != nil {
 			// Preserve the render error, but wrap with context.
 			return nil, "", fmt.Errorf("rendered-fetch fallback: %w", renderErr)
@@ -117,6 +117,7 @@ func ExtractMenu(
 		var pageText string
 		var pdfResult *scraper.MenuExtractionResult
 		var menuImgCandidates []string
+		var jsShell bool
 
 		if strings.Contains(ct, "pdf") {
 			tier = TierPDF
@@ -145,12 +146,16 @@ func ExtractMenu(
 			}
 
 			tooShort := len([]rune(strings.TrimSpace(md))) < 200
-			jsShell := scraper.IsJSShell(md, string(bodyBytes))
+			jsShell = scraper.IsJSShell(md, string(bodyBytes))
 			if jsShell {
 				slog.Info("HTML is a JS-framework shell; menu hydrates client-side",
 					"url", rawURL, "visible_runes", len([]rune(strings.TrimSpace(md))))
 			}
-			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort || jsShell
+			// jsShell does NOT gate the preemptive image/adapter paths — those
+			// run before the text pass and would replace it, which is wrong for
+			// a JS shell that may have real static content (the dilution risk).
+			// jsShell only gates the post-text-empty re-cascade below.
+			needsFallback := scraper.IsTooNoisy(md) || strings.TrimSpace(md) == "" || tooShort
 
 			menuImgCandidates, _ = scraper.FindMenuImages(bodyBytes, ct, rawURL)
 
@@ -217,6 +222,8 @@ func ExtractMenu(
 			if err != nil {
 				return nil, bodyBytes, fmt.Errorf("LLM extraction: %w", err)
 			}
+			slog.Info("LLM extractor done",
+				"url", rawURL, "items", len(result.Items), "restaurant", result.RestaurantName)
 
 			if len(result.Items) == 0 && len(menuImgCandidates) > 0 {
 				if iex, ok := ex.(scraper.ImageExtractor); ok {
@@ -229,6 +236,59 @@ func ExtractMenu(
 								"url", rawURL, "items", len(imgResult.Items))
 							result = imgResult
 							tier = TierImageOCR
+						}
+					}
+				}
+			}
+
+			// JS-shell re-cascade (G2): when the static HTML looked like a JS
+			// framework shell (IsJSShell) AND the text pass returned 0 items,
+			// render the URL in the headless browser and re-run the text
+			// cascade on the hydrated HTML. This runs only after the text pass
+			// confirmed the static HTML had no extractable menu, so it never
+			// replaces a working extraction with a worse one (the dilution
+			// risk). Gated on jsShell — noisy/short static pages where a render
+			// would not help do not trigger it.
+			if len(result.Items) == 0 && jsShell {
+				if renderer, ok := ex.(scraper.HTMLRenderer); ok {
+					slog.Info("text pass empty; JS shell re-cascade via rendered-fetch",
+						"url", rawURL, "static_runes", len([]rune(strings.TrimSpace(pageText))))
+		renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true})
+					if renderErr != nil {
+						slog.Warn("JS shell re-cascade: rendered-fetch failed",
+							"url", rawURL, "error", renderErr)
+					} else {
+						hydratedBytes, readErr := io.ReadAll(renderRes.Body)
+						_ = renderRes.Body.Close()
+						if readErr != nil {
+							slog.Warn("JS shell re-cascade: reading rendered body failed",
+								"url", rawURL, "error", readErr)
+						} else {
+							hydratedMD, convErr := scraper.ConvertHTMLToMarkdown(
+								bytes.NewReader(hydratedBytes), renderRes.ContentType)
+							if convErr != nil {
+								slog.Warn("JS shell re-cascade: converting rendered HTML failed",
+									"url", rawURL, "error", convErr)
+							} else {
+								slog.Info("JS shell re-cascade: re-running LLM on rendered HTML",
+									"url", rawURL,
+									"static_runes", len([]rune(strings.TrimSpace(pageText))),
+									"rendered_runes", len([]rune(strings.TrimSpace(hydratedMD))))
+								renderedResult, renderExtractErr := ex.Extract(ctx, hydratedMD)
+								if renderExtractErr != nil {
+									slog.Warn("JS shell re-cascade: LLM extraction on rendered HTML failed",
+										"url", rawURL, "error", renderExtractErr)
+								} else if len(renderedResult.Items) > 0 {
+									slog.Info("JS shell re-cascade: extracted items from rendered HTML",
+										"url", rawURL, "items", len(renderedResult.Items))
+									result = renderedResult
+									bodyBytes = hydratedBytes
+									tier = TierWebagent
+								} else {
+									slog.Info("JS shell re-cascade: rendered HTML also yielded 0 items",
+										"url", rawURL)
+								}
+							}
 						}
 					}
 				}

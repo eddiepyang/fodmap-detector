@@ -35,9 +35,123 @@ type rendererExtractor struct {
 	called       bool
 }
 
-func (r *rendererExtractor) FetchRenderedHTML(_ context.Context, _ string) (scraper.FetchResult, error) {
+func (r *rendererExtractor) FetchRenderedHTML(_ context.Context, _ string, _ scraper.RenderOptions) (scraper.FetchResult, error) {
 	r.called = true
 	return r.renderResult, r.renderErr
+}
+
+// jsShellExtractor implements scraper.Extractor + scraper.HTMLRenderer for
+// the G2 re-cascade test. The first Extract call (on the static shell text)
+// returns 0 items; the second (on the hydrated HTML) returns real items. It
+// captures the text passed to each call so the test can assert the re-cascade
+// re-ran the LLM on the rendered HTML, not the shell.
+type jsShellExtractor struct {
+	calls      []string
+	renderHTML string
+	renderErr  error
+	rendered   bool
+}
+
+func (e *jsShellExtractor) Extract(_ context.Context, text string) (scraper.MenuExtractionResult, error) {
+	e.calls = append(e.calls, text)
+	if len(e.calls) == 1 {
+		// First call: static shell text → 0 items (triggers re-cascade).
+		return scraper.MenuExtractionResult{}, nil
+	}
+	// Second call: hydrated HTML → real items.
+	return scraper.MenuExtractionResult{
+		RestaurantName: "Spa Cafe",
+		Items: []scraper.MenuEntry{
+			{DishName: "Espresso", StatedIngredients: []string{}},
+			{DishName: "Latte", StatedIngredients: []string{}},
+		},
+	}, nil
+}
+
+func (e *jsShellExtractor) FetchRenderedHTML(_ context.Context, _ string, _ scraper.RenderOptions) (scraper.FetchResult, error) {
+	e.rendered = true
+	if e.renderErr != nil {
+		return scraper.FetchResult{}, e.renderErr
+	}
+	return scraper.FetchResult{
+		Body:        io.NopCloser(strings.NewReader(e.renderHTML)),
+		ContentType: "text/html",
+	}, nil
+}
+
+// jsShellHTML returns a realistic JS-framework shell: ~370 runes of visible
+// boilerplate (above the 200-rune tooShort floor, below the 500-rune IsJSShell
+// visible floor) padded with a large inlined-JS bundle (~190KB) so the
+// raw-to-visible ratio crosses jsShellMinRatio. The static body has no menu.
+func jsShellHTML() string {
+	visible := `<html><head><title>Spa Cafe</title></head><body>` +
+		`<h1>Spa Cafe</h1>` +
+		`<p>Welcome to Spa Cafe. Open daily 7am to 7pm. Call (555) 123-4567 for orders.</p>` +
+		`<p>HOME MENU CONTACT. Quality coffee and pastries served fresh every morning.</p>`
+	bundle := `<script>var b=function(){return ` + strings.Repeat("1+", 6000) +
+		`0};window.__INITIAL_STATE__={"p":"` + strings.Repeat("x", 180000) + `"}</script>`
+	return visible + bundle + `</body></html>`
+}
+
+// hydratedHTML is the rendered DOM after JS runs — the menu appeared.
+const hydratedHTML = `<html><body><h1>Spa Cafe</h1><h2>Drinks</h2><ul>` +
+	`<li>Espresso $3</li><li>Latte $4</li><li>Cappuccino $4.5</li></ul></body></html>`
+
+func TestExtractMenu_JSShellReCascadeOnEmptyText(t *testing.T) {
+	// G2: a JS-framework shell (IsJSShell) whose static HTML yields 0 items on
+	// the text pass must trigger a rendered-fetch re-cascade. The LLM re-runs
+	// on the hydrated HTML and extracts the real menu.
+	fetcher := &stubFetcher{
+		result: scraper.FetchResult{
+			Body:        io.NopCloser(strings.NewReader(jsShellHTML())),
+			ContentType: "text/html",
+		},
+	}
+	ex := &jsShellExtractor{renderHTML: hydratedHTML}
+
+	res, _, err := ExtractMenu(context.Background(), "https://spa.example.com", fetcher, ex, false, false, "")
+	if err != nil {
+		t.Fatalf("ExtractMenu: %v", err)
+	}
+	if !ex.rendered {
+		t.Error("FetchRenderedHTML was not called (re-cascade must run on empty text + JS shell)")
+	}
+	if len(ex.calls) != 2 {
+		t.Fatalf("Extract called %d times; want 2 (static shell then hydrated HTML)", len(ex.calls))
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 items from hydrated HTML, got %d", len(res.Items))
+	}
+	if res.ExtractionTier != TierWebagent {
+		t.Errorf("ExtractionTier = %q, want %q", res.ExtractionTier, TierWebagent)
+	}
+}
+
+func TestExtractMenu_JSShellReCascadeSkippedWhenTextHasItems(t *testing.T) {
+	// Regression guard: a JS-shell page whose static HTML DOES yield items on
+	// the text pass must NOT trigger the re-cascade. This prevents the
+	// dilution risk — a small real menu on a JS-heavy site extracts fine from
+	// the static text and never pays for a render.
+	fetcher := &stubFetcher{
+		result: scraper.FetchResult{
+			Body:        io.NopCloser(strings.NewReader(jsShellHTML())),
+			ContentType: "text/html",
+		},
+	}
+	// This extractor returns items on every call (simulating a small real menu
+	// in the static HTML). The re-cascade must not fire.
+	ex := &mockExtractor{}
+
+	res, _, err := ExtractMenu(context.Background(), "https://spa.example.com", fetcher, ex, false, false, "")
+	if err != nil {
+		t.Fatalf("ExtractMenu: %v", err)
+	}
+	if !ex.called {
+		t.Error("Extract was not called on the static text")
+	}
+	if len(res.Items) == 0 {
+		t.Fatal("expected items from the static text pass (no re-cascade needed)")
+	}
 }
 
 // ── fetchWithFallback tests ───────────────────────────────────────────────────

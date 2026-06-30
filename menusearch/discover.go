@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -607,10 +608,14 @@ func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, pr
 	}
 
 	// 2xx: read body and check for menu signal.
-	const maxBodyBytes = 512 * 1024
-	buf := make([]byte, maxBodyBytes)
-	n, _ := resp.Body.Read(buf)
-	body := buf[:n]
+	// Wix and other JS-heavy platforms serve prerendered menu pages that can
+	// exceed 1MB, with the menu content (prices, item names) past the 512KB
+	// mark (the first ~500KB is HTML head + inlined script bundles). A single
+	// resp.Body.Read() returns on the first network chunk (often ~32KB) and
+	// misses the rest — use io.LimitReader + io.ReadAll to drain the full body
+	// up to the cap. 2MB covers the largest prerendered pages observed.
+	const maxBodyBytes = 2 * 1024 * 1024
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 
 	if hasMenuSignal(body) {
 		return true, "menu signal found"
