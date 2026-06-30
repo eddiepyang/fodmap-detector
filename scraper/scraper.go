@@ -17,7 +17,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 
@@ -434,21 +433,6 @@ func ValidateAPIURL(rawURL, originalHost string) error {
 		return fmt.Errorf("inferred API URL resolves to a private/loopback address: %s", u.Host)
 	}
 	return nil
-}
-
-// businessNamespace is the UUID namespace for deterministic business IDs.
-var businessNamespace = uuid.MustParse("f0d6c8a0-e2b4-4d8a-9f1c-3b7a5d9e2c40")
-
-// BusinessID returns a stable, collision-resistant identifier for a restaurant
-// derived from the URL's host. This prevents /menu/lunch and /menu/dinner from
-// being treated as separate restaurants.
-func BusinessID(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	host := strings.ToLower(u.Hostname())
-	return uuid.NewSHA1(businessNamespace, []byte(host)).String()
 }
 
 // MenuSection derives a short section name from a URL path for use in the

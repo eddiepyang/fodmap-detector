@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"fodmap/auth"
 )
 
@@ -16,7 +18,7 @@ func TestExportConversationHandler_JSON(t *testing.T) {
 	conv := &auth.Conversation{
 		ID:           "conv-export-1",
 		UserID:       "user-1",
-		BusinessID:   "biz-1",
+		BusinessID:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		BusinessName: "Test Restaurant",
 		Title:        "Chat about Test Restaurant",
 		SearchCity:   "Las Vegas",
@@ -76,7 +78,7 @@ func TestExportConversationHandler_Markdown(t *testing.T) {
 	conv := &auth.Conversation{
 		ID:           "conv-export-md",
 		UserID:       "user-1",
-		BusinessID:   "biz-1",
+		BusinessID:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		BusinessName: "Pasta Place",
 		Title:        "Chat about Pasta Place",
 		SearchCity:   "Reno",

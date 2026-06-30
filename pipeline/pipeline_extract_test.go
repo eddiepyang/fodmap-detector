@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
@@ -136,7 +138,7 @@ func TestToMenuItems_Basic(t *testing.T) {
 			{DishName: "Salad"},
 		},
 	}
-	items, err := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	items, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/menu", &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,7 +158,7 @@ func TestToMenuItems_Basic(t *testing.T) {
 		t.Error("expected non-empty MenuItemID")
 	}
 	// IDs must be stable (deterministic from URL + dish name).
-	items2, _ := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	items2, _ := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/menu", &stubEmbedder{})
 	if items[0].MenuItemID != items2[0].MenuItemID {
 		t.Error("MenuItemID must be deterministic")
 	}
@@ -164,7 +166,7 @@ func TestToMenuItems_Basic(t *testing.T) {
 
 func TestToMenuItems_Empty(t *testing.T) {
 	result := scraper.MenuExtractionResult{RestaurantName: "Resto"}
-	items, err := ToMenuItems(context.Background(), result, "https://example.com", &stubEmbedder{})
+	items, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +179,7 @@ func TestToMenuItems_EmbedError(t *testing.T) {
 	result := scraper.MenuExtractionResult{
 		Items: []scraper.MenuEntry{{DishName: "Pasta"}},
 	}
-	_, err := ToMenuItems(context.Background(), result, "https://example.com", &stubEmbedder{err: errors.New("embed failed")})
+	_, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubEmbedder{err: errors.New("embed failed")})
 	if err == nil {
 		t.Error("expected error when embedder fails")
 	}
@@ -191,7 +193,7 @@ func TestToMenuItems_SectionFromExtraction(t *testing.T) {
 			{DishName: "Soup", Section: "Starters"},
 		},
 	}
-	items, err := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	items, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/menu", &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +209,7 @@ func TestToMenuItems_SectionFallsBackToURL(t *testing.T) {
 			{DishName: "Soup"},
 		},
 	}
-	items, err := ToMenuItems(context.Background(), result, "https://example.com/lunch-menu", &stubEmbedder{})
+	items, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/lunch-menu", &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,7 +229,7 @@ func TestToMenuItems_PriceAndModifiers(t *testing.T) {
 			Modifiers: []scraper.Modifier{{Name: "Large", Price: &modPrice}},
 		}},
 	}
-	items, err := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	items, err := ToMenuItems(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/menu", &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -263,7 +265,7 @@ var _ server.MenuStore = (*stubMenuStore)(nil)
 
 func TestStoreMenu_EmptyItems(t *testing.T) {
 	result := &scraper.MenuExtractionResult{RestaurantName: "Resto"}
-	n, err := StoreMenu(context.Background(), result, "https://example.com", &stubMenuStore{}, &stubEmbedder{})
+	n, err := StoreMenu(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubMenuStore{}, &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +279,7 @@ func TestStoreMenu_StoresItems(t *testing.T) {
 		RestaurantName: "Test Resto",
 		Items:          []scraper.MenuEntry{{DishName: "Pasta"}, {DishName: "Pizza"}},
 	}
-	n, err := StoreMenu(context.Background(), result, "https://example.com", &stubMenuStore{}, &stubEmbedder{})
+	n, err := StoreMenu(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubMenuStore{}, &stubEmbedder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -290,7 +292,7 @@ func TestStoreMenu_EmbedError(t *testing.T) {
 	result := &scraper.MenuExtractionResult{
 		Items: []scraper.MenuEntry{{DishName: "Pasta"}},
 	}
-	_, err := StoreMenu(context.Background(), result, "https://example.com", &stubMenuStore{}, &stubEmbedder{err: errors.New("embed failed")})
+	_, err := StoreMenu(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubMenuStore{}, &stubEmbedder{err: errors.New("embed failed")})
 	if err == nil {
 		t.Error("expected error when embedder fails")
 	}
@@ -300,7 +302,7 @@ func TestStoreMenu_UpsertError(t *testing.T) {
 	result := &scraper.MenuExtractionResult{
 		Items: []scraper.MenuEntry{{DishName: "Pasta"}},
 	}
-	_, err := StoreMenu(context.Background(), result, "https://example.com", &stubMenuStore{err: errors.New("db down")}, &stubEmbedder{})
+	_, err := StoreMenu(context.Background(), result, uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com", &stubMenuStore{err: errors.New("db down")}, &stubEmbedder{})
 	if err == nil {
 		t.Error("expected error when store fails")
 	}

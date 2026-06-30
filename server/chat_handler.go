@@ -168,7 +168,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 		}
 
 		var reviews []chat.Review
-		if conv.BusinessID != "" && conv.BusinessID != "general" {
+		if conv.BusinessID != uuid.Nil {
 			// Existing conversation: rebuild system prompt from business ID.
 			slog.Info("chat: reloading business context", "business_id", conv.BusinessID, "id", conv.ID)
 			b, err := s.searcher.Businesses(ctx, "", 1, search.SearchFilter{BusinessID: conv.BusinessID})
@@ -179,7 +179,7 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 				systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 			} else {
 				biz = chatBusinessResponse{Name: b.Businesses[0].Name, City: b.Businesses[0].City, State: b.Businesses[0].State}
-				chatBiz := &chat.Business{ID: conv.BusinessID, Name: biz.Name, City: biz.City, State: biz.State}
+				chatBiz := &chat.Business{ID: conv.BusinessID.String(), Name: biz.Name, City: biz.City, State: biz.State}
 				slog.Info("chat: business context loaded", "name", biz.Name)
 
 				var reviewResult search.SearchReviews
@@ -228,11 +228,6 @@ func (s *Server) chatHandler(backend chat.ChatBackend) http.HandlerFunc {
 					systemPrompt = fmt.Sprintf("You are a FODMAP and food allergen expert helping people understand dishes at %s (%s, %s).", biz.Name, biz.City, biz.State)
 				}
 			}
-		} else {
-			// General inquiry without a specific business context.
-			slog.Info("chat: using general assistant mode", "id", conv.ID, "business_id", conv.BusinessID)
-			chatBiz := &chat.Business{Name: "General Assistant", City: "Anywhere"}
-			systemPrompt, _ = chat.RenderChatSystemPrompt(chat.DefaultChatInstruction, chatBiz, dietaryProfile)
 		}
 
 		if backend == nil {

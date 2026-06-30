@@ -24,7 +24,7 @@ func TestCreateConversationHandler_Metadata(t *testing.T) {
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"query":              "pad thai",
-		"business_id":        "biz-1",
+		"business_id":        "550e8400-e29b-41d4-a716-446655440000",
 		"search_category":    "Thai",
 		"search_city":        "San Francisco",
 		"search_state":       "CA",
@@ -68,7 +68,7 @@ func TestCreateConversationHandler_ReviewLimit(t *testing.T) {
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"query":       "test",
-		"business_id": "biz-1",
+		"business_id": "550e8400-e29b-41d4-a716-446655440000",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/conversations", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
@@ -106,13 +106,13 @@ func (m *reviewMockSearcher) Reviews(ctx context.Context, query string, limit in
 			{
 				Score: 0.9,
 				Review: search.IndexItem{
-					Review: schemas.Review{ReviewID: "rev-1", BusinessID: "biz-1", Stars: 4, Text: "Great pad thai"},
+					Review: schemas.Review{ReviewID: "rev-1", BusinessID: "550e8400-e29b-41d4-a716-446655440000", Stars: 4, Text: "Great pad thai"},
 				},
 			},
 			{
 				Score: 0.8,
 				Review: search.IndexItem{
-					Review: schemas.Review{ReviewID: "rev-2", BusinessID: "biz-1", Stars: 5, Text: "Amazing green curry"},
+					Review: schemas.Review{ReviewID: "rev-2", BusinessID: "550e8400-e29b-41d4-a716-446655440000", Stars: 5, Text: "Amazing green curry"},
 				},
 			},
 		},
@@ -128,7 +128,7 @@ func TestCreateConversationHandler_SummaryPending(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]string{
-		"business_id":   "biz-1",
+		"business_id":   "550e8400-e29b-41d4-a716-446655440000",
 		"business_name": "Thai Palace",
 		"query":         "pad thai",
 	})
@@ -176,7 +176,7 @@ func TestCreateConversationHandler_NoReviews_NoSummary(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]string{
-		"business_id":   "biz-1",
+		"business_id":   "550e8400-e29b-41d4-a716-446655440000",
 		"business_name": "Empty Bistro",
 		"query":         "nothing",
 	})

@@ -128,7 +128,7 @@ func WriteGeminiDiscoveryAvro(ctx context.Context, destPath string, rec GeminiDi
 }
 
 type MenuExtractionRecord struct {
-	CAMIS            string
+	BusinessID       string // UUID string — the restaurants.id surrogate key
 	SourceURL        string
 	RestaurantName   string
 	Items            []search.MenuItem
@@ -164,16 +164,37 @@ func WriteMenuExtractionAvro(ctx context.Context, destPath string, rec MenuExtra
 		if stated == nil {
 			stated = []string{}
 		}
+		mods := make([]map[string]any, 0, len(item.Modifiers))
+		for _, m := range item.Modifiers {
+			mod := map[string]any{
+				"name":  m.Name,
+				"price": nil,
+			}
+			if m.Price != nil {
+				mod["price"] = *m.Price
+			}
+			mods = append(mods, mod)
+		}
+		var price any
+		if item.Price != nil {
+			price = *item.Price
+		}
 		items = append(items, map[string]any{
+			"menu_item_id":         item.MenuItemID,
 			"dish_name":            item.DishName,
 			"description":          item.Description,
+			"menu_section":         item.MenuSection,
+			"price":                price,
 			"stated_ingredients":   stated,
 			"has_full_ingredients": item.HasFullIngredients,
+			"modifiers":            mods,
+			"source_url":           item.SourceURL,
+			"scraped_at":           item.ScrapedAt,
 		})
 	}
 
 	record := map[string]any{
-		"camis":              rec.CAMIS,
+		"business_id":        rec.BusinessID,
 		"source_url":         rec.SourceURL,
 		"restaurant_name":    rec.RestaurantName,
 		"items":              items,

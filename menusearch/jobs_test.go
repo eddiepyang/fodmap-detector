@@ -2,6 +2,8 @@ package menusearch
 
 import (
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestDiscoverMenuURLArgs_Kind(t *testing.T) {
@@ -20,7 +22,7 @@ func TestScrapeMenuArgs_Kind(t *testing.T) {
 
 func TestScrapeMenuArgs_HasDiscoveryEventID(t *testing.T) {
 	args := ScrapeMenuArgs{
-		CAMIS:            "12345",
+		RestaurantID:     uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		URL:              "https://example.com/menu",
 		DBA:              "Test Restaurant",
 		DiscoveryEventID: "evt-abc-123",

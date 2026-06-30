@@ -13,6 +13,7 @@ import (
 	"fodmap/data"
 	"fodmap/data/schemas"
 
+	"github.com/google/uuid"
 	"github.com/weaviate/weaviate/entities/models"
 )
 
@@ -87,14 +88,14 @@ func TestAggregateTopK_SingleBusiness(t *testing.T) {
 		businessName string
 		certainty    float64
 	}{
-		{"biz1", "Foo Bar", 0.9},
+		{"550e8400-e29b-41d4-a716-446655440000", "Foo Bar", 0.9},
 	})
 	result := aggregateTopK(data, 5)
 	if len(result.Businesses) != 1 {
 		t.Fatalf("got %d results, want 1", len(result.Businesses))
 	}
-	if result.Businesses[0].ID != "biz1" {
-		t.Errorf("got %q, want %q", result.Businesses[0].ID, "biz1")
+	if result.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440000") {
+		t.Errorf("got %s, want %s", result.Businesses[0].ID, "550e8400-e29b-41d4-a716-446655440000")
 	}
 	if result.Businesses[0].Name != "Foo Bar" {
 		t.Errorf("got name %q, want %q", result.Businesses[0].Name, "Foo Bar")
@@ -107,19 +108,19 @@ func TestAggregateTopK_RankedByScore(t *testing.T) {
 		businessName string
 		certainty    float64
 	}{
-		{"low", "Low Place", 0.5},
-		{"high", "High Place", 0.9},
-		{"mid", "Mid Place", 0.7},
+		{"550e8400-e29b-41d4-a716-446655440005", "Low Place", 0.5},
+		{"550e8400-e29b-41d4-a716-446655440003", "High Place", 0.9},
+		{"550e8400-e29b-41d4-a716-446655440004", "Mid Place", 0.7},
 	})
 	result := aggregateTopK(data, 3)
 	if len(result.Businesses) != 3 {
 		t.Fatalf("got %d results, want 3", len(result.Businesses))
 	}
-	if result.Businesses[0].ID != "high" {
-		t.Errorf("first result = %q, want %q", result.Businesses[0].ID, "high")
+	if result.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440003") {
+		t.Errorf("first result = %s, want %s", result.Businesses[0].ID, "550e8400-e29b-41d4-a716-446655440003")
 	}
-	if result.Businesses[2].ID != "low" {
-		t.Errorf("last result = %q, want %q", result.Businesses[2].ID, "low")
+	if result.Businesses[2].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440005") {
+		t.Errorf("last result = %s, want %s", result.Businesses[2].ID, "550e8400-e29b-41d4-a716-446655440005")
 	}
 }
 
@@ -129,9 +130,9 @@ func TestAggregateTopK_LimitTruncates(t *testing.T) {
 		businessName string
 		certainty    float64
 	}{
-		{"biz1", "Biz One", 0.9},
-		{"biz2", "Biz Two", 0.8},
-		{"biz3", "Biz Three", 0.7},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.9},
+		{"550e8400-e29b-41d4-a716-446655440001", "Biz Two", 0.8},
+		{"550e8400-e29b-41d4-a716-446655440002", "Biz Three", 0.7},
 	})
 	result := aggregateTopK(data, 2)
 	if len(result.Businesses) != 2 {
@@ -149,21 +150,21 @@ func TestAggregateTopK_TopKAveraging(t *testing.T) {
 		businessName string
 		certainty    float64
 	}{
-		{"biz1", "Biz One", 0.9},
-		{"biz1", "Biz One", 0.8},
-		{"biz1", "Biz One", 0.7},
-		{"biz1", "Biz One", 0.6},
-		{"biz1", "Biz One", 0.5},
-		{"biz1", "Biz One", 0.1}, // 6th review — should be excluded from top-K
-		{"biz2", "Biz Two", 0.72},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.9},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.8},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.7},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.6},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.5},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.1}, // 6th review — should be excluded from top-K
+		{"550e8400-e29b-41d4-a716-446655440001", "Biz Two", 0.72},
 	}
 	data := makeData(items)
 	result := aggregateTopK(data, 2)
 	if len(result.Businesses) != 2 {
 		t.Fatalf("got %d results, want 2", len(result.Businesses))
 	}
-	if result.Businesses[0].ID != "biz2" {
-		t.Errorf("first result = %q, want biz2 (higher top-K avg)", result.Businesses[0].ID)
+	if result.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440001") {
+		t.Errorf("first result = %s, want 550e8400-e29b-41d4-a716-446655440001 (higher top-K avg)", result.Businesses[0].ID)
 	}
 }
 
@@ -173,9 +174,9 @@ func TestAggregateTopK_MultipleReviewsSameBusiness(t *testing.T) {
 		businessName string
 		certainty    float64
 	}{
-		{"biz1", "Biz One", 0.8},
-		{"biz1", "Biz One", 0.6},
-		{"biz2", "Biz Two", 0.7},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.8},
+		{"550e8400-e29b-41d4-a716-446655440000", "Biz One", 0.6},
+		{"550e8400-e29b-41d4-a716-446655440001", "Biz Two", 0.7},
 	})
 	result := aggregateTopK(data, 5)
 	// biz1 avg = (0.8 + 0.6) / 2 = 0.7, biz2 avg = 0.7 — order may vary but both present
@@ -215,7 +216,7 @@ func TestBuildWhereFilter_StateOnly(t *testing.T) {
 }
 
 func TestBuildWhereFilter_BusinessID(t *testing.T) {
-	f := buildWhereFilter(SearchFilter{BusinessID: "biz123"})
+	f := buildWhereFilter(SearchFilter{BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")})
 	if f == nil {
 		t.Fatal("expected non-nil filter for BusinessID")
 	}
@@ -519,7 +520,7 @@ func TestClient_Businesses(t *testing.T) {
 				businessName string
 				certainty    float64
 			}{
-				{"biz1", "Pizza", 0.9},
+				{"550e8400-e29b-41d4-a716-446655440000", "Pizza", 0.9},
 			})
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 		}
@@ -533,7 +534,7 @@ func TestClient_Businesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Businesses failed: %v", err)
 	}
-	if len(res.Businesses) != 1 || res.Businesses[0].ID != "biz1" {
+	if len(res.Businesses) != 1 || res.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440000") {
 		t.Errorf("got %v", res)
 	}
 }
@@ -1093,7 +1094,7 @@ func TestClient_BatchUpsertMenu(t *testing.T) {
 	client, _ := NewClient(host, "http", "", &mockEmbedder{vec: []float32{0.1, 0.2, 0.3}})
 
 	items := []MenuItem{
-		{MenuItemID: "m1", BusinessID: "biz1", DishName: "Pizza", StatedIngredients: []string{"dough", "tomato", "cheese"}, MenuSection: "Main"},
+		{MenuItemID: "m1", BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), DishName: "Pizza", StatedIngredients: []string{"dough", "tomato", "cheese"}, MenuSection: "Main"},
 	}
 	if err := client.BatchUpsertMenu(context.Background(), items); err != nil {
 		t.Fatalf("BatchUpsertMenu failed: %v", err)

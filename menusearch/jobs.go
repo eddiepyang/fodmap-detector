@@ -1,5 +1,7 @@
 package menusearch
 
+import "github.com/google/uuid"
+
 type DiscoverMenuURLArgs struct {
 	CAMIS    string `json:"camis"`
 	DBA      string `json:"dba"`
@@ -15,10 +17,10 @@ func (DiscoverMenuURLArgs) Kind() string {
 }
 
 type ScrapeMenuArgs struct {
-	CAMIS            string `json:"camis"`
-	URL              string `json:"url"`
-	DBA              string `json:"dba"`
-	DiscoveryEventID string `json:"discovery_event_id"`
+	RestaurantID     uuid.UUID `json:"restaurant_id"`
+	URL              string    `json:"url"`
+	DBA              string    `json:"dba"`
+	DiscoveryEventID string    `json:"discovery_event_id"`
 	// Depth tracks how many directory-expansion levels have been traversed.
 	// Existing River jobs deserialise to 0 (the zero value). Only Depth==0 jobs
 	// perform directory expansion; sub-URL fetches are done inline at depth 1 and

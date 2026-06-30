@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/auth"
 )
 
@@ -35,7 +37,7 @@ func TestConversationHandlers(t *testing.T) {
 	conv := &auth.Conversation{
 		ID:         "conv-1",
 		UserID:     userID,
-		BusinessID: "biz-1",
+		BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		Title:      "Test Chat",
 	}
 	_ = store.CreateConversation(context.Background(), conv)

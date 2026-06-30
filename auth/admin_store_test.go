@@ -198,7 +198,7 @@ func TestPostgresStore_ListAllConversations(t *testing.T) {
 	mock.ExpectQuery("FROM conversations c").
 		WithArgs(search, 10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "email", "title", "business_id", "business_name", "message_count", "created_at", "updated_at"}).
-			AddRow("c1", "u1", "a@example.com", "Title", "b1", "Biz", 5, now, now))
+			AddRow("c1", "u1", "a@example.com", "Title", "550e8400-e29b-41d4-a716-446655440000", "Biz", 5, now, now))
 
 	summaries, total, err := store.ListAllConversations(context.Background(), 0, 10, search)
 	assert.NoError(t, err)

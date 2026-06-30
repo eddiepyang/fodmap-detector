@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"fodmap/auth"
 )
 
@@ -264,7 +266,7 @@ func TestAdminAnalyticsAndConversationHandlers(t *testing.T) {
 		ID:           "c1",
 		UserID:       adminID,
 		Title:        "Admin Conv",
-		BusinessID:   "biz-1",
+		BusinessID:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		BusinessName: "Biz One",
 		CreatedAt:    time.Now().Add(-24 * time.Hour),
 		UpdatedAt:    time.Now().Add(-24 * time.Hour),

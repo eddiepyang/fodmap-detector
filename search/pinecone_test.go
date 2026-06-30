@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/data"
 	"fodmap/data/schemas"
 )
@@ -116,7 +118,7 @@ func TestPineconeClient_Businesses(t *testing.T) {
 				{
 					ID: "rev-1", Score: 0.95,
 					Metadata: map[string]any{
-						"business_id":   "biz-1",
+						"business_id":   "550e8400-e29b-41d4-a716-446655440000",
 						"business_name": "Pizza Place",
 						"city":          "NYC",
 						"state":         "NY",
@@ -125,7 +127,7 @@ func TestPineconeClient_Businesses(t *testing.T) {
 				{
 					ID: "rev-2", Score: 0.90,
 					Metadata: map[string]any{
-						"business_id":   "biz-1", // same business, should be deduped
+						"business_id":   "550e8400-e29b-41d4-a716-446655440000", // same business, should be deduped
 						"business_name": "Pizza Place",
 						"city":          "NYC",
 						"state":         "NY",
@@ -134,7 +136,7 @@ func TestPineconeClient_Businesses(t *testing.T) {
 				{
 					ID: "rev-3", Score: 0.85,
 					Metadata: map[string]any{
-						"business_id":   "biz-2",
+						"business_id":   "550e8400-e29b-41d4-a716-446655440001",
 						"business_name": "Taco Shop",
 						"city":          "LA",
 						"state":         "CA",
@@ -156,14 +158,14 @@ func TestPineconeClient_Businesses(t *testing.T) {
 	if len(result.Businesses) != 2 {
 		t.Fatalf("got %d businesses, want 2 (duplicate biz-1 should be deduped)", len(result.Businesses))
 	}
-	if result.Businesses[0].ID != "biz-1" {
-		t.Errorf("first business ID = %q, want %q", result.Businesses[0].ID, "biz-1")
+	if result.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440000") {
+		t.Errorf("first business ID = %s, want %s", result.Businesses[0].ID, "550e8400-e29b-41d4-a716-446655440000")
 	}
 	if result.Businesses[0].Name != "Pizza Place" {
 		t.Errorf("first business name = %q, want %q", result.Businesses[0].Name, "Pizza Place")
 	}
-	if result.Businesses[1].ID != "biz-2" {
-		t.Errorf("second business ID = %q, want %q", result.Businesses[1].ID, "biz-2")
+	if result.Businesses[1].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440001") {
+		t.Errorf("second business ID = %s, want %s", result.Businesses[1].ID, "550e8400-e29b-41d4-a716-446655440001")
 	}
 }
 
@@ -237,7 +239,7 @@ func TestPineconeClient_Reviews(t *testing.T) {
 
 	client := NewPineconeClient("test-key", pineServer.URL, mockEmb)
 
-	result, err := client.Reviews(context.Background(), "pizza", 10, SearchFilter{BusinessID: "biz-1"})
+	result, err := client.Reviews(context.Background(), "pizza", 10, SearchFilter{BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")})
 	if err != nil {
 		t.Fatalf("Reviews failed: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"fodmap/data"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
@@ -388,7 +389,7 @@ func (c *PostgresClient) Reviews(ctx context.Context, query string, limit int, f
 	args := []any{pgvector.NewHalfVector(vec)}
 	argID := 2
 
-	if filter.BusinessID != "" {
+	if filter.BusinessID != uuid.Nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("r.business_id = $%d", argID))
 		args = append(args, filter.BusinessID)
 		argID++
@@ -474,8 +475,8 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO menu_items (menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at_utc, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		INSERT INTO menu_items (menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at, embedding, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
 		ON CONFLICT (menu_item_id) DO UPDATE SET
 			business_id = EXCLUDED.business_id,
 			menu_section = EXCLUDED.menu_section,
@@ -491,7 +492,7 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 			source_url = EXCLUDED.source_url,
 			address = EXCLUDED.address,
 			phone_number = EXCLUDED.phone_number,
-			scraped_at_utc = EXCLUDED.scraped_at_utc,
+			scraped_at = EXCLUDED.scraped_at,
 			embedding = EXCLUDED.embedding
 	`)
 	if err != nil {
@@ -505,7 +506,7 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 			vec = pgvector.NewHalfVector(item.Vector)
 		}
 		modifiersJSON, _ := json.Marshal(item.Modifiers)
-		if _, err := stmt.ExecContext(ctx, item.MenuItemID, item.BusinessID, item.MenuSection, item.RestaurantName, item.City, item.State, item.DishName, item.Description, item.Price, pq.Array(item.StatedIngredients), item.HasFullIngredients, modifiersJSON, item.SourceURL, item.Address, item.PhoneNumber, item.ScrapedAtUTC, vec); err != nil {
+		if _, err := stmt.ExecContext(ctx, item.MenuItemID, item.BusinessID, item.MenuSection, item.RestaurantName, item.City, item.State, item.DishName, item.Description, item.Price, pq.Array(item.StatedIngredients), item.HasFullIngredients, modifiersJSON, item.SourceURL, item.Address, item.PhoneNumber, item.ScrapedAt, vec); err != nil {
 			return fmt.Errorf("insert menu item %q: %w", item.MenuItemID, err)
 		}
 	}
@@ -521,7 +522,7 @@ func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int
 	}
 
 	q := `
-		SELECT menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at_utc
+		SELECT menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at
 		FROM menu_items
 		ORDER BY embedding <=> $1
 		LIMIT $2
@@ -556,7 +557,7 @@ func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int
 		m.SourceURL = sourceURL.String
 		m.Address = address.String
 		m.PhoneNumber = phone.String
-		m.ScrapedAtUTC = scrapedAt.String
+		m.ScrapedAt = scrapedAt.String
 		results = append(results, m)
 	}
 	return results, nil

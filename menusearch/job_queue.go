@@ -21,7 +21,7 @@ type JobQueue struct {
 // Returns server.ErrJobAlreadyQueued (wrapped) if River deduplication prevents it.
 func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) error {
 	args := DiscoverMenuURLArgs{
-		CAMIS:    r.CAMIS,
+		CAMIS:    safeDeref(r.CAMIS),
 		DBA:      r.DBA,
 		Building: safeDeref(r.Building),
 		Street:   safeDeref(r.Street),
@@ -50,14 +50,14 @@ func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) err
 // The restaurant must have a non-empty MenuURL.
 func (q *JobQueue) EnqueueScrape(ctx context.Context, r server.Restaurant) error {
 	if len(r.MenuURLs) == 0 {
-		return fmt.Errorf("restaurant %s has no menu_urls", r.CAMIS)
+		return fmt.Errorf("restaurant %s has no menu_urls", safeDeref(r.CAMIS))
 	}
 	allSkipped := true
 	for _, u := range r.MenuURLs {
 		args := ScrapeMenuArgs{
-			CAMIS: r.CAMIS,
-			URL:   u,
-			DBA:   r.DBA,
+			RestaurantID: r.ID,
+			URL:          u,
+			DBA:          r.DBA,
 		}
 		opts := &river.InsertOpts{
 			MaxAttempts: q.MaxAttempts,

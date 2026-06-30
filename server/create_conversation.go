@@ -37,12 +37,17 @@ func (s *Server) createConversationHandler(w http.ResponseWriter, r *http.Reques
 		userID = "anonymous"
 	}
 
-	var businessID string
+	var businessID uuid.UUID
 	var businessName string
 
 	if req.BusinessID != "" {
 		// Use provided business ID
-		businessID = req.BusinessID
+		parsed, err := uuid.Parse(req.BusinessID)
+		if err != nil {
+			respondError(w, "business_id must be a valid UUID", http.StatusBadRequest)
+			return
+		}
+		businessID = parsed
 		if req.BusinessName != "" {
 			businessName = req.BusinessName
 		} else {

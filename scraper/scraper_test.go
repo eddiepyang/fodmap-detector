@@ -200,21 +200,6 @@ func TestValidateAPIURL_Localhost(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- BusinessID ---
-
-func TestBusinessID_SameHostDifferentPaths(t *testing.T) {
-	id1 := BusinessID("https://example.com/menu/lunch")
-	id2 := BusinessID("https://example.com/menu/dinner")
-	assert.Equal(t, id1, id2, "same host should produce same business ID")
-	assert.Len(t, id1, 36, "UUID format")
-}
-
-func TestBusinessID_DifferentHosts(t *testing.T) {
-	id1 := BusinessID("https://joes-pizza.com/menu")
-	id2 := BusinessID("https://marios-pasta.com/menu")
-	assert.NotEqual(t, id1, id2)
-}
-
 // --- robots.txt ---
 
 func TestRobotsTxt_Disallowed(t *testing.T) {

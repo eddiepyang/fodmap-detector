@@ -1,12 +1,16 @@
 package auth
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // Conversation represents a chat session between a user and the model.
 type Conversation struct {
 	ID                string        `json:"id"`
 	UserID            string        `json:"user_id"`
-	BusinessID        string        `json:"business_id"`
+	BusinessID        uuid.UUID     `json:"business_id"`
 	BusinessName      string        `json:"business_name,omitempty"`
 	Title             string        `json:"title"`
 	SearchCategory    string        `json:"search_category,omitempty"`

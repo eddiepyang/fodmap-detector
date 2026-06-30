@@ -322,6 +322,7 @@ tier1Done:
 func StoreMenu(
 	ctx context.Context,
 	result *scraper.MenuExtractionResult,
+	restaurantID uuid.UUID,
 	rawURL string,
 	store server.MenuStore,
 	embedder search.Embedder,
@@ -330,21 +331,33 @@ func StoreMenu(
 		return 0, nil
 	}
 
-	items, err := ToMenuItems(ctx, *result, rawURL, embedder)
+	items, err := ToMenuItems(ctx, *result, restaurantID, rawURL, embedder)
 	if err != nil {
 		return 0, fmt.Errorf("embedding menu items: %w", err)
 	}
 
+	return StoreMenuItems(ctx, items, store)
+}
+
+// StoreMenuItems upserts pre-built (already-embedded) menu items. It is the
+// lower-level half of StoreMenu, exposed so callers that already have items
+// (e.g. Avro replay, or the scrape worker writing Avro + DB in one pass) can
+// avoid re-embedding.
+func StoreMenuItems(ctx context.Context, items []search.MenuItem, store server.MenuStore) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
 	if err := store.BatchUpsertMenu(ctx, items); err != nil {
 		return 0, fmt.Errorf("upserting menu items: %w", err)
 	}
-
 	return len(items), nil
 }
 
 // ToMenuItems converts a MenuExtractionResult to []search.MenuItem, embedding each item's text vector.
-func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawURL string, embedder search.Embedder) ([]search.MenuItem, error) {
-	businessID := scraper.BusinessID(rawURL)
+// restaurantID is the surrogate UUID PK from restaurants.id; it is used as the
+// menu item's business_id, linking menu_items to restaurants(id) via foreign key.
+func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, restaurantID uuid.UUID, rawURL string, embedder search.Embedder) ([]search.MenuItem, error) {
+	businessID := restaurantID
 	urlSection := scraper.MenuSection(rawURL) // fallback when the extractor didn't provide one
 	now := result.ScrapedAtUTC
 
@@ -385,14 +398,14 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 
 	items := make([]search.MenuItem, len(result.Items))
 	for i, entry := range result.Items {
-		idKey := businessID + entry.DishName
-		id := uuid.NewSHA1(menuCollectionNS, []byte(idKey)).String()
-		// Prefer the section name extracted by the structuring step; fall
-		// back to the URL-derived section when the extractor didn't provide one.
+		// Include section in the key to prevent cross-section dish-name
+		// collisions (e.g. "Side Salad" in Starters vs Sides).
 		section := entry.Section
 		if section == "" {
 			section = urlSection
 		}
+		idKey := businessID.String() + "|" + section + "|" + entry.DishName
+		id := uuid.NewSHA1(menuCollectionNS, []byte(idKey)).String()
 		mods := make([]search.Modifier, len(entry.Modifiers))
 		for j, m := range entry.Modifiers {
 			mods[j] = search.Modifier{Name: m.Name, Price: m.Price}
@@ -413,7 +426,7 @@ func ToMenuItems(ctx context.Context, result scraper.MenuExtractionResult, rawUR
 			SourceURL:          rawURL,
 			Address:            result.Address,
 			PhoneNumber:        result.PhoneNumber,
-			ScrapedAtUTC:       now,
+			ScrapedAt:          now,
 			Vector:             vectors[i],
 		}
 	}

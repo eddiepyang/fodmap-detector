@@ -59,7 +59,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	if job.Attempt > 1 {
 		if existing, err := w.Store.Get(ctx, args.CAMIS); err == nil && existing != nil && len(existing.MenuURLs) > 0 {
 			logger.Info("reusing URLs from previous attempt, skipping Gemini call", "count", len(existing.MenuURLs))
-			return w.enqueueScrapeJobs(ctx, args, existing.MenuURLs, "")
+			return w.enqueueScrapeJobs(ctx, args, existing.ID, existing.MenuURLs, "")
 		}
 	}
 
@@ -216,7 +216,12 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 			return fmt.Errorf("update menu url: %w", err)
 		}
 
-		if err := w.enqueueScrapeJobs(ctx, args, foundURLs, eventID); err != nil {
+		// Resolve the restaurant's surrogate UUID for the scrape job args.
+		rest, err := w.Store.Get(ctx, args.CAMIS)
+		if err != nil || rest == nil {
+			return fmt.Errorf("restaurant %s not found after discovery: %w", args.CAMIS, err)
+		}
+		if err := w.enqueueScrapeJobs(ctx, args, rest.ID, foundURLs, eventID); err != nil {
 			return err
 		}
 	} else {
@@ -238,7 +243,7 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	return nil
 }
 
-func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args DiscoverMenuURLArgs, menuURLs []string, eventID string) error {
+func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args DiscoverMenuURLArgs, restaurantID uuid.UUID, menuURLs []string, eventID string) error {
 	for i, menuURL := range menuURLs {
 		stagger := w.ScrapeStaggerSeconds
 		if stagger <= 0 {
@@ -246,7 +251,7 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 		}
 		delay := time.Duration(i*stagger) * time.Second
 		_, err := w.RiverClient.Insert(ctx, ScrapeMenuArgs{
-			CAMIS:            args.CAMIS,
+			RestaurantID:     restaurantID,
 			URL:              menuURL,
 			DBA:              args.DBA,
 			DiscoveryEventID: eventID,

@@ -5,13 +5,16 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
 
 // Restaurant represents a row in the restaurants table.
 type Restaurant struct {
-	CAMIS      string     `json:"camis"`
+	ID         uuid.UUID  `json:"id"`
+	CAMIS      *string    `json:"camis,omitempty"`
+	YelpID     *string    `json:"yelp_id,omitempty"`
 	DBA        string     `json:"dba"`
 	Boro       *string    `json:"boro"`
 	Building   *string    `json:"building"`
@@ -37,8 +40,9 @@ type Restaurant struct {
 // RestaurantStore manages the restaurants table. Implemented by
 // menusearch.store; defined here so server handlers don't import menusearch.
 type RestaurantStore interface {
-	Upsert(ctx context.Context, r Restaurant) error
+	Upsert(ctx context.Context, r Restaurant) (*Restaurant, error)
 	Get(ctx context.Context, camis string) (*Restaurant, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Restaurant, error)
 	List(ctx context.Context, status string, search string, limit, offset int) ([]Restaurant, error)
 	UpdateDiscoveryURLs(ctx context.Context, camis, websiteURL string, menuURLs []string, source, address, phone string) error
 	UpdateScrapeResult(ctx context.Context, camis, status string, itemCount int, lastError string) error
