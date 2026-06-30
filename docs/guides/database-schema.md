@@ -24,7 +24,9 @@ The authoritative DDL for all Postgres domain tables lives in `internal/db/migra
 
 ## Non-Domain Tables
 
-River's own tables (`river_job`, `river_leader`, etc.) are managed separately by `river migrate-up` and live in the `river` schema. They are **not** included in the `internal/db/migrations/` directory.
+River's own tables (`river_job`, `river_leader`, `river_queue`, `river_client`, `river_migration`) are managed separately by `river migrate-up` and live in the `river` schema (configurable via `--river-schema`). They are **not** included in the `internal/db/migrations/` directory. The `db migrate-up` command creates the schema if missing and runs River's migrator into it.
+
+> **Existing deployments:** `db migrate-up` detects river tables left in `public` and hard-errors with the one-time `ALTER TABLE ... SET SCHEMA river` steps. See [docs/plans/river-schema-and-dual-write-plan.md](../plans/river-schema-and-dual-write-plan.md).
 
 ## Running Migrations
 
@@ -126,7 +128,7 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `chunk_id` | `SERIAL` | `PRIMARY KEY` |
 | `review_id` | `TEXT` | `REFERENCES reviews(review_id) ON DELETE CASCADE` |
 | `chunk_text` | `TEXT` | |
-| `embedding` | `vector(768)` | |
+| `embedding` | `halfvec(768)` | |
 
 **`fodmap_ingredients`**
 
@@ -137,7 +139,7 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `groups` | `TEXT[]` | |
 | `notes` | `TEXT` | |
 | `substitutions` | `TEXT[]` | |
-| `embedding` | `vector(768)` | |
+| `embedding` | `halfvec(768)` | |
 
 **`fodmap_catalog`**
 
@@ -197,13 +199,15 @@ Below are the current schema definitions (with migrations applied) for quick ref
 | `state` | `TEXT` | |
 | `dish_name` | `TEXT` | `NOT NULL` |
 | `description` | `TEXT` | |
+| `price` | `NUMERIC(10,2)` | |
 | `stated_ingredients` | `TEXT[]` | |
 | `has_full_ingredients` | `BOOLEAN` | `NOT NULL DEFAULT FALSE` |
+| `modifiers` | `JSONB` | `DEFAULT '[]'::jsonb` |
 | `source_url` | `TEXT` | |
 | `address` | `TEXT` | |
 | `phone_number` | `TEXT` | |
 | `scraped_at_utc` | `TEXT` | |
-| `embedding` | `VECTOR(768)` | |
+| `embedding` | `HALFVEC(768)` | |
 
 ### Regulatory Menu Tracking
 

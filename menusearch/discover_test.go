@@ -17,8 +17,10 @@ func TestDedup_DeduplicatesPreservesOrder(t *testing.T) {
 	input := []string{
 		"https://a.com",
 		"https://b.com",
-		"https://a.com",
+		"https://a.com/",
 		"https://c.com",
+		" https://b.com ",
+		"https://c.com/",
 	}
 	got := dedup(input)
 	want := []string{"https://a.com", "https://b.com", "https://c.com"}
@@ -446,7 +448,7 @@ func TestIsPrivateMenuHost(t *testing.T) {
 		{"8.8.8.8", false},
 		{"1.1.1.1", false},
 		{"restaurant.com", false}, // non-IP hostname
-		{"172.32.0.1", false},    // outside 172.16.0.0/12
+		{"172.32.0.1", false},     // outside 172.16.0.0/12
 	}
 	for _, tc := range cases {
 		got := isPrivateMenuHost(tc.host)

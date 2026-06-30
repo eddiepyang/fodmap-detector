@@ -22,6 +22,10 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	// Register the persistent --river-schema flag (default "river"). Bound
+	// to viper + RIVER_SCHEMA env so every River client/migrator site reads
+	// the same value via cli.riverSchemaName().
+	addRiverSchemaFlag(rootCmd)
 }
 
 func initConfig() {

@@ -1,0 +1,2 @@
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2);
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS modifiers JSONB DEFAULT '[]'::jsonb;

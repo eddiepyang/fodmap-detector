@@ -73,6 +73,81 @@ func TestIsTooNoisy_CleanInput(t *testing.T) {
 	assert.False(t, IsTooNoisy(md))
 }
 
+// --- isJSShell ---
+
+// wixShellVisible is the visible-text portion of a Wix-style SPA homepage:
+// ~370 runes of boilerplate (above the 200-rune tooShort floor, below the
+// 500-rune IsJSShell visible floor) with no menu items. The menu content is
+// injected client-side by the restaurant-menus-showcase-ooi widget.
+const wixShellVisible = `<html><head><title>3Greeks Grill | Gyro and Souvlaki</title>
+<link rel="stylesheet" href="https://static.parastorage.com/services/x.css"/></head>
+<body><div id="SITE_CONTAINER"><h1>3Greeks Grill | Gyro and Souvlaki</h1>
+<p>WELCOME Καλη Ορεξη (718) 729-8900 35-61 Vernon Blvd, Long Island City, NY 11106</p>
+<p>Request a catering order at Catering@3greeksgrill.com. Use tab to navigate through the menu items. More</p>
+<p>HOME MENU CONTACT. High quality Greek Gyro and Souvlaki platters and sandwiches as well as other Greek specialty foods.</p>
+</div></body></html>`
+
+// wixShellBundle is an inlined-JS padding block that emulates a real Wix
+// page's minified bundle + inlined __INITIAL_STATE__ (~190KB), which is what
+// drives the raw-bytes-to-visible-runes ratio above the jsShellMinRatio
+// threshold. It is wrapped in <script> so ConvertHTMLToMarkdown strips it
+// (leaving only wixShellVisible as visible text) while it still counts toward
+// the raw byte length.
+var wixShellBundle = `<script>var b=function(){return ` + strings.Repeat("1+", 6000) + `0};window.__INITIAL_STATE__={"p":"` + strings.Repeat("x", 180000) + `"}</script>`
+
+func TestIsJSShell_WixHomepageShell(t *testing.T) {
+	raw := wixShellVisible[:strings.Index(wixShellVisible, "</body>")] + wixShellBundle + "</body></html>"
+	md, err := ConvertHTMLToMarkdown(strings.NewReader(raw), "text/html")
+	require.NoError(t, err)
+	visible := len([]rune(strings.TrimSpace(md)))
+	// The fixture converts to a small body of visible text (200–500 runes):
+	// above the 200-rune tooShort floor (so tooShort does NOT fire) and below
+	// the 500-rune IsJSShell short-circuit (so the ratio check runs).
+	assert.Greater(t, visible, 200, "fixture must be above the tooShort floor to be a regression")
+	assert.Less(t, visible, 500, "fixture must be below the IsJSShell visible floor")
+	assert.True(t, IsJSShell(md, raw),
+		"Wix homepage shell (%dKB raw, %d visible runes) must be detected as a JS shell",
+		len(raw)/1024, visible)
+}
+
+func TestIsJSShell_RealContentPageNotShell(t *testing.T) {
+	// A content-bearing page (> 500 runes of prose) must NOT be flagged as a
+	// JS shell, even if it carries a large inlined script — the visible-text
+	// short-circuit keeps real menu pages on the LLM text path.
+	var b strings.Builder
+	b.WriteString(`<html><head><title>Cafe</title></head><body>`)
+	b.WriteString(`<h1>Cafe Menu</h1>`)
+	for i := 0; i < 30; i++ {
+		b.WriteString(`<p>Bruschetta - fresh tomatoes, basil, olive oil on toasted bread, a classic appetizer.</p>`)
+	}
+	b.WriteString(wixShellBundle)
+	b.WriteString(`</body></html>`)
+	raw := b.String()
+	md, err := ConvertHTMLToMarkdown(strings.NewReader(raw), "text/html")
+	require.NoError(t, err)
+	assert.Greater(t, len([]rune(strings.TrimSpace(md))), 500)
+	assert.False(t, IsJSShell(md, raw), "page with >500 runes of prose must stay on the LLM text path")
+}
+
+func TestIsJSShell_ShortStaticPageNotShell(t *testing.T) {
+	// A genuinely short static page must not be flagged — the raw-bytes floor
+	// (jsShellMinRawBytes) guards against the ratio being meaningless on
+	// small pages. A 50-byte "closed" page is just small, not a JS shell.
+	raw := `<html><body><h1>Closed</h1><p>This location is permanently closed.</p></body></html>`
+	md, err := ConvertHTMLToMarkdown(strings.NewReader(raw), "text/html")
+	require.NoError(t, err)
+	assert.False(t, IsJSShell(md, raw), "small static page below the raw-bytes floor is not a JS shell")
+}
+
+func TestIsJSShell_EmptyMarkdownWithLargeRawIsShell(t *testing.T) {
+	// The canonical empty-SPA case: the JS shell renders nothing without JS
+	// (empty visible text) but the raw HTML is a large bundle. The ratio is
+	// infinite (guarded by max(visible,1)) and must be flagged.
+	raw := `<html><body><div id="root"></div>` + wixShellBundle + `</body></html>`
+	assert.True(t, IsJSShell("", raw),
+		"empty markdown + large raw bundle must be detected as a JS shell")
+}
+
 // --- truncateText ---
 
 func TestTruncateText_ShortInput(t *testing.T) {
@@ -295,10 +370,50 @@ func TestExtractJSONLD_MenuType(t *testing.T) {
 	assert.True(t, ok)
 	assert.Len(t, items, 2)
 	assert.Equal(t, "Bruschetta", items[0].DishName)
-	assert.True(t, items[0].HasFullIngredients)
+	// has_full_ingredients is true only when ingredients are literally
+	// listed, not when a description is present (safety signal — design §8.2).
+	assert.False(t, items[0].HasFullIngredients)
 	assert.Equal(t, "Calamari", items[1].DishName)
 	assert.False(t, items[1].HasFullIngredients)
 	_ = meta
+}
+
+func TestExtractJSONLD_PriceAndIngredients(t *testing.T) {
+	htmlBody := `<html><head>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Menu",
+  "hasMenuSection": [{
+    "name": "Mains",
+    "hasMenuItem": [
+      {"@type": "MenuItem", "name": "Pasta", "description": "Fresh pasta", "offers": {"price": "14.50"}, "ingredients": ["flour", "egg"]},
+      {"@type": "MenuItem", "name": "Salad", "description": "Green salad", "offers": {"price": 9}}
+    ]
+  }]
+}
+</script>
+</head><body></body></html>`
+
+	items, _, ok := ExtractJSONLD(strings.NewReader(htmlBody))
+	assert.True(t, ok)
+	assert.Len(t, items, 2)
+
+	// String price parsed to float.
+	assert.Equal(t, "Pasta", items[0].DishName)
+	if items[0].Price == nil || *items[0].Price != 14.50 {
+		t.Errorf("item[0].Price = %v, want 14.50", items[0].Price)
+	}
+	// has_full_ingredients true only when ingredients explicitly listed.
+	assert.True(t, items[0].HasFullIngredients)
+
+	// Numeric price handled directly.
+	assert.Equal(t, "Salad", items[1].DishName)
+	if items[1].Price == nil || *items[1].Price != 9.0 {
+		t.Errorf("item[1].Price = %v, want 9.0", items[1].Price)
+	}
+	// No ingredients list → false, even though description is non-empty.
+	assert.False(t, items[1].HasFullIngredients)
 }
 
 func TestExtractJSONLD_RestaurantWithMenu(t *testing.T) {

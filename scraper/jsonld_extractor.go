@@ -3,6 +3,7 @@ package scraper
 import (
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -204,11 +205,31 @@ func menuItemToEntry(m map[string]any) (MenuEntry, bool) {
 		ingredients = toStringSlice(raw)
 	}
 
+	// Price from schema.org MenuItem.offers.price (string or number).
+	var price *float64
+	if offers, ok := m["offers"].(map[string]any); ok {
+		if p, ok := offers["price"]; ok {
+			switch v := p.(type) {
+			case float64:
+				price = &v
+			case string:
+				if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					price = &f
+				}
+			}
+		}
+	}
+
 	return MenuEntry{
-		DishName:           name,
-		Description:        desc,
-		StatedIngredients:  ingredients,
-		HasFullIngredients: desc != "",
+		DishName:          name,
+		Description:       desc,
+		Price:             price,
+		StatedIngredients: ingredients,
+		// has_full_ingredients is a literal safety signal: true only when the
+		// menu enumerates *every* ingredient. A non-empty description does not
+		// guarantee a complete ingredient list, so default to false. Only set
+		// true when an explicit ingredients list was literally present.
+		HasFullIngredients: len(ingredients) > 0,
 	}, true
 }
 

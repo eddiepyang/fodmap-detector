@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -44,6 +45,7 @@ type DiscoverMenuURLWorker struct {
 	GeminiModel          string
 	ScrapeStaggerSeconds int
 	MaxNoURLAttempts     int
+	MaxAttempts          int
 }
 
 func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
@@ -117,6 +119,9 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	} else {
 		if result.WebsiteURL != "" {
 			rawURLs = append(rawURLs, result.WebsiteURL)
+			// Append common menu paths as fallback candidates for direct domain crawling
+			base := strings.TrimSuffix(result.WebsiteURL, "/")
+			rawURLs = append(rawURLs, base+"/menu", base+"/menu/", base+"/menus")
 		}
 		if len(result.MenuURLs) > 0 {
 			rawURLs = append(rawURLs, result.MenuURLs...)
@@ -246,6 +251,7 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 			DBA:              args.DBA,
 			DiscoveryEventID: eventID,
 		}, &river.InsertOpts{
+			MaxAttempts: w.MaxAttempts,
 			UniqueOpts: river.UniqueOpts{
 				ByArgs:   true,
 				ByPeriod: 30 * 24 * time.Hour,
@@ -260,14 +266,16 @@ func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args Disc
 }
 
 // dedup returns urls with duplicates removed, preserving order.
+// Trailing slashes and leading/trailing spaces are normalized during comparison.
 func dedup(urls []string) []string {
 	seen := make(map[string]struct{}, len(urls))
 	out := make([]string, 0, len(urls))
 	for _, u := range urls {
-		if _, ok := seen[u]; ok {
+		canonical := strings.TrimSuffix(strings.TrimSpace(u), "/")
+		if _, ok := seen[canonical]; ok {
 			continue
 		}
-		seen[u] = struct{}{}
+		seen[canonical] = struct{}{}
 		out = append(out, u)
 	}
 	return out
@@ -600,10 +608,14 @@ func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, pr
 	}
 
 	// 2xx: read body and check for menu signal.
-	const maxBodyBytes = 512 * 1024
-	buf := make([]byte, maxBodyBytes)
-	n, _ := resp.Body.Read(buf)
-	body := buf[:n]
+	// Wix and other JS-heavy platforms serve prerendered menu pages that can
+	// exceed 1MB, with the menu content (prices, item names) past the 512KB
+	// mark (the first ~500KB is HTML head + inlined script bundles). A single
+	// resp.Body.Read() returns on the first network chunk (often ~32KB) and
+	// misses the rest — use io.LimitReader + io.ReadAll to drain the full body
+	// up to the cap. 2MB covers the largest prerendered pages observed.
+	const maxBodyBytes = 2 * 1024 * 1024
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 
 	if hasMenuSignal(body) {
 		return true, "menu signal found"

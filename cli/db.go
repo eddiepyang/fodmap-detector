@@ -9,7 +9,6 @@ import (
 	"fodmap/internal/db"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -84,21 +83,33 @@ func runDBMigrateUp(cmd *cobra.Command, args []string) error {
 	}
 	slog.Info("domain migrations complete")
 
+	// Detect existing deployments whose river tables are still in public.
+	// Hard-error with a clear migration message rather than silently orphaning
+	// the existing river_job rows.
+	if err := detectExistingRiverDeployment(ctx, sqldb); err != nil {
+		return err
+	}
+
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("connecting to postgres for river: %w", err)
 	}
 	defer pool.Close()
 
-	slog.Info("running river migrations")
-	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{})
+	// River's migrator creates tables but not the schema itself.
+	if err := ensureRiverSchema(ctx, pool); err != nil {
+		return err
+	}
+
+	slog.Info("running river migrations", "schema", riverSchemaName())
+	migrator, err := newRiverMigrator(pool)
 	if err != nil {
 		return fmt.Errorf("creating river migrator: %w", err)
 	}
 	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return fmt.Errorf("running river migrate-up: %w", err)
 	}
-	slog.Info("river migrations complete")
+	slog.Info("river migrations complete", "schema", riverSchemaName())
 
 	return nil
 }

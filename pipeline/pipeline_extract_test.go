@@ -106,16 +106,27 @@ func (e *stubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float3
 	}
 	out := make([][]float32, len(texts))
 	for i := range out {
-		out[i] = []float32{0.1, 0.2}
+		out[i] = stubVec768(0.1, 0.2)
 	}
 	return out, nil
 }
 
 func (e *stubEmbedder) EmbedSingle(_ context.Context, _ string) ([]float32, error) {
-	return []float32{0.1, 0.2}, nil
+	if e.err != nil {
+		return nil, e.err
+	}
+	return stubVec768(0.1, 0.2), nil
 }
 
 func (e *stubEmbedder) Close() error { return nil }
+
+// stubVec768 returns a 768-dim vector matching menu_items.embedding.
+func stubVec768(a, b float32) []float32 {
+	v := make([]float32, 768)
+	v[0] = a
+	v[1] = b
+	return v
+}
 
 func TestToMenuItems_Basic(t *testing.T) {
 	result := scraper.MenuExtractionResult{
@@ -169,6 +180,65 @@ func TestToMenuItems_EmbedError(t *testing.T) {
 	_, err := ToMenuItems(context.Background(), result, "https://example.com", &stubEmbedder{err: errors.New("embed failed")})
 	if err == nil {
 		t.Error("expected error when embedder fails")
+	}
+}
+
+func TestToMenuItems_SectionFromExtraction(t *testing.T) {
+	// The section name from the extracted MenuEntry should be used, not the
+	// URL-derived fallback.
+	result := scraper.MenuExtractionResult{
+		Items: []scraper.MenuEntry{
+			{DishName: "Soup", Section: "Starters"},
+		},
+	}
+	items, err := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if items[0].MenuSection != "Starters" {
+		t.Errorf("MenuSection = %q, want %q", items[0].MenuSection, "Starters")
+	}
+}
+
+func TestToMenuItems_SectionFallsBackToURL(t *testing.T) {
+	// When the extracted section is empty, the URL-derived section is used.
+	result := scraper.MenuExtractionResult{
+		Items: []scraper.MenuEntry{
+			{DishName: "Soup"},
+		},
+	}
+	items, err := ToMenuItems(context.Background(), result, "https://example.com/lunch-menu", &stubEmbedder{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if items[0].MenuSection != "lunch menu" {
+		t.Errorf("MenuSection = %q, want %q", items[0].MenuSection, "lunch menu")
+	}
+}
+
+func TestToMenuItems_PriceAndModifiers(t *testing.T) {
+	price := 15.0
+	modPrice := 2.5
+	result := scraper.MenuExtractionResult{
+		Items: []scraper.MenuEntry{{
+			DishName:  "Burger",
+			Price:     &price,
+			Section:   "Mains",
+			Modifiers: []scraper.Modifier{{Name: "Large", Price: &modPrice}},
+		}},
+	}
+	items, err := ToMenuItems(context.Background(), result, "https://example.com/menu", &stubEmbedder{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if items[0].Price == nil || *items[0].Price != 15.0 {
+		t.Errorf("Price = %v, want 15.0", items[0].Price)
+	}
+	if len(items[0].Modifiers) != 1 || items[0].Modifiers[0].Name != "Large" {
+		t.Errorf("Modifiers = %+v, want [Large]", items[0].Modifiers)
+	}
+	if items[0].Modifiers[0].Price == nil || *items[0].Modifiers[0].Price != 2.5 {
+		t.Errorf("modifier Price = %v, want 2.5", items[0].Modifiers[0].Price)
 	}
 }
 

@@ -1,5 +1,7 @@
 # Implementation Plan: Waiter Script Agent
 
+**Status:** Not Started
+
 ## Objective
 Empower users to safely communicate their dietary needs to restaurant staff by generating a clear, polite "Waiter Script." When a user asks about a specific dish and the chat agent flags high-risk ingredients, the user will be presented with a button to generate a script they can read directly to the waiter.
 

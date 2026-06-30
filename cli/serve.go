@@ -52,20 +52,22 @@ var serveCmd = &cobra.Command{
 		pineconeAPIKey := viper.GetString("pinecone-api-key")
 		pineconeIndexHost := viper.GetString("pinecone-index-host")
 		vectorizerURL := viper.GetString("vectorizer-url")
-		ollamaURL := viper.GetString("ollama-url")
-		ollamaModel := viper.GetString("ollama-model")
 		postgresSearch := viper.GetBool("postgres-search")
 		enablePipeline := viper.GetBool("enable-pipeline")
 
-		var embedder search.Embedder
-		if ollamaURL != "" && ollamaModel != "" {
-			embedder = search.NewOllamaEmbedder(ollamaURL, ollamaModel)
-			defer func() { _ = embedder.Close() }()
-			slog.Info("using Ollama embedder", "model", ollamaModel, "url", ollamaURL)
-		} else if vectorizerURL != "" {
-			embedder = search.NewVectorizerClient(vectorizerURL)
-			slog.Info("using HTTP vectorizer", "url", vectorizerURL)
+		embedder, embedErr := search.NewEmbedder(cmd.Context(), search.EmbedderConfig{
+			Type:          viper.GetString("embedder"),
+			OllamaURL:     viper.GetString("ollama-url"),
+			OllamaModel:   viper.GetString("ollama-model"),
+			TEIURL:        viper.GetString("tei-url"),
+			TEIModel:      viper.GetString("tei-model"),
+			VectorizerURL: viper.GetString("vectorizer-url"),
+		})
+		if embedErr != nil {
+			return fmt.Errorf("building embedder: %w", embedErr)
 		}
+		defer func() { _ = embedder.Close() }()
+		slog.Info("embedder ready", "type", viper.GetString("embedder"))
 		if jwtSecret == "" {
 			slog.Warn("JWT_SECRET not set; using insecure default — do not use in production")
 			jwtSecret = "change-me-in-production"
@@ -135,6 +137,7 @@ var serveCmd = &cobra.Command{
 			PineconeIndexHost:  pineconeIndexHost,
 			VectorizerURL:      vectorizerURL,
 			Embedder:           embedder,
+			MenuStoreType:      viper.GetString("menu-store"),
 		})
 		if err != nil {
 			return fmt.Errorf("initializing server: %w", err)
@@ -172,7 +175,9 @@ var serveCmd = &cobra.Command{
 			}
 
 			var menuStore server.MenuStore
-			if ms, ok := srv.Searcher().(server.MenuStore); ok {
+			if ms := srv.MenuStore(); ms != nil {
+				menuStore = ms
+			} else if ms, ok := srv.Searcher().(server.MenuStore); ok {
 				menuStore = ms
 			}
 
@@ -201,6 +206,7 @@ var serveCmd = &cobra.Command{
 				UsePdftotext:              viper.GetBool("use-pdftotext"),
 				WebagentAdapter:           viper.GetString("webagent-adapter"),
 				BronzeDir:                 viper.GetString("restaurant-bronze-dir"),
+				ScrapeMaxAttempts:         viper.GetInt("scrape-max-attempts"),
 			})
 			if pipelineErr != nil {
 				return fmt.Errorf("starting menutracking pipeline: %w", pipelineErr)
@@ -254,12 +260,16 @@ func init() {
 	serveCmd.Flags().String("postgres-dsn", "", "PostgreSQL connection string (required)")
 	serveCmd.Flags().String("admin-email", "", "Email of the user to promote to admin on startup")
 	serveCmd.Flags().Bool("postgres-search", false, "Use PostgreSQL (pgvector) for vector search instead of Weaviate/Pinecone")
+	serveCmd.Flags().String("menu-store", "", "Menu store backend: postgres | weaviate | dual (empty = fall back to --postgres-search / weaviate selection)")
 	serveCmd.Flags().String("jwt-secret", "", "Secret key for JWT signing (or use JWT_SECRET env var)")
 	serveCmd.Flags().String("pinecone-api-key", "", "Pinecone API Key")
 	serveCmd.Flags().String("pinecone-index-host", "", "Pinecone Index Host (e.g. https://index-name.svc.pinecone.io)")
-	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy")
+	serveCmd.Flags().String("vectorizer-url", "", "Base URL for the HTTP vectorizer-proxy (used when --embedder=vectorizer)")
+	serveCmd.Flags().String("embedder", "ollama", "Embedding backend: ollama | tei | vectorizer")
 	serveCmd.Flags().String("ollama-url", "http://localhost:11434", "Ollama server URL")
 	serveCmd.Flags().String("ollama-model", "nomic-embed-text", "Ollama embedding model")
+	serveCmd.Flags().String("tei-url", "", "Text Embeddings Inference (TEI) service URL (used when --embedder=tei)")
+	serveCmd.Flags().String("tei-model", "nomic-embed-text", "TEI model name (informational; TEI serves one model per instance)")
 	serveCmd.Flags().Bool("enable-pipeline", false, "Enable the menutracking regulatory tracking pipeline (requires postgres-dsn)")
 	serveCmd.Flags().String("extractor-url", "", "Python scraper service URL for all menu extraction (e.g., http://localhost:8765)")
 	serveCmd.Flags().String("discovery-avro-dir", "data/bronze/gemini_discovery", "Directory for discovery Avro records")
@@ -271,6 +281,7 @@ func init() {
 	serveCmd.Flags().Bool("use-pdftotext", false, "Use pdftotext for PDF text extraction before OCR fallback")
 	serveCmd.Flags().String("webagent-adapter", "", "Webagent adapter (site/target) for JS-rendered menus via Python scraper service")
 	serveCmd.Flags().String("restaurant-bronze-dir", "data/bronze/restaurants", "Directory for raw HTML bronze files from restaurant scrape jobs")
+	serveCmd.Flags().Int("scrape-max-attempts", 3, "Max attempts for scraping and discovery jobs in the pipeline")
 
 	_ = viper.BindPFlags(serveCmd.Flags())
 	_ = viper.BindEnv("admin-email", "ADMIN_EMAIL")

@@ -1,5 +1,7 @@
 # FODMAP Detector — Feature Recommendations
 
+**Status:** In Progress — partially implemented
+
 Based on a thorough review of the codebase, documentation, and existing plans, below are feature recommendations organized by priority tier. Each recommendation includes the rationale, scope, and how it fits into the existing architecture.
 
 ---

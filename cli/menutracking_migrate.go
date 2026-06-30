@@ -13,13 +13,13 @@ import (
 	"fodmap/chat"
 	"fodmap/menusearch"
 	"fodmap/menutracking"
+	menutrackingstore "fodmap/menutracking/store"
 	"fodmap/scraper"
 	"fodmap/search"
 	"fodmap/server"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -114,6 +114,7 @@ type PipelineConfig struct {
 	UsePdftotext              bool
 	WebagentAdapter           string
 	BronzeDir                 string
+	ScrapeMaxAttempts         int
 }
 
 // PipelineResult holds the running pipeline's stop function and references
@@ -169,6 +170,10 @@ func (h *deadLetterHandler) HandlePanic(ctx context.Context, job *rivertype.JobR
 // on shutdown. The caller is responsible for calling the stop function when
 // the server shuts down.
 func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*PipelineResult, error) {
+	// Propagate the configured River schema to the menutracking store package
+	// so the discarded-jobs admin query reads from the right schema.
+	menutrackingstore.SetRiverSchema(riverSchemaName())
+
 	pool, err := pgxpool.New(ctx, cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to postgres for pipeline: %w", err)
@@ -216,6 +221,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		GeminiModel:          cfg.DiscoveryGeminiModel,
 		ScrapeStaggerSeconds: cfg.DiscoveryStaggerSeconds,
 		MaxNoURLAttempts:     cfg.DiscoveryMaxNoURLAttempts,
+		MaxAttempts:          cfg.ScrapeMaxAttempts,
 		HTTPClient: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -263,7 +269,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 					URL:      s.URL,
 					Domain:   s.Domain,
 				}, &river.InsertOpts{
-					MaxAttempts: menutracking.DefaultScrapeMaxAttempts,
+					MaxAttempts: cfg.ScrapeMaxAttempts,
 					UniqueOpts: river.UniqueOpts{
 						ByPeriod: 7 * 24 * time.Hour,
 					},
@@ -272,7 +278,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		periodicJobs = append(periodicJobs, pj)
 	}
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
+	riverClient, err := newRiverClient(pool, &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 10},
 		},
@@ -288,7 +294,7 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	scrapeWorker.RiverClient = riverClient
 	discoverWorker.RiverClient = riverClient
 
-	jobQueue := &menusearch.JobQueue{Client: riverClient}
+	jobQueue := &menusearch.JobQueue{Client: riverClient, MaxAttempts: cfg.ScrapeMaxAttempts}
 
 	if err := riverClient.Start(ctx); err != nil {
 		pool.Close()

@@ -1,5 +1,7 @@
 # Plan: Speed Up Weaviate Indexing
 
+**Status:** Completed
+
 ## Context
 
 The `index` command currently uploads batches sequentially — the scanner is idle while waiting for each `BatchUpsert` HTTP round-trip. With ~7M reviews at batch size 100, this creates ~70,000 sequential HTTP calls to Weaviate. Two changes eliminate this bottleneck:

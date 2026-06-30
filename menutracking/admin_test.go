@@ -14,6 +14,7 @@ import (
 	"time"
 
 	fodmapdb "fodmap/internal/db"
+	"fodmap/menutracking/store"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -146,10 +147,17 @@ func TestAdminHandler_ListDiscardedJobs_Empty(t *testing.T) {
 	pool := openTestPool(t)
 	defer pool.Close()
 
-	// river_job is managed by river migrate-up, not the domain migrations.
-	// Create the minimal table shape so listDiscardedJobs can run.
+	// river_job is managed by river migrate-up into the configured River
+	// schema (default "river"), not the domain migrations. Create the schema
+	// and a minimal table shape so listDiscardedJobs can run. The store
+	// package reads from the schema returned by RiverSchema(), which defaults
+	// to "river" — keep them in sync.
+	store.SetRiverSchema("river")
+	if _, err := pool.Exec(context.Background(), `CREATE SCHEMA IF NOT EXISTS river`); err != nil {
+		t.Fatalf("create river schema: %v", err)
+	}
 	if _, err := pool.Exec(context.Background(), `
-		CREATE TABLE IF NOT EXISTS river_job (
+		CREATE TABLE IF NOT EXISTS river.river_job (
 			id bigserial PRIMARY KEY,
 			kind text NOT NULL,
 			args jsonb,

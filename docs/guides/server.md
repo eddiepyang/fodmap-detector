@@ -52,35 +52,9 @@ For interactive chat sessions, the server supports real-time response streaming:
 - Evaluates prompt length and screens for food-related topics prior to invoking Gemini.
 - Uses Gemini's native API streaming capabilities under the hood.
 
----
-
 ## API Reference
 
-### Authentication
-- `POST /api/v1/auth/register` — Create a new user account.
-- `POST /api/v1/auth/login` — Authenticate and receive JWT + Refresh tokens.
-- `POST /api/v1/auth/refresh` — Issue a new JWT using a refresh token.
-
-### Conversations
-- `GET /api/v1/conversations` — List all conversations for the authenticated user.
-- `GET /api/v1/conversations/{id}` — Get full history and metadata for a conversation.
-- `DELETE /api/v1/conversations/{id}` — Delete a conversation and all its messages.
-
-### Search & Data
-- `GET /api/v1/search/businesses/{query...}` — Semantic search for restaurants.
-- `GET /api/v1/search/reviews/{query...}` — Semantic search for specific review mentions.
-- `GET /api/v1/search/fodmap/{ingredient...}` — FODMAP ingredient lookup.
-- `GET /api/v1/reviews` — Retrieve raw reviews for a restaurant (query parameter: `business_id`).
-
-### Profiles
-- `GET /api/v1/profile` — Get the authenticated user's dietary profile.
-- `POST /api/v1/profile` — Update the authenticated user's dietary profile.
-
-### Chat & Streaming
-- `POST /api/v1/conversations` — Create a conversation (automatically performs review summarization if reviews are present).
-- `POST /api/v1/conversations/{id}/messages` — Send a message in a conversation and stream response (SSE).
-- `GET /api/v1/conversations/{id}/export` — Export conversation transcript (format `json` or `markdown`).
-- `POST /api/v1/chat/{query...}` — Direct/legacy streaming chat endpoint.
+For a complete list of all HTTP endpoints, request/response formats, search parameters, and admin APIs, see the [API Reference Guide](api-reference.md).
 
 ---
 

@@ -1,5 +1,7 @@
 # Split storage: chunks in Weaviate, full reviews in Postgres
 
+**Status:** Not Started
+
 ## Context
 
 Weaviate is logging warnings on every city-filtered chat query:

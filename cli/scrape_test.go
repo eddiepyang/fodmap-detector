@@ -18,7 +18,7 @@ func (s stubEmbedder) EmbedSingle(_ context.Context, _ string) ([]float32, error
 	if s.err != nil {
 		return nil, s.err
 	}
-	return []float32{0.1, 0.2}, nil
+	return stubVector(0), nil
 }
 
 func (s stubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
@@ -27,12 +27,21 @@ func (s stubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32
 	}
 	vectors := make([][]float32, len(texts))
 	for i := range texts {
-		vectors[i] = []float32{float32(i), float32(i) + 0.5}
+		vectors[i] = stubVector(i)
 	}
 	return vectors, nil
 }
 
 func (s stubEmbedder) Close() error { return nil }
+
+// stubVector returns a 768-dim vector (matches menu_items.embedding) whose
+// first two elements carry the deterministic test signature.
+func stubVector(i int) []float32 {
+	v := make([]float32, 768)
+	v[0] = float32(i)
+	v[1] = float32(i) + 0.5
+	return v
+}
 
 func sampleResult() scraper.MenuExtractionResult {
 	return scraper.MenuExtractionResult{

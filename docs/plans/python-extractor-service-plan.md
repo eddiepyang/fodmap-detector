@@ -1,5 +1,7 @@
 # Python Extraction Service Plan (`extractor-py`) — ARCHIVED
 
+**Status:** Archived — replaced by pure-Go OpenAI-compatible extractor
+
 > ## ⚠ ARCHIVED — historical reasoning record only
 >
 > **This plan was never built.** It is kept solely so future maintainers can see what alternative was considered and why it was dropped. **Do not implement what is described below — it is no longer the project's direction.**

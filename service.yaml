@@ -1,33 +1,106 @@
 # FODMAP Detector Configuration (service.yaml)
 # Defaults for all CLI commands. Command line flags will override these values.
 
-# ---- global/shared settings ----
+# ---- Global / Shared Settings ----
 # Host and port for the Weaviate vector database. 
 weaviate: "localhost:8090"
+# Scheme for Weaviate: http or https
+weaviate-scheme: "http"
+# Weaviate API Key (for Weaviate Cloud)
+weaviate-api-key: ""
 
-# Gemini model ID used for chat sessions and topic filtering.
+# Gemini model IDs used for chat sessions and topic filtering.
 chat-model: "gemini-3-flash-preview"
-filter-model: "gemini-3.1-flash-lite-preview"
+filter-model: "gemini-3-flash-preview"
+# Bearer token for /chat endpoint (empty to disable bearer requirement)
+chat-api-key: ""
+
+# Embedding configuration
+ollama-url: "http://localhost:11434"
+ollama-model: "nomic-embed-text"
+# Path to GGUF embedding model for in-process vectorization (e.g., models/nomic-embed-text-v1.5-Q8_0.gguf)
+model-path: ""
+
+# PostgreSQL/pgvector database configuration
+postgres-dsn: "postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+postgres-search: true
+
+# Pinecone configuration
+pinecone-api-key: ""
+pinecone-index-host: ""
+
+# Local HTTP Vectorizer proxy URL
+vectorizer-url: ""
+vectorizer: "" # Deprecated/legacy alias for vectorizer-url in index commands
 
 
-# ---- serve command settings ----
+# ---- Serve Command Settings ----
 # Port to listen on HTTP
 port: 8081
 
-# Secrets (API keys, JWT secret) should be set via environment variables, not here.
-# Viper maps hyphenated keys to UPPER_SNAKE_CASE env vars automatically:
-#   chat-api-key  → CHAT_API_KEY
-#   jwt-secret    → JWT_SECRET
-#   weaviate-api-key → WEAVIATE_API_KEY
+# JWT Secret for signing auth tokens (can also be set via JWT_SECRET env var)
+jwt-secret: ""
+
+# Email of the user to promote to admin on startup
+admin-email: ""
 
 # Allowed CORS origins for browser-based clients 
 cors-origins:
   - "http://localhost:5173"
   - "http://localhost:3000"
 
+# Enable/disable the regulatory tracking and discovery pipeline
+enable-pipeline: false
 
-# ---- chat command settings ----
-# Base URL of the fodmap server
+
+# ---- Scrape Command Settings ----
+# Storage backend: weaviate | postgres | pinecone
+store: "weaviate"
+
+# Embedding backend: ollama | vectorizer
+embed-backend: "ollama"
+
+# Target LLM for extraction (HTML-to-markdown structured parsing)
+llm-url: "http://localhost:8000/v1"
+llm-model: "qwen3-vl"
+llm-api-key: ""
+llm-reasoning-effort: "none" # none | low | medium | high (none = fastest, cost-optimal for Gemini)
+
+# Fetching controls
+ignore-robots: false
+
+# Headless browser / JS-rendering menu cascade options
+enable-js-render: false
+webagent-adapter: "" # webagent adapter ID (site/target) for JS-rendered pages
+
+# Vision / OCR extraction
+enable-vision: false # send PDFs/images to vision LLM instead of text extraction (requires --extractor-url or local VLM)
+pdftotext: false      # use system pdftotext (poppler) for PDF text extraction (fallback/scrape CMD flag)
+use-pdftotext: false  # use system pdftotext (serve CMD pipeline config flag)
+
+# Python Scraper Service integration URLs and timeouts
+extractor-url: "http://localhost:8765"
+extractor-page-timeout: "2m"
+extractor-pdf-timeout: "10m"
+
+
+# ---- Menutracking & Discovery Pipeline Settings ----
+# Seconds to stagger scrape jobs for multiple menus from the same restaurant
+discovery-stagger-seconds: 15
+discovery-max-no-url-attempts: 3
+discovery-gemini-model: "gemini-3-flash-preview"
+scrape-max-attempts: 3
+
+# Avro archiving directories
+discovery-avro-dir: "data/bronze/gemini_discovery"
+extraction-avro-dir: "data/silver/menus"
+
+# Bronze HTML storage directory
+restaurant-bronze-dir: "data/bronze/restaurants"
+
+
+# ---- Chat Command Settings ----
+# Base URL of the running fodmap server
 server: "http://localhost:8081"
 
 # Max reviews to include in context
@@ -46,7 +119,7 @@ city: ""
 state: ""
 
 
-# ---- index command settings ----
+# ---- Index Command Settings ----
 # Number of reviews per Weaviate batch
 batch-size: 512
 
@@ -62,17 +135,5 @@ checkpoint: "index.checkpoint"
 # Skip this many reviews before indexing (overrides checkpoint)
 start-offset: 0
 
-# t2v-transformers host:port for HTTP vectorizer (fallback if no model-path)
-vectorizer: ""
-
-# Path to GGUF embedding model for in-process vectorization (e.g. models/nomic-embed-text-v1.5-Q8_0.gguf)
-model-path: ""
-
-# Filter reviews by city
+# Filter reviews by city during indexing
 filter-city: ""
-
-# ---- menutracking/discovery settings ----
-# Seconds to stagger scrape jobs for multiple menus from the same restaurant
-discovery-stagger-seconds: 15
-discovery-max-no-url-attempts: 3
-extractor-url: "http://localhost:8765"

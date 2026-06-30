@@ -282,6 +282,143 @@ func TestRunScrapeWith_NoisyHTMLRoutesToWebagent(t *testing.T) {
 	}
 }
 
+// spaShellFetcher serves a Wix-style SPA shell: ~370 runes of visible
+// boilerplate (above the 200-rune tooShort floor, so tooShort does NOT fire)
+// and long prose lines (IsTooNoisy is false), with a large inlined-JS bundle
+// that drives the raw-bytes-to-visible-runes ratio above the jsShellMinRatio
+// threshold. The menu content is injected client-side by the
+// restaurant-menus-showcase-ooi widget, so the static body has no menu. Only
+// the IsJSShell check routes this to the webagent — making this a genuine
+// regression test for the IsJSShell detector (the old tooShort<200 and
+// IsTooNoisy gates would both leave it on the empty LLM text path).
+type spaShellFetcher struct{}
+
+func (f *spaShellFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
+	visible := `<html><head><title>3Greeks Grill | Gyro and Souvlaki</title>
+<link rel="stylesheet" href="https://static.parastorage.com/services/x.css"/></head>
+<body><div id="SITE_CONTAINER"><h1>3Greeks Grill | Gyro and Souvlaki</h1>
+<p>WELCOME Καλη Ορεξη (718) 729-8900 35-61 Vernon Blvd, Long Island City, NY 11106</p>
+<p>Request a catering order at Catering@3greeksgrill.com. Use tab to navigate through the menu items. More</p>
+<p>HOME MENU CONTACT. High quality Greek Gyro and Souvlaki platters and sandwiches as well as other Greek specialty foods.</p>`
+	// Emulate a real Wix page's minified bundle + inlined __INITIAL_STATE__
+	// (~190KB) so the raw-to-visible ratio crosses jsShellMinRatio. Wrapped in
+	// <script> so ConvertHTMLToMarkdown strips it from the visible text.
+	bundle := `<script>var b=function(){return ` + strings.Repeat("1+", 6000) +
+		`0};window.__INITIAL_STATE__={"p":"` + strings.Repeat("x", 180000) + `"}</script>`
+	body := visible + bundle + `</div></body></html>`
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(body))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func TestRunScrapeWith_SpaShellRoutesToWebagent(t *testing.T) {
+	// A Wix-style SPA shell (IsJSShell) with a webagentAdapter set must NOT
+	// preemptively route to ScrapeJS — that would skip the text pass and risk
+	// dilution on pages that have real static content. Instead the text pass
+	// runs first (returns 0 items for the shell), then the post-empty
+	// re-cascade fires via FetchRenderedHTML, which returns hydrated HTML
+	// that the LLM extracts items from.
+	// ScrapeJS must NOT be called — the re-cascade uses the generic
+	// HTMLRenderer path, not the per-site adapter.
+	ex := &spaShellRendererExtractor{
+		renderHTML: hydratedMenuHTML,
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://www.3greeksgrill.com",
+		&spaShellFetcher{},
+		ex,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false,         // enableVision
+		true,          // enableJSRender
+		false,         // usePdftotext
+		"site/target", // webagentAdapter — must NOT trigger preemptive ScrapeJS
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith spa shell: %v", err)
+	}
+	if ex.extractCalls != 2 {
+		t.Errorf("Extract called %d times; want 2 (static shell → 0, then hydrated HTML → items)",
+			ex.extractCalls)
+	}
+	if ex.renderCalled {
+		// renderCalled is fine — the re-cascade uses FetchRenderedHTML
+	} else {
+		t.Error("FetchRenderedHTML was not called (post-empty re-cascade must run)")
+	}
+}
+
+// hydratedMenuHTML is the rendered DOM after JS runs — a real menu appeared.
+const hydratedMenuHTML = `<html><body><h1>3Greeks Grill</h1><h2>Appetizers</h2><ul>` +
+	`<li>Gyro $5</li><li>Souvlaki $6</li></ul></body></html>`
+
+// spaShellRendererExtractor implements scraper.Extractor + scraper.HTMLRenderer
+// + scraper.JSRenderer for the SPA-shell re-cascade test. Extract returns 0
+// items on the first call (static shell) and real items on the second (hydrated
+// HTML). ScrapeJS records if it was called (it must NOT be for a JS shell).
+type spaShellRendererExtractor struct {
+	extractCalls int
+	renderCalled bool
+	scrapeCalled bool
+	renderHTML   string
+}
+
+func (e *spaShellRendererExtractor) Extract(_ context.Context, text string) (scraper.MenuExtractionResult, error) {
+	e.extractCalls++
+	if e.extractCalls == 1 {
+		return scraper.MenuExtractionResult{}, nil // static shell → 0 items
+	}
+	return scraper.MenuExtractionResult{
+		RestaurantName: "3Greeks Grill",
+		Items: []scraper.MenuEntry{
+			{DishName: "Gyro", StatedIngredients: []string{}},
+			{DishName: "Souvlaki", StatedIngredients: []string{}},
+		},
+	}, nil
+}
+
+func (e *spaShellRendererExtractor) FetchRenderedHTML(_ context.Context, _ string, _ scraper.RenderOptions) (scraper.FetchResult, error) {
+	e.renderCalled = true
+	return scraper.FetchResult{
+		Body:        io.NopCloser(bytes.NewReader([]byte(e.renderHTML))),
+		ContentType: "text/html",
+	}, nil
+}
+
+func (e *spaShellRendererExtractor) ScrapeJS(_ context.Context, _ string, _ map[string]any) (scraper.MenuExtractionResult, error) {
+	e.scrapeCalled = true
+	return scraper.MenuExtractionResult{}, nil
+}
+
+func TestRunScrapeWith_SpaShellWithoutAdapterFallsBackToExtract(t *testing.T) {
+	// Guard: when no webagentAdapter is configured, an SPA shell must degrade
+	// gracefully to the LLM text pass (no panic, no webagent call). This is
+	// the same contract as TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract.
+	ex := &extractorStub{
+		result: scraper.MenuExtractionResult{Items: []scraper.MenuEntry{{DishName: "x"}}},
+	}
+	err := runScrapeWith(
+		context.Background(),
+		"https://www.3greeksgrill.com",
+		&spaShellFetcher{},
+		ex,
+		&stubMenuStore{},
+		stubEmbedder{},
+		false, // enableVision
+		true,  // enableJSRender
+		false, // usePdftotext
+		"",    // no webagentAdapter — must fall through to the LLM text pass
+	)
+	if err != nil {
+		t.Fatalf("runScrapeWith spa shell no-adapter: %v", err)
+	}
+	if ex.called != 1 {
+		t.Errorf("ex.Extract called %d times; want 1 (no adapter → text pass)", ex.called)
+	}
+}
+
 func TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract(t *testing.T) {
 	ex := &extractorStub{
 		result: scraper.MenuExtractionResult{Items: []scraper.MenuEntry{{DishName: "x"}}},

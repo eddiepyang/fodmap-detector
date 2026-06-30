@@ -64,7 +64,7 @@ You can use the `--limit` and `--offset` flags to paginate through the dataset. 
 
 ```sh
 # Import the first 10 restaurants in the Astoria-LIC area
-go run . restaurants import --area astoria-lic --limit 10 --offset 0
+go run . restaurants --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap" import --area astoria-lic --limit 10 --offset 0
 
 # Import the next 20 new restaurants in the Astoria-LIC area
 go run . restaurants import --area astoria-lic --limit 20 --offset 10
@@ -100,4 +100,9 @@ If a restaurant fails at any point in the pipeline (e.g., website 404, LLM extra
 
 ```sh
 go run . restaurants retry 50012345
+```
+  
+```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+go run . restaurants retry-all-failed
 ```

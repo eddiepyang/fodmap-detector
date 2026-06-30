@@ -32,6 +32,13 @@ const (
 	topKReviews              = 5
 )
 
+// Modifier is a size, add-on, or variant of a menu item with its own price.
+// Stored as JSONB in Postgres and as a text property in Weaviate.
+type Modifier struct {
+	Name  string   `json:"name"`
+	Price *float64 `json:"price,omitempty"`
+}
+
 // MenuItem is a single scraped menu item stored in the RestaurantMenu
 // collection. IDs are deterministic so re-scraping the same URL is idempotent.
 type MenuItem struct {
@@ -43,8 +50,10 @@ type MenuItem struct {
 	State              string
 	DishName           string
 	Description        string
+	Price              *float64
 	StatedIngredients  []string
 	HasFullIngredients bool
+	Modifiers          []Modifier
 	SourceURL          string
 	Address            string
 	PhoneNumber        string
@@ -1033,31 +1042,55 @@ func formatGraphQLErrors(errs []*models.GraphQLError) string {
 const menuCollectionName = "RestaurantMenu"
 
 // EnsureMenuSchema creates the RestaurantMenu Weaviate collection if absent.
+// If the collection already exists (e.g. from a prior deployment that pre-dates
+// the price/modifiers properties), it checks for and adds any missing properties
+// so schema evolution doesn't require dropping and recreating the collection.
 // It is idempotent — safe to call on every scrape-command startup.
 func (c *Client) EnsureMenuSchema(ctx context.Context) error {
-	_, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
+	desiredProps := []*models.Property{
+		{Name: "menuItemId", DataType: []string{"text"}},
+		{Name: "businessId", DataType: []string{"text"}},
+		{Name: "menuSection", DataType: []string{"text"}},
+		{Name: "restaurantName", DataType: []string{"text"}},
+		{Name: "city", DataType: []string{"text"}},
+		{Name: "state", DataType: []string{"text"}},
+		{Name: "dishName", DataType: []string{"text"}},
+		{Name: "description", DataType: []string{"text"}},
+		{Name: "price", DataType: []string{"number"}},
+		{Name: "statedIngredients", DataType: []string{"text[]"}},
+		{Name: "hasFullIngredients", DataType: []string{"boolean"}},
+		{Name: "modifiers", DataType: []string{"text[]"}},
+		{Name: "sourceUrl", DataType: []string{"text"}},
+		{Name: "address", DataType: []string{"text"}},
+		{Name: "phoneNumber", DataType: []string{"text"}},
+		{Name: "scrapedAtUtc", DataType: []string{"text"}},
+	}
+
+	existing, err := c.wv.Schema().ClassGetter().WithClassName(menuCollectionName).Do(ctx)
 	if err == nil {
+		// Collection exists — check for missing properties and add them.
+		existingNames := make(map[string]bool, len(existing.Properties))
+		for _, p := range existing.Properties {
+			existingNames[p.Name] = true
+		}
+		for _, dp := range desiredProps {
+			if !existingNames[dp.Name] {
+				slog.Info("adding missing weaviate property to RestaurantMenu", "property", dp.Name)
+				if err := c.wv.Schema().PropertyCreator().
+					WithClassName(menuCollectionName).
+					WithProperty(dp).
+					Do(ctx); err != nil {
+					slog.Warn("failed to add missing weaviate property", "property", dp.Name, "error", err)
+				}
+			}
+		}
 		return nil
 	}
+
 	class := &models.Class{
 		Class:      menuCollectionName,
 		Vectorizer: "none",
-		Properties: []*models.Property{
-			{Name: "menuItemId", DataType: []string{"text"}},
-			{Name: "businessId", DataType: []string{"text"}},
-			{Name: "menuSection", DataType: []string{"text"}},
-			{Name: "restaurantName", DataType: []string{"text"}},
-			{Name: "city", DataType: []string{"text"}},
-			{Name: "state", DataType: []string{"text"}},
-			{Name: "dishName", DataType: []string{"text"}},
-			{Name: "description", DataType: []string{"text"}},
-			{Name: "statedIngredients", DataType: []string{"text[]"}},
-			{Name: "hasFullIngredients", DataType: []string{"boolean"}},
-			{Name: "sourceUrl", DataType: []string{"text"}},
-			{Name: "address", DataType: []string{"text"}},
-			{Name: "phoneNumber", DataType: []string{"text"}},
-			{Name: "scrapedAtUtc", DataType: []string{"text"}},
-		},
+		Properties: desiredProps,
 	}
 	if err := c.wv.Schema().ClassCreator().WithClass(class).Do(ctx); err != nil {
 		return fmt.Errorf("creating menu schema: %w", err)
@@ -1083,8 +1116,10 @@ func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
 				"state":              item.State,
 				"dishName":           item.DishName,
 				"description":        item.Description,
+				"price":              weaviatePrice(item.Price),
 				"statedIngredients":  item.StatedIngredients,
 				"hasFullIngredients": item.HasFullIngredients,
+				"modifiers":          weaviateModifiers(item.Modifiers),
 				"sourceUrl":          item.SourceURL,
 				"address":            item.Address,
 				"phoneNumber":        item.PhoneNumber,
@@ -1119,8 +1154,9 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 	}
 	fields := []graphql.Field{
 		{Name: "menuItemId"}, {Name: "businessId"}, {Name: "restaurantName"},
-		{Name: "dishName"}, {Name: "description"}, {Name: "statedIngredients"},
-		{Name: "hasFullIngredients"}, {Name: "sourceUrl"}, {Name: "city"}, {Name: "state"},
+		{Name: "menuSection"}, {Name: "dishName"}, {Name: "description"}, {Name: "price"},
+		{Name: "statedIngredients"}, {Name: "hasFullIngredients"}, {Name: "modifiers"},
+		{Name: "sourceUrl"}, {Name: "city"}, {Name: "state"},
 		{Name: "_additional { certainty }"},
 	}
 	resp, err := c.wv.GraphQL().Get().
@@ -1153,10 +1189,13 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 			MenuItemID:         stringField(m, "menuItemId"),
 			BusinessID:         stringField(m, "businessId"),
 			RestaurantName:     stringField(m, "restaurantName"),
+			MenuSection:        stringField(m, "menuSection"),
 			DishName:           stringField(m, "dishName"),
 			Description:        stringField(m, "description"),
+			Price:              float64Field(m, "price"),
 			StatedIngredients:  stringSliceField(m, "statedIngredients"),
 			HasFullIngredients: boolField(m, "hasFullIngredients"),
+			Modifiers:          weaviateModifiersIn(m, "modifiers"),
 			SourceURL:          stringField(m, "sourceUrl"),
 			Address:            stringField(m, "address"),
 			PhoneNumber:        stringField(m, "phoneNumber"),
@@ -1171,6 +1210,66 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 func stringField(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+// float64Field reads a number property from a Weaviate GraphQL result.
+func float64Field(m map[string]any, key string) *float64 {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch n := v.(type) {
+	case float64:
+		return &n
+	case float32:
+		f := float64(n)
+		return &f
+	case int:
+		f := float64(n)
+		return &f
+	}
+	return nil
+}
+
+// weaviatePrice returns a value suitable for the Weaviate "number" property,
+// or nil when price is absent.
+func weaviatePrice(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// weaviateModifiers serializes modifiers as a text[] of "name ($price)" for
+// Weaviate (which doesn't support nested object properties). The textual form
+// preserves the information without losing the price association.
+func weaviateModifiers(mods []Modifier) []string {
+	if len(mods) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(mods))
+	for i, m := range mods {
+		if m.Price != nil {
+			out[i] = fmt.Sprintf("%s ($%.2f)", m.Name, *m.Price)
+		} else {
+			out[i] = m.Name
+		}
+	}
+	return out
+}
+
+// weaviateModifiersIn parses the text[] form back into []Modifier.
+func weaviateModifiersIn(m map[string]any, key string) []Modifier {
+	raw, ok := m[key].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var mods []Modifier
+	for _, v := range raw {
+		s, _ := v.(string)
+		mods = append(mods, Modifier{Name: s})
+	}
+	return mods
 }
 
 // RegulatoryUpdate is a single regulatory update stored in the

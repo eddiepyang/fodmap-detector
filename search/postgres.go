@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -135,13 +136,13 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 
 		if len(item.Chunks) > 0 {
 			for _, chunk := range item.Chunks {
-				if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, chunk.Text, pgvector.NewVector(chunk.Vector)); err != nil {
+				if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, chunk.Text, pgvector.NewHalfVector(chunk.Vector)); err != nil {
 					return fmt.Errorf("insert chunk for %q: %w", item.Review.ReviewID, err)
 				}
 			}
 		} else if item.Vector != nil {
 			// Fallback for legacy indexing paths that don't chunk yet
-			if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, item.Review.Text, pgvector.NewVector(item.Vector)); err != nil {
+			if _, err := stmtChunk.ExecContext(ctx, item.Review.ReviewID, item.Review.Text, pgvector.NewHalfVector(item.Vector)); err != nil {
 				return fmt.Errorf("insert legacy chunk for %q: %w", item.Review.ReviewID, err)
 			}
 		}
@@ -202,7 +203,7 @@ func (c *PostgresClient) BatchUpsertFodmap(ctx context.Context, items map[string
 		if subs == nil {
 			subs = []string{}
 		}
-		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewVector(vec)); err != nil {
+		if _, err := stmt.ExecContext(ctx, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewHalfVector(vec)); err != nil {
 			return fmt.Errorf("insert fodmap %q: %w", name, err)
 		}
 	}
@@ -226,7 +227,7 @@ func (c *PostgresClient) SearchFodmap(ctx context.Context, ingredient string) (F
 
 	var res FodmapResult
 	var certainty float64
-	err = c.db.QueryRowContext(ctx, query, pgvector.NewVector(vec)).Scan(
+	err = c.db.QueryRowContext(ctx, query, pgvector.NewHalfVector(vec)).Scan(
 		&res.Ingredient, &res.Level, (*pgxStringArray)(&res.Groups), &res.Notes, (*pgxStringArray)(&res.Substitutions), &certainty,
 	)
 	if err != nil {
@@ -266,7 +267,7 @@ func (c *PostgresClient) UpsertFodmapItem(ctx context.Context, name string, entr
 			notes = EXCLUDED.notes,
 			substitutions = EXCLUDED.substitutions,
 			embedding = EXCLUDED.embedding
-	`, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewVector(vec))
+	`, name, entry.Level, pq.Array(groups), entry.Notes, pq.Array(subs), pgvector.NewHalfVector(vec))
 	if err != nil {
 		return fmt.Errorf("upsert fodmap item: %w", err)
 	}
@@ -320,7 +321,7 @@ func (c *PostgresClient) Businesses(ctx context.Context, query string, limit int
 
 	// Base query parts
 	whereClauses := []string{}
-	args := []any{pgvector.NewVector(vec)}
+	args := []any{pgvector.NewHalfVector(vec)}
 	argID := 2
 
 	if filter.Category != "" {
@@ -384,7 +385,7 @@ func (c *PostgresClient) Reviews(ctx context.Context, query string, limit int, f
 	}
 
 	whereClauses := []string{}
-	args := []any{pgvector.NewVector(vec)}
+	args := []any{pgvector.NewHalfVector(vec)}
 	argID := 2
 
 	if filter.BusinessID != "" {
@@ -473,8 +474,8 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO menu_items (menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, stated_ingredients, has_full_ingredients, source_url, address, phone_number, scraped_at_utc, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		INSERT INTO menu_items (menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at_utc, embedding)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (menu_item_id) DO UPDATE SET
 			business_id = EXCLUDED.business_id,
 			menu_section = EXCLUDED.menu_section,
@@ -483,8 +484,10 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 			state = EXCLUDED.state,
 			dish_name = EXCLUDED.dish_name,
 			description = EXCLUDED.description,
+			price = EXCLUDED.price,
 			stated_ingredients = EXCLUDED.stated_ingredients,
 			has_full_ingredients = EXCLUDED.has_full_ingredients,
+			modifiers = EXCLUDED.modifiers,
 			source_url = EXCLUDED.source_url,
 			address = EXCLUDED.address,
 			phone_number = EXCLUDED.phone_number,
@@ -499,9 +502,10 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 	for _, item := range items {
 		var vec any
 		if item.Vector != nil {
-			vec = pgvector.NewVector(item.Vector)
+			vec = pgvector.NewHalfVector(item.Vector)
 		}
-		if _, err := stmt.ExecContext(ctx, item.MenuItemID, item.BusinessID, item.MenuSection, item.RestaurantName, item.City, item.State, item.DishName, item.Description, pq.Array(item.StatedIngredients), item.HasFullIngredients, item.SourceURL, item.Address, item.PhoneNumber, item.ScrapedAtUTC, vec); err != nil {
+		modifiersJSON, _ := json.Marshal(item.Modifiers)
+		if _, err := stmt.ExecContext(ctx, item.MenuItemID, item.BusinessID, item.MenuSection, item.RestaurantName, item.City, item.State, item.DishName, item.Description, item.Price, pq.Array(item.StatedIngredients), item.HasFullIngredients, modifiersJSON, item.SourceURL, item.Address, item.PhoneNumber, item.ScrapedAtUTC, vec); err != nil {
 			return fmt.Errorf("insert menu item %q: %w", item.MenuItemID, err)
 		}
 	}
@@ -517,12 +521,12 @@ func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int
 	}
 
 	q := `
-		SELECT menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, stated_ingredients, has_full_ingredients, source_url, address, phone_number, scraped_at_utc
+		SELECT menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at_utc
 		FROM menu_items
 		ORDER BY embedding <=> $1
 		LIMIT $2
 	`
-	rows, err := c.db.QueryContext(ctx, q, pgvector.NewVector(vec), limit)
+	rows, err := c.db.QueryContext(ctx, q, pgvector.NewHalfVector(vec), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query menu items: %w", err)
 	}
@@ -532,7 +536,9 @@ func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int
 	for rows.Next() {
 		var m MenuItem
 		var sec, restName, city, state, desc, sourceURL, address, phone, scrapedAt sql.NullString
-		if err := rows.Scan(&m.MenuItemID, &m.BusinessID, &sec, &restName, &city, &state, &m.DishName, &desc, (*pgxStringArray)(&m.StatedIngredients), &m.HasFullIngredients, &sourceURL, &address, &phone, &scrapedAt); err != nil {
+		var price sql.NullFloat64
+		var modifiersJSON []byte
+		if err := rows.Scan(&m.MenuItemID, &m.BusinessID, &sec, &restName, &city, &state, &m.DishName, &desc, &price, (*pgxStringArray)(&m.StatedIngredients), &m.HasFullIngredients, &modifiersJSON, &sourceURL, &address, &phone, &scrapedAt); err != nil {
 			return nil, fmt.Errorf("scan menu item: %w", err)
 		}
 		m.MenuSection = sec.String
@@ -540,6 +546,13 @@ func (c *PostgresClient) SearchMenu(ctx context.Context, query string, limit int
 		m.City = city.String
 		m.State = state.String
 		m.Description = desc.String
+		if price.Valid {
+			p := price.Float64
+			m.Price = &p
+		}
+		if len(modifiersJSON) > 0 && string(modifiersJSON) != "null" {
+			_ = json.Unmarshal(modifiersJSON, &m.Modifiers)
+		}
 		m.SourceURL = sourceURL.String
 		m.Address = address.String
 		m.PhoneNumber = phone.String

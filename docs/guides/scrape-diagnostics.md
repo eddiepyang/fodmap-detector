@@ -11,12 +11,52 @@ The scrape cascade itself is described in
 operational counterpart — *how to inspect what actually happened*.
 
 > `psql` is generally **not installed on the host**. Query Postgres through the
-> running container instead (note the `-e PGPASSWORD` and `-tA` for clean,
-> tab-separated, unaligned output):
+> running container instead.
 >
+> **Note on Shells (Bash vs Zsh):** Zsh (default on macOS) does not perform word-splitting on variable expansions, which causes `$PSQL -c "..."` to fail with `command not found`. To run these queries:
+> 
+> *   **Using Zsh (macOS)**: Prefix with `eval` (e.g., `eval $PSQL -c "..."`) or use the splitting flag `$=PSQL` (e.g., `$=PSQL -c "..."`). Alternatively, define it as an alias:
+>     ```bash
+>     alias psql-docker="docker exec -e PGPASSWORD=fodmap fodmap-detector-postgres-1 psql -U fodmap -d fodmap -tA"
+>     ```
+>     And run commands using `psql-docker` instead of `$PSQL`.
+> *   **Using Bash (Linux)**: Standard variable expansion `$PSQL -c "..."` works normally.
+>
+> **Variable Definition:**
 > ```bash
 > PSQL="docker exec -e PGPASSWORD=fodmap fodmap-detector-postgres-1 psql -U fodmap -d fodmap -tA"
 > ```
+
+---
+
+## 0. Automated Diagnostics Tool
+
+To make query execution faster, safer, and cleaner, we provide an automated diagnostics script in the sibling `scraper` repository: [scraper/scripts/scrape_diagnostics.py](../../../scraper/scripts/scrape_diagnostics.py). It queries Postgres in the Docker container, handles multi-line/array formatting issues automatically, parses JSON structures, and presents cleanly formatted summaries.
+
+To run the summary dashboard (overview, buckets, tiers, and River queue states) from the root of the `scraper` repository:
+```bash
+./scripts/scrape_diagnostics.py
+```
+
+To view a breakdown of scrape failures (taxonomy and list of failed restaurants):
+```bash
+./scripts/scrape_diagnostics.py --failed
+```
+
+To check all active, running, or retryable River jobs in detail (with their attempt counters and last errors):
+```bash
+./scripts/scrape_diagnostics.py --river
+```
+
+To inspect a single restaurant's status, metadata, and history of related River jobs (active or completed) by CAMIS ID:
+```bash
+./scripts/scrape_diagnostics.py --restaurant 50138930
+```
+
+To output all raw metrics as a single JSON object for integration with other tools:
+```bash
+./scripts/scrape_diagnostics.py --json
+```
 
 ---
 
@@ -177,6 +217,36 @@ service 502 structuring_failed: ... (request_id=abc123)
 Grep the Python service logs for that `request_id` to join the two sides of a
 single extraction across the service boundary.
 
+## 9. Querying collected menus & schema
+
+The final step of a successful scrape is storing the structured items. You can query the full schema and collected menus in both the Postgres relational database and the Weaviate vector database.
+
+### 9.1 PostgreSQL Relational DB
+
+To view the schema of the `menu_items` table:
+```bash
+$PSQL -c "\d menu_items"
+```
+
+To fetch a sample of stored menu items with their structured details:
+```bash
+$PSQL -c "SELECT restaurant_name, dish_name, stated_ingredients, has_full_ingredients, source_url FROM menu_items LIMIT 10;"
+```
+
+### 9.2 Weaviate Vector DB
+
+To inspect the full `RestaurantMenu` collection schema definition:
+```bash
+curl -s http://localhost:8090/v1/schema | jq '.classes[] | select(.class == "RestaurantMenu")'
+```
+
+To query collected menu items from Weaviate (including full details and vector-related metadata):
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"query":"{ Get { RestaurantMenu(limit: 5) { menuItemId businessId menuSection restaurantName city state dishName description statedIngredients hasFullIngredients sourceUrl scrapedAtUtc address phoneNumber } } }"}' \
+  http://localhost:8090/v1/graphql | jq .
+```
+
 ---
 
 ## Quick reference
@@ -191,3 +261,4 @@ single extraction across the service boundary.
 | What structured data was stored? | §6 silver Avro |
 | What path did the job take? | §7 cascade logs |
 | Where did it break across services? | §8 `request_id` |
+| How to query the collected menus/schema? | §9 Weaviate & Postgres queries |

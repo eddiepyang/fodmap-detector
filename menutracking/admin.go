@@ -72,7 +72,7 @@ func (h *AdminHandler) listDiscardedJobs(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rows, err := h.Pool.Query(ctx, store.ListDiscardedJobsSQL, limit)
+	rows, err := h.Pool.Query(ctx, store.RenderListDiscardedJobsSQL(), limit)
 	if err != nil {
 		slog.Error("menutracking admin: listing discarded jobs", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)

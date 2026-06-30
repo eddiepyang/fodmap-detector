@@ -1,6 +1,6 @@
 # Data Model & Pipeline
 
-For the relational/Postgres schema, see [database-schema.md](database-schema.md).
+For the relational/Postgres schema, see [database-schema.md](database-schema.md). For an overview of the Go/Python split service architecture, see [pipeline-architecture.md](pipeline-architecture.md).
 
 ## Core Data Model
 
