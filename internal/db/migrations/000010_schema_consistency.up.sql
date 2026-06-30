@@ -1,11 +1,13 @@
+-- ═══ menu_items: FK → UUID, TRUNCATE, rename scraped_at, add timestamps ═══
+ALTER TABLE menu_items DROP CONSTRAINT IF EXISTS menu_items_business_id_fkey;
+
 -- ═══ restaurants: surrogate UUID PK + external IDs ═══
+ALTER TABLE restaurants DROP CONSTRAINT IF EXISTS restaurants_pkey CASCADE;
 ALTER TABLE restaurants ADD COLUMN id UUID PRIMARY KEY DEFAULT gen_random_uuid();
 ALTER TABLE restaurants ALTER COLUMN camis DROP NOT NULL;
 ALTER TABLE restaurants ADD CONSTRAINT restaurants_camis_unique UNIQUE (camis);
 ALTER TABLE restaurants ADD COLUMN yelp_id TEXT UNIQUE;
 
--- ═══ menu_items: FK → UUID, TRUNCATE, rename scraped_at, add timestamps ═══
-ALTER TABLE menu_items DROP CONSTRAINT IF EXISTS menu_items_business_id_fkey;
 TRUNCATE TABLE menu_items;
 ALTER TABLE menu_items DROP COLUMN business_id;
 ALTER TABLE menu_items ADD COLUMN business_id UUID NOT NULL;
