@@ -16,6 +16,7 @@ import (
 	"fodmap/server"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -29,6 +30,11 @@ var scrapeCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(scrapeCmd)
+
+	// camis identifies the restaurant row this menu belongs to. It is stored
+	// on menu_items.business_id and must match restaurants.camis (foreign key).
+	// Default is a sentinel for ad-hoc CLI scrapes that are not linked to a row.
+	scrapeCmd.Flags().String("camis", "cli-manual", "Restaurant CAMIS (NYC DOHMH ID); links menu_items.business_id to restaurants.camis")
 
 	// Storage backend
 	scrapeCmd.Flags().String("menu-store", "", "Menu store backend: postgres | weaviate | dual (preferred over --store)")
@@ -199,9 +205,43 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	camis := "cli-manual"
+	camis, _ := cmd.Flags().GetString("camis")
 	jobID := "0"
 	attempt := int(time.Now().Unix())
+
+	// Resolve a restaurants.id UUID for menu_items.business_id. When a
+	// postgres DSN is configured, look up (or upsert) the restaurant row.
+	// Otherwise derive a deterministic UUID from the camis string so ad-hoc
+	// CLI scrapes still produce a stable surrogate key.
+	var restaurantID uuid.UUID
+	pgDSN := viper.GetString("postgres-dsn")
+	if pgDSN != "" {
+		pool, pErr := pgxpool.New(ctx, pgDSN)
+		if pErr != nil {
+			return fmt.Errorf("connect to db for restaurant lookup: %w", pErr)
+		}
+		defer pool.Close()
+		restaurantStore := menusearch.NewStore(pool)
+		rest, gErr := restaurantStore.Get(ctx, camis)
+		if gErr != nil {
+			slog.Warn("failed to look up restaurant by camis", "camis", camis, "error", gErr)
+		}
+		if rest == nil {
+			camisPtr := camis
+			upserted, uErr := restaurantStore.Upsert(ctx, server.Restaurant{
+				CAMIS:  &camisPtr,
+				DBA:    result.RestaurantName,
+				Status: menusearch.StatusPendingDiscovery,
+			})
+			if uErr != nil {
+				return fmt.Errorf("upsert restaurant for camis %s: %w", camis, uErr)
+			}
+			rest = upserted
+		}
+		restaurantID = rest.ID
+	} else {
+		restaurantID = uuid.NewSHA1(uuid.NameSpaceDNS, []byte(camis))
+	}
 
 	if len(rawBody) > 0 {
 		date := time.Now().UTC().Format("2006-01-02")
@@ -235,7 +275,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 	}
 
 	record := menusearch.MenuExtractionRecord{
-		CAMIS:            camis,
+		BusinessID:       restaurantID.String(),
 		SourceURL:        rawURL,
 		RestaurantName:   result.RestaurantName,
 		Items:            items,
@@ -258,7 +298,7 @@ func runScrape(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	count, err := pipeline.StoreMenu(ctx, result, rawURL, store, embedder)
+	count, err := pipeline.StoreMenu(ctx, result, restaurantID, rawURL, store, embedder)
 	if err != nil {
 		return err
 	}

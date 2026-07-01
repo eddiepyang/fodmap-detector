@@ -48,10 +48,21 @@ func (w *ScrapeMenuWorker) Timeout(job *river.Job[ScrapeMenuArgs]) time.Duration
 
 func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuArgs]) error {
 	args := job.Args
-	logger := slog.With("job", job.ID, "camis", args.CAMIS, "url", args.URL)
+	logger := slog.With("job", job.ID, "restaurant_id", args.RestaurantID, "url", args.URL)
 	logger.Info("starting scrape job")
 
-	err := w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusScraping, 0, "")
+	// Resolve the restaurant row to get camis (for status updates, file naming)
+	// and address/phone (for enrichment).
+	rest, err := w.Store.GetByID(ctx, args.RestaurantID)
+	if err != nil {
+		return fmt.Errorf("get restaurant by id: %w", err)
+	}
+	if rest == nil {
+		return fmt.Errorf("restaurant %s not found", args.RestaurantID)
+	}
+	camis := safeDeref(rest.CAMIS)
+
+	err = w.Store.UpdateScrapeResult(ctx, camis, StatusScraping, 0, "")
 	if err != nil {
 		return fmt.Errorf("update status to scraping: %w", err)
 	}
@@ -62,30 +73,25 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 		// must not clobber the restaurant status — River will retry the job up to
 		// MaxAttempts times. Write StatusFailedScrape only for permanent failures.
 		if !scraper.IsRenderTransient(err) {
-			_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedScrape, 0, err.Error())
+			_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, err.Error())
 		} else {
 			logger.Warn("transient render error; skipping failed_scrape write for retry", "error", err)
 		}
 		return fmt.Errorf("extract menu: %w", err)
 	}
 
-	rest, err := w.Store.Get(ctx, args.CAMIS)
-	if err != nil {
-		logger.Warn("failed to get restaurant for address enrichment", "error", err)
-	} else if rest != nil {
-		if rest.Address != nil {
-			result.Address = *rest.Address
-		}
-		if rest.Phone != nil {
-			result.PhoneNumber = *rest.Phone
-		}
+	if rest.Address != nil {
+		result.Address = *rest.Address
+	}
+	if rest.Phone != nil {
+		result.PhoneNumber = *rest.Phone
 	}
 
 	// Write raw body to bronze layer (best-effort). PDF bytes use .html extension
 	// like menutracking; the extension is informational only.
 	if len(rawBody) > 0 {
 		date := time.Now().UTC().Format("2006-01-02")
-		htmlPath := filepath.Join(w.bronzeDir(), date, fmt.Sprintf("%s-%d.html", args.CAMIS, job.Attempt))
+		htmlPath := filepath.Join(w.bronzeDir(), date, fmt.Sprintf("%s-%d.html", camis, job.Attempt))
 		if mkErr := os.MkdirAll(filepath.Dir(htmlPath), 0o755); mkErr == nil {
 			if wErr := os.WriteFile(htmlPath, rawBody, 0o644); wErr != nil {
 				logger.Warn("failed to write HTML bronze", "path", htmlPath, "error", wErr)
@@ -99,7 +105,7 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 	// through the full cascade, and aggregate the results into a single write.
 	// Sub-URL fetches happen at depth 1 (in-loop) and never recurse further.
 	if (result == nil || len(result.Items) == 0) && args.Depth == 0 {
-		expanded, expandErr := w.tryDirectoryExpansion(ctx, args, rawBody, result, logger)
+		expanded, expandErr := w.tryDirectoryExpansion(ctx, args, camis, rawBody, result, logger)
 		if expandErr != nil {
 			// tryDirectoryExpansion already wrote failed_scrape when appropriate.
 			return expandErr
@@ -113,11 +119,11 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 	}
 
 	if result == nil || len(result.Items) == 0 {
-		_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedScrape, 0, "no menu items found")
+		_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, "no menu items found")
 		return fmt.Errorf("no menu items found")
 	}
 
-	return w.storeAndFinish(ctx, job, args, result, logger)
+	return w.storeAndFinish(ctx, job, args, camis, rest.ID, result, logger)
 }
 
 // tryDirectoryExpansion attempts sub-URL discovery and extraction when the root
@@ -127,11 +133,12 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 func (w *ScrapeMenuWorker) tryDirectoryExpansion(
 	ctx context.Context,
 	args ScrapeMenuArgs,
+	camis string,
 	rawBody []byte,
 	rootResult *scraper.MenuExtractionResult,
 	logger *slog.Logger,
 ) (bool, error) {
-	logger.Info(fmt.Sprintf("directory expansion of %s: root URL %s yielded 0 items; attempting sub-URL extraction", args.CAMIS, args.URL))
+	logger.Info(fmt.Sprintf("directory expansion of %s: root URL %s yielded 0 items; attempting sub-URL extraction", camis, args.URL))
 
 	// Obtain HTML for anchor parsing.  rawBody is populated by the normal fetch
 	// path.  For JS-rendered pages the pipeline returns nil rawBody — in that
@@ -221,7 +228,7 @@ func (w *ScrapeMenuWorker) tryDirectoryExpansion(
 		}
 		date := time.Now().UTC().Format("2006-01-02")
 		subPath := filepath.Join(w.bronzeDir(), date,
-			fmt.Sprintf("%s-sub%d.html", args.CAMIS, i))
+			fmt.Sprintf("%s-sub%d.html", camis, i))
 		if mkErr := os.MkdirAll(filepath.Dir(subPath), 0o755); mkErr == nil {
 			if wErr := os.WriteFile(subPath, sr.rawBody, 0o644); wErr != nil {
 				logger.Warn("failed to write sub-URL bronze", "path", subPath, "error", wErr)
@@ -231,7 +238,7 @@ func (w *ScrapeMenuWorker) tryDirectoryExpansion(
 
 	logger.Info("directory expansion: aggregated items", "count", len(aggregated.Items), "sub_urls", len(subResults))
 
-	if err := w.storeAndFinish(ctx, nil, args, &aggregated, logger); err != nil {
+	if err := w.storeAndFinish(ctx, nil, args, camis, args.RestaurantID, &aggregated, logger); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -244,18 +251,21 @@ func (w *ScrapeMenuWorker) storeAndFinish(
 	ctx context.Context,
 	job *river.Job[ScrapeMenuArgs],
 	args ScrapeMenuArgs,
+	camis string,
+	restaurantID uuid.UUID,
 	result *scraper.MenuExtractionResult,
 	logger *slog.Logger,
 ) error {
 	eventID := uuid.NewString()
-	items := make([]search.MenuItem, 0, len(result.Items))
-	for _, entry := range result.Items {
-		items = append(items, search.MenuItem{
-			DishName:           entry.DishName,
-			Description:        entry.Description,
-			StatedIngredients:  entry.StatedIngredients,
-			HasFullIngredients: entry.HasFullIngredients,
-		})
+
+	// Build the full []search.MenuItem once: it carries every per-item field
+	// (section, price, modifiers, source_url, scraped_at, MenuItemID) so the
+	// Avro record is a complete snapshot that can replay the menu_items table
+	// bit-for-bit, and the DB upsert reuses the same items (no re-embedding).
+	items, err := pipeline.ToMenuItems(ctx, *result, restaurantID, args.URL, w.Embedder)
+	if err != nil {
+		_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, fmt.Errorf("embed menu items: %w", err).Error())
+		return fmt.Errorf("embed menu items: %w", err)
 	}
 
 	var jobIDStr string
@@ -266,7 +276,7 @@ func (w *ScrapeMenuWorker) storeAndFinish(
 	}
 
 	record := MenuExtractionRecord{
-		CAMIS:            args.CAMIS,
+		BusinessID:       restaurantID.String(),
 		SourceURL:        args.URL,
 		RestaurantName:   result.RestaurantName,
 		Items:            items,
@@ -277,25 +287,25 @@ func (w *ScrapeMenuWorker) storeAndFinish(
 		ExtractionTier:   result.ExtractionTier,
 	}
 
-	avroDest := filepath.Join(w.AvroDestDir, fmt.Sprintf("%s-%d.avro", args.CAMIS, attempt))
+	avroDest := filepath.Join(w.AvroDestDir, fmt.Sprintf("%s-%d.avro", camis, attempt))
 	if err := WriteMenuExtractionAvro(ctx, avroDest, record); err != nil {
 		logger.Error("failed to write avro", "error", err)
 	}
 
-	count, err := pipeline.StoreMenu(ctx, result, args.URL, w.MenuStore, w.Embedder)
+	count, err := pipeline.StoreMenuItems(ctx, items, w.MenuStore)
 	if err != nil {
-		_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedScrape, 0, err.Error())
+		_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, err.Error())
 		return fmt.Errorf("store menu: %w", err)
 	}
 
-	err = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusScraped, count, "")
+	err = w.Store.UpdateScrapeResult(ctx, camis, StatusScraped, count, "")
 	if err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
 
 	// Tier-mix telemetry (best-effort): record which cascade tier produced this
 	// result so the JSON-LD vs. LLM/OCR/browser split can be measured.
-	if tErr := w.Store.SetExtractionTier(ctx, args.CAMIS, result.ExtractionTier); tErr != nil {
+	if tErr := w.Store.SetExtractionTier(ctx, camis, result.ExtractionTier); tErr != nil {
 		logger.Warn("failed to record extraction tier", "tier", result.ExtractionTier, "error", tErr)
 	}
 

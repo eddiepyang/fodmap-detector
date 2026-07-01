@@ -48,7 +48,7 @@ func FetchNYCRestaurants(ctx context.Context, area string, appToken string, sinc
 
 	q := u.Query()
 	q.Set("$where", soqlWhere)
-	q.Set("$select", "camis,dba,boro,building,street,zipcode,phone,cuisine_description,inspection_date,latitude,longitude,nta,record_date")
+	q.Set("$select", "camis,dba,boro,building,street,zipcode,phone,cuisine_description,inspection_date,action,violation_code,violation_description,critical_flag,score,grade,grade_date,record_date,inspection_type,latitude,longitude,community_board,council_district,census_tract,bin,bbl,nta,location")
 	q.Set("$limit", "50000") // safe cap
 	u.RawQuery = q.Encode()
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/pipeline"
 	"fodmap/scraper"
 )
@@ -65,7 +67,7 @@ func sampleResult() scraper.MenuExtractionResult {
 
 func TestToMenuItems(t *testing.T) {
 	rawURL := "https://example.com/menu"
-	items, err := pipeline.ToMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
+	items, err := pipeline.ToMenuItems(context.Background(), sampleResult(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems: %v", err)
 	}
@@ -108,11 +110,11 @@ func TestToMenuItems(t *testing.T) {
 
 func TestToMenuItems_Deterministic(t *testing.T) {
 	rawURL := "https://example.com/menu"
-	a, err := pipeline.ToMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
+	a, err := pipeline.ToMenuItems(context.Background(), sampleResult(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems (a): %v", err)
 	}
-	b, err := pipeline.ToMenuItems(context.Background(), sampleResult(), rawURL, stubEmbedder{})
+	b, err := pipeline.ToMenuItems(context.Background(), sampleResult(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), rawURL, stubEmbedder{})
 	if err != nil {
 		t.Fatalf("toMenuItems (b): %v", err)
 	}
@@ -122,7 +124,7 @@ func TestToMenuItems_Deterministic(t *testing.T) {
 }
 
 func TestToMenuItems_EmbedError(t *testing.T) {
-	items, err := pipeline.ToMenuItems(context.Background(), sampleResult(), "https://example.com/menu", stubEmbedder{err: errors.New("boom")})
+	items, err := pipeline.ToMenuItems(context.Background(), sampleResult(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), "https://example.com/menu", stubEmbedder{err: errors.New("boom")})
 	if err == nil {
 		t.Fatal("expected error from embedder, got nil")
 	}

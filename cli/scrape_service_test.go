@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/pipeline"
 	"fodmap/scraper"
 	"fodmap/search"
@@ -24,6 +26,7 @@ func (f *testForceRenderFetcher) Fetch(ctx context.Context, url string) (scraper
 
 func runScrapeWith(
 	ctx context.Context,
+	restaurantID uuid.UUID,
 	rawURL string,
 	fetcher scraper.Fetcher,
 	ex scraper.Extractor,
@@ -44,7 +47,7 @@ func runScrapeWith(
 		return err
 	}
 	if result != nil && len(result.Items) > 0 {
-		_, err = pipeline.StoreMenu(ctx, result, rawURL, store, embedder)
+		_, err = pipeline.StoreMenu(ctx, result, restaurantID, rawURL, store, embedder)
 		return err
 	}
 	return nil
@@ -110,6 +113,7 @@ func TestRunScrapeWith_PDFServicePath_SkipsExtract(t *testing.T) {
 
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu.pdf",
 		&pdfFetcher{},
 		stub,
@@ -139,6 +143,7 @@ func TestRunScrapeWith_PDFServicePath_EmptyResultIsNotAnError(t *testing.T) {
 
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu.pdf",
 		&pdfFetcher{},
 		stub,
@@ -187,6 +192,7 @@ func TestRunScrapeWith_HTMLPathStillCallsExtract(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		&htmlFetcher{},
 		ex,
@@ -260,6 +266,7 @@ func TestRunScrapeWith_NoisyHTMLRoutesToWebagent(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		&noisyHTMLFetcher{},
 		js,
@@ -326,6 +333,7 @@ func TestRunScrapeWith_SpaShellRoutesToWebagent(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://www.3greeksgrill.com",
 		&spaShellFetcher{},
 		ex,
@@ -401,6 +409,7 @@ func TestRunScrapeWith_SpaShellWithoutAdapterFallsBackToExtract(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://www.3greeksgrill.com",
 		&spaShellFetcher{},
 		ex,
@@ -427,6 +436,7 @@ func TestRunScrapeWith_NoisyHTMLWithoutJSRenderFallsBackToExtract(t *testing.T) 
 	// fall through to the normal ex.Extract path (with trafilatura fallback).
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		&noisyHTMLFetcher{},
 		ex,
@@ -513,6 +523,7 @@ func TestRunScrapeWith_NoisyHTMLWithMenuImageRoutesToImageOCR(t *testing.T) {
 	fetcher := &menuImageFetcher{}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		fetcher,
 		img,
@@ -551,6 +562,7 @@ func TestRunScrapeWith_MenuImagePrefersImageOverWebagent(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		&menuImageFetcher{},
 		both,
@@ -667,6 +679,7 @@ func TestRunScrapeWith_EmptyTextTriggersImageEvenWhenNotNoisy(t *testing.T) {
 	fetcher := &boilerplateMenuFetcher{}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		fetcher,
 		stub,
@@ -702,6 +715,7 @@ func TestRunScrapeWith_NonEmptyTextDoesNotTriggerImage(t *testing.T) {
 	fetcher := &boilerplateMenuFetcher{}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://example.com/menu",
 		fetcher,
 		stub,
@@ -778,6 +792,7 @@ func TestRunScrapeWith_GenericJSRenderReCascadesWithoutAdapter(t *testing.T) {
 	fetcher := &jsShellFetcher{}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://spa.example.com/menu",
 		fetcher,
 		ex,
@@ -807,6 +822,7 @@ func TestRunScrapeWith_GenericJSRenderSkippedWhenFetchRenderedNotImplemented(t *
 	plain := &htmlFetcher{} // implements only Fetch, not FetchRendered
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://spa.example.com/menu",
 		plain,
 		ex,
@@ -834,6 +850,7 @@ func TestRunScrapeWith_WebagentAdapterPreferredOverGenericRender(t *testing.T) {
 	}
 	err := runScrapeWith(
 		context.Background(),
+		uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		"https://spa.example.com/menu",
 		js, // implements Fetcher, RenderedFetcher, JSRenderer, Extractor
 		js,

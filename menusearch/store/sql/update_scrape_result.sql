@@ -2,8 +2,7 @@ UPDATE restaurants
 SET status = $2,
     item_count = CASE WHEN $2 = 'scraped' AND status IN ('scraped', 'scraping') THEN item_count + $3 ELSE $3 END,
     last_error = NULLIF($4, ''),
-    scraped_at = CASE WHEN $2 = 'scraped' THEN NOW() ELSE scraped_at END,
-    updated_at = NOW()
+    scraped_at = CASE WHEN $2 = 'scraped' THEN NOW() ELSE scraped_at END
 WHERE camis = $1
   -- Once a restaurant is successfully scraped, only another 'scraped' write may
   -- change it. This blocks BOTH a sibling menu-URL job's opening 'scraping'

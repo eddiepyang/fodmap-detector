@@ -9,5 +9,4 @@ ON CONFLICT (id) DO UPDATE SET
   domain = EXCLUDED.domain,
   tier = EXCLUDED.tier,
   cron_schedule = EXCLUDED.cron_schedule,
-  max_tokens = EXCLUDED.max_tokens,
-  updated_at = EXCLUDED.updated_at;
+  max_tokens = EXCLUDED.max_tokens;

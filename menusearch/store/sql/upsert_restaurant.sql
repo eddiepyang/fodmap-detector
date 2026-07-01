@@ -13,5 +13,5 @@ INSERT INTO restaurants (
     cuisine = EXCLUDED.cuisine,
     latitude = EXCLUDED.latitude,
     longitude = EXCLUDED.longitude,
-    nta = EXCLUDED.nta,
-    updated_at = NOW();
+    nta = EXCLUDED.nta
+RETURNING id;

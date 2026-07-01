@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,7 +150,7 @@ func TestPostgresStore_CreateConversation(t *testing.T) {
 	conv := &Conversation{
 		ID:                "c1",
 		UserID:            "u1",
-		BusinessID:        "b1",
+		BusinessID:        uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		BusinessName:      "Biz",
 		Title:             "Test Title",
 		SearchCategory:    "pizza",
@@ -179,8 +180,8 @@ func TestPostgresStore_ListConversations(t *testing.T) {
 	mock.ExpectQuery("SELECT id, user_id, business_id, business_name, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations WHERE user_id = \\$1 ORDER BY updated_at DESC").
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "business_id", "business_name", "title", "created_at", "updated_at", "review_context", "search_category", "search_city", "search_state", "search_description"}).
-			AddRow("c1", userID, "b1", "Biz1", "Title 1", now, now, "", "p", "a", "t", "d").
-			AddRow("c2", userID, "b2", "Biz2", "Title 2", now, now, "null", "", "", "", ""))
+			AddRow("c1", userID, "550e8400-e29b-41d4-a716-446655440000", "Biz1", "Title 1", now, now, "", "p", "a", "t", "d").
+			AddRow("c2", userID, "550e8400-e29b-41d4-a716-446655440001", "Biz2", "Title 2", now, now, "null", "", "", "", ""))
 
 	convs, err := store.ListConversations(context.Background(), userID)
 	assert.NoError(t, err)
@@ -201,7 +202,7 @@ func TestPostgresStore_Conversation(t *testing.T) {
 	mock.ExpectQuery("SELECT id, user_id, business_id, business_name, title, created_at, updated_at, review_context, search_category, search_city, search_state, search_description FROM conversations WHERE id = \\$1").
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "business_id", "business_name", "title", "created_at", "updated_at", "review_context", "search_category", "search_city", "search_state", "search_description"}).
-			AddRow(id, "u1", "b1", "Biz1", "Title", now, now, nil, "p", "a", "t", "d"))
+			AddRow(id, "u1", "550e8400-e29b-41d4-a716-446655440000", "Biz1", "Title", now, now, nil, "p", "a", "t", "d"))
 
 	conv, err := store.Conversation(context.Background(), id)
 	assert.NoError(t, err)
@@ -255,8 +256,8 @@ func TestPostgresStore_AddMessage(t *testing.T) {
 		WithArgs(msg.ID, msg.ConversationID, msg.Role, msg.Content, msg.Sequence, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	mock.ExpectExec("UPDATE conversations SET updated_at = \\$1 WHERE id = \\$2").
-		WithArgs(sqlmock.AnyArg(), msg.ConversationID).
+	mock.ExpectExec("UPDATE conversations SET updated_at = NOW\\(\\) WHERE id = \\$1").
+		WithArgs(msg.ConversationID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := store.AddMessage(context.Background(), msg)

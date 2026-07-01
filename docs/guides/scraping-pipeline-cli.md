@@ -106,3 +106,30 @@ go run . restaurants retry 50012345
 export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
 go run . restaurants retry-all-failed
 ```
+
+### Replaying Restaurants from the Bronze Layer
+
+The `replay-restaurants` subcommand re-runs the restaurant upsert and discovery-enqueue flow from NYC restaurant records already persisted in the Avro bronze layer — it skips the NYC OpenData API fetch entirely. This is useful for re-driving a pipeline run from saved data (e.g., after a DB wipe or to re-queue discovery jobs).
+
+`--limit` and `--offset` apply **globally across all loaded Avro records**, not per file.
+
+```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+
+# Replay every .avro file under the bronze directory (default: data/bronze/restaurants)
+go run . restaurants replay-restaurants
+
+# Replay a single specific avro file
+go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-06-29.avro
+
+# Replay only records 20..39 (across all files), and skip enqueuing discovery jobs
+go run . restaurants replay-restaurants --limit 20 --offset 20 --skip-discovery
+```
+
+Flags:
+- `--avro-file <path>` — replay a single file; when omitted, the bronze dir is scanned for `*.avro`.
+- `--bronze-dir data/bronze/restaurants` — directory to scan when `--avro-file` is unset.
+- `--postgres-dsn` — PostgreSQL DSN (or `POSTGRES_DSN` env var).
+- `--limit N` — cap the number of records replayed across all files (0 = all).
+- `--offset N` — skip the first N records across all files.
+- `--skip-discovery` — only upsert restaurants; don't enqueue `DiscoverMenuURL` jobs.

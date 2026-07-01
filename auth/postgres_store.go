@@ -103,7 +103,7 @@ func (s *PostgresStore) DietaryProfile(ctx context.Context, userID string) ([]by
 
 // SaveDietaryProfile upserts a user's dietary profile.
 func (s *PostgresStore) SaveDietaryProfile(ctx context.Context, userID string, profile []byte) error {
-	query := `INSERT INTO user_profiles (user_id, profile) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET profile = EXCLUDED.profile, updated_at = CURRENT_TIMESTAMP`
+	query := `INSERT INTO user_profiles (user_id, profile) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET profile = EXCLUDED.profile`
 	_, err := s.db.ExecContext(ctx, query, userID, profile)
 	if err != nil {
 		return fmt.Errorf("failed to save dietary profile: %w", err)
@@ -260,7 +260,7 @@ func (s *PostgresStore) AddMessage(ctx context.Context, msg *Message) error {
 	}
 
 	// Update conversation's updated_at.
-	_, err = s.db.ExecContext(ctx, "UPDATE conversations SET updated_at = $1 WHERE id = $2", msg.CreatedAt, msg.ConversationID)
+	_, err = s.db.ExecContext(ctx, "UPDATE conversations SET updated_at = NOW() WHERE id = $1", msg.ConversationID)
 	return err
 }
 

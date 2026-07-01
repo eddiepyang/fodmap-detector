@@ -62,7 +62,7 @@ func main() {
 
 	want := "html_llm"
 	rec := menusearch.MenuExtractionRecord{
-		CAMIS:          "TEST123",
+		BusinessID:     "TEST123",
 		SourceURL:      "https://example.com/menu",
 		RestaurantName: "Test Diner",
 		Items:          []search.MenuItem{{DishName: "Fries", Description: "salty"}},

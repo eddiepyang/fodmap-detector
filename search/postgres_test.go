@@ -11,6 +11,7 @@ import (
 	"fodmap/data/schemas"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
 )
@@ -245,7 +246,7 @@ func TestPostgresClient_Businesses(t *testing.T) {
 	mock.ExpectQuery("WITH chunk_scores AS \\(").
 		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}), "%Pizza%", "%New York%", "NY", 10).
 		WillReturnRows(sqlmock.NewRows([]string{"business_id", "name", "city", "state", "categories", "avg_stars", "avg_certainty"}).
-			AddRow("bus1", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
+			AddRow("550e8400-e29b-41d4-a716-446655440000", "Joe's Pizza", "New York", "NY", "Pizza", 4.5, 0.9))
 
 	res, err := client.Businesses(context.Background(), "good pizza", 10, SearchFilter{
 		Category: "Pizza",
@@ -256,7 +257,7 @@ func TestPostgresClient_Businesses(t *testing.T) {
 		t.Fatalf("Businesses returned error: %v", err)
 	}
 
-	if len(res.Businesses) != 1 || res.Businesses[0].ID != "bus1" {
+	if len(res.Businesses) != 1 || res.Businesses[0].ID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440000") {
 		t.Errorf("Unexpected businesses: %+v", res.Businesses)
 	}
 
@@ -280,12 +281,12 @@ func TestPostgresClient_Reviews(t *testing.T) {
 	}
 
 	mock.ExpectQuery("WITH best_chunks AS \\(").
-		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}), "bus1", pq.Array([]string{"rev1"}), 5).
+		WithArgs(pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3}), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), pq.Array([]string{"rev1"}), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"review_id", "business_id", "business_name", "city", "state", "text", "chunk_text", "certainty"}).
-			AddRow("rev1", "bus1", "Joe's Pizza", "New York", "NY", "Great pizza!", "Great pizza chunk", 0.95))
+			AddRow("rev1", "550e8400-e29b-41d4-a716-446655440000", "Joe's Pizza", "New York", "NY", "Great pizza!", "Great pizza chunk", 0.95))
 
 	res, err := client.Reviews(context.Background(), "good pizza", 5, SearchFilter{
-		BusinessID: "bus1",
+		BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
 		ReviewIDs:  []string{"rev1"},
 	})
 	if err != nil {

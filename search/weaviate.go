@@ -43,7 +43,7 @@ type Modifier struct {
 // collection. IDs are deterministic so re-scraping the same URL is idempotent.
 type MenuItem struct {
 	MenuItemID         string
-	BusinessID         string
+	BusinessID         uuid.UUID
 	MenuSection        string
 	RestaurantName     string
 	City               string
@@ -57,7 +57,7 @@ type MenuItem struct {
 	SourceURL          string
 	Address            string
 	PhoneNumber        string
-	ScrapedAtUTC       string
+	ScrapedAt          string
 	Vector             []float32
 }
 
@@ -69,7 +69,7 @@ type Client struct {
 
 // BusinessResult pairs a business ID with its human-readable name.
 type BusinessResult struct {
-	ID         string
+	ID         uuid.UUID
 	Name       string
 	City       string
 	State      string
@@ -99,12 +99,12 @@ type SearchReviews struct {
 
 // SearchFilter holds optional filters to narrow the search by category, city, and/or state.
 type SearchFilter struct {
-	Category   string   // substring match against categories field; empty = no filter
-	City       string   // exact match; empty = no filter
-	State      string   // exact match; empty = no filter
-	BusinessID string   // exact match; empty = no filter
-	ReviewIDs  []string // exact match for any of the provided IDs; empty = no filter
-	Alpha      float32  // hybrid search balance: 0 = pure vector (nearText), >0 enables hybrid (0=pure BM25, 1=pure vector)
+	Category   string    // substring match against categories field; empty = no filter
+	City       string    // exact match; empty = no filter
+	State      string    // exact match; empty = no filter
+	BusinessID uuid.UUID // exact match; uuid.Nil = no filter
+	ReviewIDs  []string  // exact match for any of the provided IDs; empty = no filter
+	Alpha      float32   // hybrid search balance: 0 = pure vector (nearText), >0 enables hybrid (0=pure BM25, 1=pure vector)
 }
 
 // Chunk holds a single text chunk and its embedding vector.
@@ -374,7 +374,7 @@ func (c *Client) Businesses(ctx context.Context, query string, limit int, filter
 		// If no query, we are likely fetching by specific ID or just getting top recent ones.
 		// Use a smaller limit if we have an ID filter to avoid scanning everything.
 		fetchLimit := 100
-		if filter.BusinessID != "" {
+		if filter.BusinessID != uuid.Nil {
 			fetchLimit = limit * 20
 		}
 		getter = getter.WithLimit(fetchLimit)
@@ -493,12 +493,12 @@ func buildWhereFilter(f SearchFilter) *filters.WhereBuilder {
 				WithOperator(filters.Like).
 				WithValueText("*"+f.State+"*"))
 	}
-	if f.BusinessID != "" {
+	if f.BusinessID != uuid.Nil {
 		operands = append(operands,
 			filters.Where().
 				WithPath([]string{"hasParent", collectionName, "businessId"}).
 				WithOperator(filters.Equal).
-				WithValueText(f.BusinessID))
+				WithValueText(f.BusinessID.String()))
 	}
 	if len(f.ReviewIDs) > 0 {
 		var idOperands []*filters.WhereBuilder
@@ -621,7 +621,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 
 	// Compute top-K average per business.
 	type ranked struct {
-		id         string
+		id         uuid.UUID
 		name       string
 		city       string
 		state      string
@@ -639,7 +639,7 @@ func aggregateTopK(data map[string]models.JSONObject, limit int) SearchResult {
 			sum += s[i]
 		}
 		results = append(results, ranked{
-			id:         id,
+			id:         uuidOrNil(id),
 			name:       e.name,
 			city:       e.city,
 			state:      e.state,
@@ -1109,7 +1109,7 @@ func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
 			Vector: models.C11yVector(item.Vector),
 			Properties: map[string]any{
 				"menuItemId":         item.MenuItemID,
-				"businessId":         item.BusinessID,
+				"businessId":         item.BusinessID.String(),
 				"menuSection":        item.MenuSection,
 				"restaurantName":     item.RestaurantName,
 				"city":               item.City,
@@ -1123,7 +1123,7 @@ func (c *Client) BatchUpsertMenu(ctx context.Context, items []MenuItem) error {
 				"sourceUrl":          item.SourceURL,
 				"address":            item.Address,
 				"phoneNumber":        item.PhoneNumber,
-				"scrapedAtUtc":       item.ScrapedAtUTC,
+				"scrapedAt":          item.ScrapedAt,
 			},
 		})
 	}
@@ -1187,7 +1187,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 		}
 		results = append(results, MenuItem{
 			MenuItemID:         stringField(m, "menuItemId"),
-			BusinessID:         stringField(m, "businessId"),
+			BusinessID:         uuidOrNil(stringField(m, "businessId")),
 			RestaurantName:     stringField(m, "restaurantName"),
 			MenuSection:        stringField(m, "menuSection"),
 			DishName:           stringField(m, "dishName"),
@@ -1199,7 +1199,7 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 			SourceURL:          stringField(m, "sourceUrl"),
 			Address:            stringField(m, "address"),
 			PhoneNumber:        stringField(m, "phoneNumber"),
-			ScrapedAtUTC:       stringField(m, "scrapedAtUtc"),
+			ScrapedAt:          stringField(m, "scrapedAt"),
 			City:               stringField(m, "city"),
 			State:              stringField(m, "state"),
 		})
@@ -1210,6 +1210,19 @@ func (c *Client) SearchMenu(ctx context.Context, query string, limit int) ([]Men
 func stringField(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+// uuidOrNil parses a UUID string from a Weaviate property, returning uuid.Nil
+// on empty/invalid input. Weaviate stores UUIDs as strings in metadata.
+func uuidOrNil(s string) uuid.UUID {
+	if s == "" {
+		return uuid.Nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
 }
 
 // float64Field reads a number property from a Weaviate GraphQL result.

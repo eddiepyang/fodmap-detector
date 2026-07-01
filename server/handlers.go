@@ -9,6 +9,8 @@ import (
 
 	"fodmap/data"
 	"fodmap/search"
+
+	"github.com/google/uuid"
 )
 
 func (s *Server) reviewsHandler(w http.ResponseWriter, r *http.Request) {
@@ -80,13 +82,13 @@ func (s *Server) getBusinessesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type business struct {
-		ID         string  `json:"id"`
-		Name       string  `json:"name"`
-		City       string  `json:"city"`
-		State      string  `json:"state"`
-		Categories string  `json:"categories"`
-		Rating     float64 `json:"rating"`
-		Score      float64 `json:"score"`
+		ID         uuid.UUID `json:"id"`
+		Name       string    `json:"name"`
+		City       string    `json:"city"`
+		State      string    `json:"state"`
+		Categories string    `json:"categories"`
+		Rating     float64   `json:"rating"`
+		Score      float64   `json:"score"`
 	}
 	out := make([]business, len(result.Businesses))
 	for i, b := range result.Businesses {
@@ -121,10 +123,17 @@ func (s *Server) getReviewsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := search.SearchFilter{
-		Category:   r.URL.Query().Get("category"),
-		City:       r.URL.Query().Get("city"),
-		State:      r.URL.Query().Get("state"),
-		BusinessID: r.URL.Query().Get("business_id"),
+		Category: r.URL.Query().Get("category"),
+		City:     r.URL.Query().Get("city"),
+		State:    r.URL.Query().Get("state"),
+	}
+	if bid := r.URL.Query().Get("business_id"); bid != "" {
+		parsed, err := uuid.Parse(bid)
+		if err != nil {
+			http.Error(w, `{"error":"business_id must be a valid UUID"}`, http.StatusBadRequest)
+			return
+		}
+		filter.BusinessID = parsed
 	}
 	if a := r.URL.Query().Get("alpha"); a != "" {
 		f, err := strconv.ParseFloat(a, 32)

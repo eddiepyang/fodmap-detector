@@ -10,6 +10,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
+
 	"fodmap/data"
 	"fodmap/data/schemas"
 )
@@ -102,7 +104,7 @@ func (c *PineconeClient) Businesses(ctx context.Context, query string, limit int
 		seen[bizID] = true
 		categories, _ := m.Metadata["categories"].(string)
 		businesses = append(businesses, BusinessResult{
-			ID:         bizID,
+			ID:         uuidOrNil(bizID),
 			Name:       m.Metadata["business_name"].(string),
 			City:       m.Metadata["city"].(string),
 			State:      m.Metadata["state"].(string),
@@ -132,8 +134,8 @@ func (c *PineconeClient) Reviews(ctx context.Context, query string, limit int, f
 	}
 
 	// filter by business ID if provided
-	if filter.BusinessID != "" {
-		payload["filter"] = map[string]any{"business_id": map[string]string{"$eq": filter.BusinessID}}
+	if filter.BusinessID != uuid.Nil {
+		payload["filter"] = map[string]any{"business_id": map[string]string{"$eq": filter.BusinessID.String()}}
 	} else if len(filter.ReviewIDs) > 0 {
 		payload["filter"] = map[string]any{"review_id": map[string]any{"$in": filter.ReviewIDs}}
 	}

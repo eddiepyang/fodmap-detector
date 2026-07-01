@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 // UserFilter defines criteria for filtering user listings.
@@ -20,15 +22,15 @@ type UserDetail struct {
 
 // ConversationSummary describes conversation details for administration.
 type ConversationSummary struct {
-	ID           string `json:"id"`
-	UserID       string `json:"user_id"`
-	UserEmail    string `json:"user_email"`
-	Title        string `json:"title"`
-	BusinessID   string `json:"business_id"`
-	BusinessName string `json:"business_name"`
-	MessageCount int    `json:"message_count"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	UserEmail    string    `json:"user_email"`
+	Title        string    `json:"title"`
+	BusinessID   uuid.UUID `json:"business_id"`
+	BusinessName string    `json:"business_name"`
+	MessageCount int       `json:"message_count"`
+	CreatedAt    string    `json:"created_at"`
+	UpdatedAt    string    `json:"updated_at"`
 }
 
 // UserAnalytics represents dashboard metrics.

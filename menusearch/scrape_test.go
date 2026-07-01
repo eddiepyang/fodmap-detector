@@ -102,16 +102,24 @@ func TestWriteMenuExtractionAvro_Roundtrip_DiscoveryEventID(t *testing.T) {
 	dest := filepath.Join(dir, "extraction.avro")
 
 	discoveryEventID := uuid.NewString()
+	price := 12.5
+	modPrice := 2.0
 	rec := MenuExtractionRecord{
-		CAMIS:          "12345678",
+		BusinessID:     "550e8400-e29b-41d4-a716-446655440000",
 		SourceURL:      "https://testpizza.com/menu",
 		RestaurantName: "Test Pizza Place",
 		Items: []search.MenuItem{
 			{
+				MenuItemID:         "item-uuid-1",
 				DishName:           "Margherita",
 				Description:        "Classic tomato and mozzarella",
+				MenuSection:        "Pizzas",
+				Price:              &price,
 				StatedIngredients:  []string{"tomato", "mozzarella"},
 				HasFullIngredients: true,
+				Modifiers:          []search.Modifier{{Name: "Large", Price: &modPrice}},
+				SourceURL:          "https://testpizza.com/menu",
+				ScrapedAt:          "2026-06-30T00:00:00Z",
 			},
 		},
 		EventID:          uuid.NewString(),
@@ -155,11 +163,45 @@ func TestWriteMenuExtractionAvro_Roundtrip_DiscoveryEventID(t *testing.T) {
 	if row["discovery_event_id"] != discoveryEventID {
 		t.Errorf("discovery_event_id = %v, want %q", row["discovery_event_id"], discoveryEventID)
 	}
-	if row["camis"] != rec.CAMIS {
-		t.Errorf("camis = %v, want %q", row["camis"], rec.CAMIS)
+	if row["business_id"] != rec.BusinessID {
+		t.Errorf("business_id = %v, want %q", row["business_id"], rec.BusinessID)
 	}
 	if !assertAttempt(t, row["attempt"], rec.Attempt) {
 		t.Errorf("attempt mismatch")
+	}
+
+	// Per-item fields must survive roundtrip so Avro replay can restore the
+	// menu_items table bit-for-bit.
+	items, ok := row["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items: expected 1-element array, got %T len=%v", row["items"], len(row["items"].([]any)))
+	}
+	item := items[0].(map[string]any)
+	if item["menu_item_id"] != "item-uuid-1" {
+		t.Errorf("menu_item_id = %v, want item-uuid-1", item["menu_item_id"])
+	}
+	if item["menu_section"] != "Pizzas" {
+		t.Errorf("menu_section = %v, want Pizzas", item["menu_section"])
+	}
+	if p, ok := item["price"].(float64); !ok || p != price {
+		t.Errorf("price = %v, want %v", item["price"], price)
+	}
+	mods, _ := item["modifiers"].([]any)
+	if len(mods) != 1 {
+		t.Fatalf("modifiers: expected 1, got %d", len(mods))
+	}
+	mod := mods[0].(map[string]any)
+	if mod["name"] != "Large" {
+		t.Errorf("modifier name = %v, want Large", mod["name"])
+	}
+	if mp, ok := mod["price"].(float64); !ok || mp != modPrice {
+		t.Errorf("modifier price = %v, want %v", mod["price"], modPrice)
+	}
+	if item["source_url"] != "https://testpizza.com/menu" {
+		t.Errorf("source_url = %v", item["source_url"])
+	}
+	if item["scraped_at"] != "2026-06-30T00:00:00Z" {
+		t.Errorf("scraped_at = %v", item["scraped_at"])
 	}
 }
 

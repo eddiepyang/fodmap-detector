@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // stubRestaurantStore is a configurable in-memory stub for RestaurantStore.
@@ -23,13 +25,21 @@ func newStubRestaurantStore() *stubRestaurantStore {
 	return &stubRestaurantStore{rows: make(map[string]*Restaurant)}
 }
 
-func (s *stubRestaurantStore) Upsert(_ context.Context, r Restaurant) error {
+func (s *stubRestaurantStore) Upsert(_ context.Context, r Restaurant) (*Restaurant, error) {
 	if s.upsertErr != nil {
-		return s.upsertErr
+		return nil, s.upsertErr
+	}
+	if r.ID == uuid.Nil {
+		r.ID = uuid.New()
 	}
 	cp := r
-	s.rows[r.CAMIS] = &cp
-	return nil
+	key := camisKey(cp.CAMIS)
+	if key != "" {
+		s.rows[key] = &cp
+	} else {
+		s.rows[cp.ID.String()] = &cp
+	}
+	return &cp, nil
 }
 
 func (s *stubRestaurantStore) Get(_ context.Context, camis string) (*Restaurant, error) {
@@ -41,6 +51,21 @@ func (s *stubRestaurantStore) Get(_ context.Context, camis string) (*Restaurant,
 		return nil, nil
 	}
 	return r, nil
+}
+
+func (s *stubRestaurantStore) GetByID(_ context.Context, id uuid.UUID) (*Restaurant, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	if r, ok := s.rows[id.String()]; ok {
+		return r, nil
+	}
+	for _, r := range s.rows {
+		if r.ID == id {
+			return r, nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *stubRestaurantStore) List(_ context.Context, _, _ string, _, _ int) ([]Restaurant, error) {
@@ -78,6 +103,18 @@ func (s *stubRestaurantStore) UpdateScrapeResult(_ context.Context, camis, statu
 	}
 	return nil
 }
+
+// camisKey returns the map key for a restaurant, preferring CAMIS, falling
+// back to the UUID string so lookups by either identifier work.
+func camisKey(c *string) string {
+	if c == nil {
+		return ""
+	}
+	return *c
+}
+
+// strPtr is a small helper for building *string fields in test literals.
+func strPtr(s string) *string { return &s }
 
 // stubRestaurantJobQueue is a configurable stub for RestaurantJobQueue.
 type stubRestaurantJobQueue struct {
@@ -142,7 +179,7 @@ func TestRestaurantCreateHandler(t *testing.T) {
 		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
-		if got.CAMIS != "123" || got.DBA != "Test Diner" {
+		if got.CAMIS == nil || *got.CAMIS != "123" || got.DBA != "Test Diner" {
 			t.Errorf("response = %+v", got)
 		}
 		if _, ok := store.rows["123"]; !ok {
@@ -186,7 +223,7 @@ func TestRestaurantCreateHandler(t *testing.T) {
 func TestRestaurantListHandler(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A", Status: "pending_discovery"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A", Status: "pending_discovery"})
 		s := newRestaurantServer(store, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/restaurants", nil)
@@ -223,7 +260,7 @@ func TestRestaurantListHandler(t *testing.T) {
 func TestRestaurantGetHandler(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "42", DBA: "Joe's"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("42"), DBA: "Joe's"})
 		s := newRestaurantServer(store, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/restaurants/42", nil)
@@ -264,7 +301,7 @@ func TestRestaurantGetHandler(t *testing.T) {
 func TestRestaurantTriggerDiscoverHandler(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
 		s := newRestaurantServer(store, &stubRestaurantJobQueue{})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/discover", nil)
@@ -290,7 +327,7 @@ func TestRestaurantTriggerDiscoverHandler(t *testing.T) {
 
 	t.Run("no job queue", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
 		s := newRestaurantServer(store, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/discover", nil)
@@ -304,7 +341,7 @@ func TestRestaurantTriggerDiscoverHandler(t *testing.T) {
 
 	t.Run("already queued", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
 		q := &stubRestaurantJobQueue{discoverErr: ErrJobAlreadyQueued}
 		s := newRestaurantServer(store, q)
 
@@ -323,8 +360,8 @@ func TestRestaurantTriggerScrapeHandler(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		r := Restaurant{CAMIS: "1", DBA: "A", MenuURLs: menuURLs}
-		_ = store.Upsert(context.Background(), r)
+		r := Restaurant{CAMIS: strPtr("1"), DBA: "A", MenuURLs: menuURLs}
+		_, _ = store.Upsert(context.Background(), r)
 		s := newRestaurantServer(store, &stubRestaurantJobQueue{})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/scrape", nil)
@@ -339,7 +376,7 @@ func TestRestaurantTriggerScrapeHandler(t *testing.T) {
 
 	t.Run("no menu urls", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
 		s := newRestaurantServer(store, &stubRestaurantJobQueue{})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/scrape", nil)
@@ -364,8 +401,8 @@ func TestRestaurantTriggerScrapeHandler(t *testing.T) {
 
 	t.Run("already queued", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		r := Restaurant{CAMIS: "1", DBA: "A", MenuURLs: menuURLs}
-		_ = store.Upsert(context.Background(), r)
+		r := Restaurant{CAMIS: strPtr("1"), DBA: "A", MenuURLs: menuURLs}
+		_, _ = store.Upsert(context.Background(), r)
 		q := &stubRestaurantJobQueue{scrapeErr: ErrJobAlreadyQueued}
 		s := newRestaurantServer(store, q)
 
@@ -384,8 +421,8 @@ func TestRestaurantRetryHandler(t *testing.T) {
 
 	t.Run("retry scrape when has menu urls and scrape status", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		r := Restaurant{CAMIS: "1", DBA: "A", Status: "failed_scrape", MenuURLs: menuURLs}
-		_ = store.Upsert(context.Background(), r)
+		r := Restaurant{CAMIS: strPtr("1"), DBA: "A", Status: "failed_scrape", MenuURLs: menuURLs}
+		_, _ = store.Upsert(context.Background(), r)
 		s := newRestaurantServer(store, &stubRestaurantJobQueue{})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/retry", nil)
@@ -405,8 +442,8 @@ func TestRestaurantRetryHandler(t *testing.T) {
 
 	t.Run("retry discover when no menu urls", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		r := Restaurant{CAMIS: "1", DBA: "A", Status: "failed_scrape"}
-		_ = store.Upsert(context.Background(), r)
+		r := Restaurant{CAMIS: strPtr("1"), DBA: "A", Status: "failed_scrape"}
+		_, _ = store.Upsert(context.Background(), r)
 		s := newRestaurantServer(store, &stubRestaurantJobQueue{})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/retry", nil)
@@ -437,7 +474,7 @@ func TestRestaurantRetryHandler(t *testing.T) {
 
 	t.Run("no job queue", func(t *testing.T) {
 		store := newStubRestaurantStore()
-		_ = store.Upsert(context.Background(), Restaurant{CAMIS: "1", DBA: "A"})
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
 		s := newRestaurantServer(store, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/retry", nil)

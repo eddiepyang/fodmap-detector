@@ -40,7 +40,7 @@ func (s *Server) restaurantCreateHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	rest := Restaurant{
-		CAMIS:     req.CAMIS,
+		CAMIS:     &req.CAMIS,
 		DBA:       req.DBA,
 		Boro:      req.Boro,
 		Building:  req.Building,
@@ -54,7 +54,8 @@ func (s *Server) restaurantCreateHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
-	if err := s.restaurantStore.Upsert(ctx, rest); err != nil {
+	upserted, err := s.restaurantStore.Upsert(ctx, rest)
+	if err != nil {
 		slog.Error("restaurants: upsert", "camis", req.CAMIS, "err", err)
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "duplicate key value") {
 			respondError(w, "restaurant already exists", http.StatusConflict)
@@ -65,7 +66,7 @@ func (s *Server) restaurantCreateHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if s.restaurantJobQueue != nil {
-		if err := s.restaurantJobQueue.EnqueueDiscover(ctx, rest); err != nil {
+		if err := s.restaurantJobQueue.EnqueueDiscover(ctx, *upserted); err != nil {
 			slog.Error("restaurants: enqueue discover", "camis", req.CAMIS, "err", err)
 			// Non-fatal: row was saved; caller can trigger manually.
 		}

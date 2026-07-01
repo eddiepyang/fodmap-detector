@@ -28,6 +28,13 @@ var restaurantsCmd = &cobra.Command{
 	Short: "Manage restaurant menu discovery and scraping",
 }
 
+func safeDeref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func init() {
 	rootCmd.AddCommand(restaurantsCmd)
 
@@ -94,6 +101,19 @@ func init() {
 	retryAllFailedCmd.Flags().Int("batch-size", 500, "Page size for fetching failed restaurants from the DB")
 	retryAllFailedCmd.Flags().Bool("dry-run", false, "List the restaurants that would be retried without enqueuing")
 	restaurantsCmd.AddCommand(retryAllFailedCmd)
+
+	replayRestaurantsCmd := &cobra.Command{
+		Use:   "replay-restaurants",
+		Short: "Replay restaurant upserts and discovery jobs from Avro bronze layer",
+		RunE:  runReplayRestaurants,
+	}
+	replayRestaurantsCmd.Flags().String("avro-file", "", "Path to a specific NYC restaurant .avro file in the bronze layer")
+	replayRestaurantsCmd.Flags().String("bronze-dir", "data/bronze/restaurants", "Directory to scan for .avro files when --avro-file is not set")
+	replayRestaurantsCmd.Flags().String("postgres-dsn", "", "PostgreSQL DSN")
+	replayRestaurantsCmd.Flags().Int("limit", 0, "Limit the number of records to replay across all files (0 = all)")
+	replayRestaurantsCmd.Flags().Int("offset", 0, "Offset the number of records to replay across all files")
+	replayRestaurantsCmd.Flags().Bool("skip-discovery", false, "Skip enqueueing discovery jobs")
+	restaurantsCmd.AddCommand(replayRestaurantsCmd)
 
 	replayMenusCmd := &cobra.Command{
 		Use:   "replay-menus",
@@ -195,8 +215,8 @@ func runImportRestaurants(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Fetched %d unique restaurants.\n", len(records))
 
 	for _, rec := range records {
-		err := store.Upsert(ctx, server.Restaurant{
-			CAMIS:     rec.CAMIS,
+		_, err := store.Upsert(ctx, server.Restaurant{
+			CAMIS:     &rec.CAMIS,
 			DBA:       rec.DBA,
 			Boro:      strPtr(rec.Boro),
 			Building:  strPtr(rec.Building),
@@ -290,7 +310,7 @@ func runListRestaurants(cmd *cobra.Command, args []string) error {
 		if len(r.MenuURLs) > 0 {
 			websiteURL += fmt.Sprintf(" (+%d menus)", len(r.MenuURLs))
 		}
-		fmt.Printf("- %s: %s (Website: %s)\n", r.CAMIS, r.DBA, websiteURL)
+		fmt.Printf("- %s: %s (Website: %s)\n", safeDeref(r.CAMIS), r.DBA, websiteURL)
 	}
 	return nil
 }
@@ -330,7 +350,7 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create river client: %w", err)
 	}
 
-	if err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, ""); err != nil {
+	if err = store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusURLFound, 0, ""); err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
 
@@ -341,7 +361,7 @@ func runEnqueueScrape(cmd *cobra.Command, args []string) error {
 	}
 	for _, u := range r.MenuURLs {
 		_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-			CAMIS:            r.CAMIS,
+			RestaurantID:     r.ID,
 			URL:              u,
 			DBA:              r.DBA,
 			DiscoveryEventID: eventID,
@@ -392,7 +412,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		maxAttempts = 3
 	}
 	_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-		CAMIS:    r.CAMIS,
+		CAMIS:    safeDeref(r.CAMIS),
 		DBA:      r.DBA,
 		Building: safeStr(r.Building),
 		Street:   safeStr(r.Street),
@@ -404,7 +424,7 @@ func runEnqueueDiscover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("enqueue discover: %w", err)
 	}
 
-	err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusPendingDiscovery, 0, "")
+	err = store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusPendingDiscovery, 0, "")
 	if err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
@@ -474,7 +494,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		eventID := uuid.NewString()
 		for _, u := range r.MenuURLs {
 			_, err = riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-				CAMIS:            r.CAMIS,
+				RestaurantID:     r.ID,
 				URL:              u,
 				DBA:              r.DBA,
 				DiscoveryEventID: eventID,
@@ -483,14 +503,14 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("enqueue scrape %s: %w", u, err)
 			}
 		}
-		err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, "")
+		err = store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusURLFound, 0, "")
 		if err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
 		fmt.Printf("Re-enqueued scrape job for %s\n", camis)
 	} else {
 		_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-			CAMIS:    r.CAMIS,
+			CAMIS:    safeDeref(r.CAMIS),
 			DBA:      r.DBA,
 			Building: safeStr(r.Building),
 			Street:   safeStr(r.Street),
@@ -501,7 +521,7 @@ func runRetryRestaurant(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("enqueue discover: %w", err)
 		}
-		err = store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusPendingDiscovery, 0, "")
+		err = store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusPendingDiscovery, 0, "")
 		if err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
@@ -577,7 +597,7 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 		for _, r := range restaurants {
 			total++
 			if dryRun {
-				fmt.Printf("[dry-run] would retry %s (%s)\n", r.CAMIS, r.DBA)
+				fmt.Printf("[dry-run] would retry %s (%s)\n", safeDeref(r.CAMIS), r.DBA)
 				continue
 			}
 
@@ -586,7 +606,7 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 				enqueueErr := false
 				for _, u := range r.MenuURLs {
 					_, e := riverClient.Insert(ctx, menusearch.ScrapeMenuArgs{
-						CAMIS:            r.CAMIS,
+						RestaurantID:     r.ID,
 						URL:              u,
 						DBA:              r.DBA,
 						DiscoveryEventID: eventID,
@@ -600,13 +620,13 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 					failed++
 					continue
 				}
-				if e := store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusURLFound, 0, ""); e != nil {
+				if e := store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusURLFound, 0, ""); e != nil {
 					slog.Warn("failed to update status after re-enqueue", "camis", r.CAMIS, "error", e)
 				}
 				scraped++
 			} else {
 				_, e := riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
-					CAMIS:    r.CAMIS,
+					CAMIS:    safeDeref(r.CAMIS),
 					DBA:      r.DBA,
 					Building: safeStr(r.Building),
 					Street:   safeStr(r.Street),
@@ -619,7 +639,7 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 					failed++
 					continue
 				}
-				if e := store.UpdateScrapeResult(ctx, r.CAMIS, menusearch.StatusPendingDiscovery, 0, ""); e != nil {
+				if e := store.UpdateScrapeResult(ctx, safeDeref(r.CAMIS), menusearch.StatusPendingDiscovery, 0, ""); e != nil {
 					slog.Warn("failed to update status after re-enqueue", "camis", r.CAMIS, "error", e)
 				}
 				discovered++
@@ -639,6 +659,141 @@ func runRetryAllFailed(cmd *cobra.Command, args []string) error {
 		total, scraped, discovered, failed)
 	if dryRun {
 		fmt.Println("(dry-run: no jobs were actually enqueued)")
+	}
+	return nil
+}
+
+// runReplayRestaurants replays the restaurant upsert + discovery-enqueue flow
+// from NYC restaurant records persisted in the bronze Avro layer, skipping the
+// NYC OpenData fetch. It mirrors the tail of runImportRestaurants: read records,
+// upsert each one, and (optionally) enqueue a DiscoverMenuURL job.
+func runReplayRestaurants(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	avroFile, _ := cmd.Flags().GetString("avro-file")
+	bronzeDir, _ := cmd.Flags().GetString("bronze-dir")
+	dsn, _ := cmd.Flags().GetString("postgres-dsn")
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+	skipDiscovery, _ := cmd.Flags().GetBool("skip-discovery")
+
+	if dsn == "" {
+		dsn = viper.GetString("POSTGRES_DSN")
+	}
+	if dsn == "" {
+		return fmt.Errorf("must specify --postgres-dsn")
+	}
+
+	var files []string
+	if avroFile != "" {
+		if _, err := os.Stat(avroFile); err != nil {
+			return fmt.Errorf("stat avro file: %w", err)
+		}
+		files = []string{avroFile}
+	} else {
+		if _, err := os.Stat(bronzeDir); err != nil {
+			return fmt.Errorf("stat bronze dir: %w", err)
+		}
+		err := filepath.WalkDir(bronzeDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && filepath.Ext(path) == ".avro" {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("walk bronze dir: %w", err)
+		}
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no .avro files found")
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to db: %w", err)
+	}
+	defer pool.Close()
+
+	store := menusearch.NewStore(pool)
+
+	var riverClient *river.Client[pgx.Tx]
+	if !skipDiscovery {
+		riverClient, err = newRiverClient(pool, &river.Config{})
+		if err != nil {
+			return fmt.Errorf("create river client: %w", err)
+		}
+	}
+
+	maxAttempts := viper.GetInt("scrape-max-attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	fmt.Printf("Replaying %d avro file(s)\n", len(files))
+
+	// Read all records first so --limit/--offset apply globally across files,
+	// not per-file (offset=10 would otherwise skip the first 10 of every file).
+	var allRecords []menusearch.NYCRestaurantRecord
+	for _, file := range files {
+		fmt.Printf("Reading %s\n", file)
+		records, err := menusearch.ReadNYCRestaurantAvro(file)
+		if err != nil {
+			slog.Error("failed to read avro file", "path", file, "error", err)
+			continue
+		}
+		fmt.Printf("  -> %d records\n", len(records))
+		allRecords = append(allRecords, records...)
+	}
+
+	records := paginateRecords(allRecords, limit, offset)
+	totalRecords := len(records)
+	var totalUpserted, totalEnqueued int
+
+	for _, rec := range records {
+		_, err := store.Upsert(ctx, server.Restaurant{
+			CAMIS:     &rec.CAMIS,
+			DBA:       rec.DBA,
+			Boro:      strPtr(rec.Boro),
+			Building:  strPtr(rec.Building),
+			Street:    strPtr(rec.Street),
+			Zipcode:   strPtr(rec.Zipcode),
+			Phone:     strPtr(rec.Phone),
+			Cuisine:   strPtr(rec.CuisineDescription),
+			Latitude:  floatPtr(rec.Latitude),
+			Longitude: floatPtr(rec.Longitude),
+			NTA:       strPtr(rec.NTA),
+			Status:    menusearch.StatusPendingDiscovery,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to upsert %s: %v\n", rec.CAMIS, err)
+			continue
+		}
+		totalUpserted++
+
+		if !skipDiscovery {
+			_, err = riverClient.Insert(ctx, menusearch.DiscoverMenuURLArgs{
+				CAMIS:    rec.CAMIS,
+				DBA:      rec.DBA,
+				Building: rec.Building,
+				Street:   rec.Street,
+				Boro:     rec.Boro,
+				Zipcode:  rec.Zipcode,
+				Attempt:  1,
+			}, &river.InsertOpts{MaxAttempts: maxAttempts})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to enqueue discovery for %s: %v\n", rec.CAMIS, err)
+				continue
+			}
+			totalEnqueued++
+		}
+	}
+
+	fmt.Printf("Replay summary: %d records read, %d upserted, %d discovery jobs enqueued\n",
+		totalRecords, totalUpserted, totalEnqueued)
+	if skipDiscovery {
+		fmt.Println("(--skip-discovery: no discovery jobs were enqueued)")
 	}
 	return nil
 }
@@ -735,7 +890,10 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 				break
 			}
 
-			camis, _ := record["camis"].(string)
+			businessIDStr, _ := record["business_id"].(string)
+			if businessIDStr == "" {
+				businessIDStr, _ = record["camis"].(string)
+			}
 			sourceURL, _ := record["source_url"].(string)
 			restaurantName, _ := record["restaurant_name"].(string)
 
@@ -750,9 +908,9 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 				Items:          make([]scraper.MenuEntry, 0, len(itemsAny)),
 			}
 
-			rest, err := restaurantStore.Get(ctx, camis)
+			rest, err := restaurantStore.Get(ctx, businessIDStr)
 			if err != nil {
-				slog.Warn("failed to get restaurant for address enrichment", "camis", camis, "error", err)
+				slog.Warn("failed to get restaurant for address enrichment", "business_id", businessIDStr, "error", err)
 			} else if rest != nil {
 				if rest.Boro != nil {
 					res.City = *rest.Boro
@@ -774,11 +932,17 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 				dishName, _ := itemMap["dish_name"].(string)
 				description, _ := itemMap["description"].(string)
 				hasFull, _ := itemMap["has_full_ingredients"].(bool)
+				section, _ := itemMap["menu_section"].(string)
 
 				entry := scraper.MenuEntry{
 					DishName:           dishName,
 					Description:        description,
+					Section:            section,
 					HasFullIngredients: hasFull,
+				}
+				if p, ok := itemMap["price"].(float64); ok {
+					pv := p
+					entry.Price = &pv
 				}
 				if si, ok := itemMap["stated_ingredients"].([]any); ok {
 					for _, s := range si {
@@ -787,14 +951,39 @@ func runReplayMenus(cmd *cobra.Command, args []string) error {
 						}
 					}
 				}
+				if modsAny, ok := itemMap["modifiers"].([]any); ok {
+					for _, m := range modsAny {
+						mMap, ok := m.(map[string]any)
+						if !ok {
+							continue
+						}
+						name, _ := mMap["name"].(string)
+						mod := scraper.Modifier{Name: name}
+						if p, ok := mMap["price"].(float64); ok {
+							pv := p
+							mod.Price = &pv
+						}
+						entry.Modifiers = append(entry.Modifiers, mod)
+					}
+				}
 				res.Items = append(res.Items, entry)
 			}
 
-			count, err := pipeline.StoreMenu(ctx, &res, sourceURL, menuStore, embedder)
+			restaurantID, err := uuid.Parse(businessIDStr)
 			if err != nil {
-				slog.Error("failed to store menu items", "camis", camis, "error", err)
+				if rest != nil {
+					restaurantID = rest.ID
+				} else {
+					slog.Warn("business_id is not a UUID and restaurant not found; skipping", "business_id", businessIDStr)
+					continue
+				}
+			}
+
+			count, err := pipeline.StoreMenu(ctx, &res, restaurantID, sourceURL, menuStore, embedder)
+			if err != nil {
+				slog.Error("failed to store menu items", "business_id", businessIDStr, "error", err)
 			} else {
-				fmt.Printf("stored %d items for %s\n", count, camis)
+				fmt.Printf("stored %d items for %s\n", count, businessIDStr)
 			}
 		}
 		_ = f.Close()

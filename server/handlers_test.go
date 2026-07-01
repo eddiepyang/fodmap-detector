@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/data"
 	"fodmap/data/schemas"
 	"fodmap/search"
@@ -78,7 +80,7 @@ func TestBusinessesHandler_Success(t *testing.T) {
 	mock := &handlersTestSearcher{
 		businessResult: search.SearchResult{
 			Businesses: []search.BusinessResult{
-				{ID: "biz1", Name: "Test Restaurant", City: "NYC", State: "NY", Score: 0.95},
+				{ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Name: "Test Restaurant", City: "NYC", State: "NY", Score: 0.95},
 			},
 		},
 	}
@@ -219,7 +221,7 @@ func TestBusinessesHandler_SearchError(t *testing.T) {
 func TestBusinessesHandler_WithFilters(t *testing.T) {
 	mock := &handlersTestSearcher{
 		businessResult: search.SearchResult{
-			Businesses: []search.BusinessResult{{ID: "biz1", Name: "Biz"}},
+			Businesses: []search.BusinessResult{{ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Name: "Biz"}},
 		},
 	}
 	s := &Server{searcher: mock}
@@ -525,15 +527,15 @@ func TestReviewsHandler_ParsesBusinessID(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search/reviews/{query...}", s.getReviewsHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pad%20thai?business_id=my-biz-123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/reviews/pad%20thai?business_id=550e8400-e29b-41d4-a716-446655440000", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if mock.lastReviewFilter.BusinessID != "my-biz-123" {
-		t.Errorf("business_id = %q, want %q", mock.lastReviewFilter.BusinessID, "my-biz-123")
+	if mock.lastReviewFilter.BusinessID != uuid.MustParse("550e8400-e29b-41d4-a716-446655440000") {
+		t.Errorf("business_id = %s, want %s", mock.lastReviewFilter.BusinessID, "550e8400-e29b-41d4-a716-446655440000")
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"fodmap/auth"
 	"fodmap/chat"
 	"fodmap/data"
@@ -132,7 +134,7 @@ func (m *chatMockSearcher) Businesses(ctx context.Context, query string, limit i
 	if m.emptyBusinesses {
 		return search.SearchResult{}, nil
 	}
-	return search.SearchResult{Businesses: []search.BusinessResult{{ID: "1", Name: "Test Biz"}}}, nil
+	return search.SearchResult{Businesses: []search.BusinessResult{{ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Name: "Test Biz"}}}, nil
 }
 
 func (m *chatMockSearcher) Reviews(ctx context.Context, query string, limit int, filter search.SearchFilter) (search.SearchReviews, error) {
@@ -245,7 +247,7 @@ func TestSaveModelResponse(t *testing.T) {
 	store := newStubStore()
 	convID := "conv-save-test"
 	_ = store.CreateConversation(context.Background(), &auth.Conversation{
-		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
+		ID: convID, UserID: "u1", BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Title: "Test",
 	})
 
 	result := chat.SendResult{Text: "Model says hello", ToolCalls: []string{"lookup_fodmap(garlic)"}}
@@ -286,7 +288,7 @@ func TestChatHandler_InitialContextInjection(t *testing.T) {
 	store := newStubStore()
 	convID := "ctx-test-1"
 	_ = store.CreateConversation(context.Background(), &auth.Conversation{
-		ID: convID, UserID: "u1", BusinessID: "b1", Title: "Test",
+		ID: convID, UserID: "u1", BusinessID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Title: "Test",
 	})
 
 	mockSearcher := &chatMockSearcher{}

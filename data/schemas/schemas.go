@@ -51,10 +51,24 @@ var NYCRestaurantSchema = `{
         {"name": "phone", "type": "string"},
         {"name": "cuisine_description", "type": "string"},
         {"name": "inspection_date", "type": "string"},
+        {"name": "action", "type": "string"},
+        {"name": "violation_code", "type": "string"},
+        {"name": "violation_description", "type": "string"},
+        {"name": "critical_flag", "type": "string"},
+        {"name": "score", "type": "string"},
+        {"name": "grade", "type": "string"},
+        {"name": "grade_date", "type": "string"},
+        {"name": "record_date", "type": "string"},
+        {"name": "inspection_type", "type": "string"},
         {"name": "latitude", "type": "double"},
         {"name": "longitude", "type": "double"},
+        {"name": "community_board", "type": "string"},
+        {"name": "council_district", "type": "string"},
+        {"name": "census_tract", "type": "string"},
+        {"name": "bin", "type": "string"},
+        {"name": "bbl", "type": "string"},
         {"name": "nta", "type": "string"},
-        {"name": "record_date", "type": "string"},
+        {"name": "location", "type": "string"},
         {"name": "event_id", "type": "string"},
         {"name": "created_at", "type": "string"}
     ]
@@ -79,11 +93,17 @@ var GeminiDiscoverySchema = `{
 }`
 
 // MenuExtractionSchema is the Avro schema for post-LLM scraped menu results.
+// The per-item record carries every field stored on the menu_items table
+// (minus the embedding, which is derived) so that Avro replay can restore
+// the table bit-for-bit. Fields added after the initial schema carry
+// "default" so old OCF files still decode. The record-level "business_id"
+// field uses "aliases": ["camis"] so old .avro files written with "camis"
+// decode transparently under the new schema.
 var MenuExtractionSchema = `{
     "type": "record",
     "name": "menu_extraction",
     "fields": [
-        {"name": "camis", "type": "string"},
+        {"name": "business_id", "type": "string", "aliases": ["camis"]},
         {"name": "source_url", "type": "string"},
         {"name": "restaurant_name", "type": "string"},
         {"name": "items", "type": {
@@ -92,10 +112,26 @@ var MenuExtractionSchema = `{
                 "type": "record",
                 "name": "menu_item",
                 "fields": [
+                    {"name": "menu_item_id", "type": "string", "default": ""},
                     {"name": "dish_name", "type": "string"},
-                    {"name": "description", "type": "string"},
-                    {"name": "stated_ingredients", "type": {"type": "array", "items": "string"}},
-                    {"name": "has_full_ingredients", "type": "boolean"}
+                    {"name": "description", "type": "string", "default": ""},
+                    {"name": "menu_section", "type": "string", "default": ""},
+                    {"name": "price", "type": ["null", "double"], "default": null},
+                    {"name": "stated_ingredients", "type": {"type": "array", "items": "string"}, "default": []},
+                    {"name": "has_full_ingredients", "type": "boolean", "default": false},
+                    {"name": "modifiers", "type": {
+                        "type": "array",
+                        "items": {
+                            "type": "record",
+                            "name": "modifier",
+                            "fields": [
+                                {"name": "name", "type": "string"},
+                                {"name": "price", "type": ["null", "double"], "default": null}
+                            ]
+                        }
+                    }, "default": []},
+                    {"name": "source_url", "type": "string", "default": ""},
+                    {"name": "scraped_at", "type": "string", "default": ""}
                 ]
             }
         }},
