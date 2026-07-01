@@ -79,6 +79,40 @@ func (s *stubRestaurantStore) List(_ context.Context, _, _ string, _, _ int) ([]
 	return out, nil
 }
 
+func (s *stubRestaurantStore) Count(_ context.Context, _, _ string) (int, error) {
+	if s.listErr != nil {
+		return 0, s.listErr
+	}
+	return len(s.rows), nil
+}
+
+func (s *stubRestaurantStore) PipelineStats(_ context.Context) (*PipelineStats, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	stats := &PipelineStats{
+		StatusCounts:  make(map[string]int),
+		TierCounts:    make(map[string]TierStat),
+		FailureCounts: make(map[string]int),
+		JobCounts:     make(map[string]map[string]int),
+	}
+	for _, r := range s.rows {
+		stats.StatusCounts[r.Status]++
+		stats.Total++
+		stats.TotalItems += r.ItemCount
+		if r.Status == "failed_scrape" && r.LastError != nil {
+			stats.FailureCounts[*r.LastError]++
+		}
+		if r.Status == "scraped" && r.ExtractionTier != nil {
+			stat := stats.TierCounts[*r.ExtractionTier]
+			stat.Count++
+			stat.Items += r.ItemCount
+			stats.TierCounts[*r.ExtractionTier] = stat
+		}
+	}
+	return stats, nil
+}
+
 func (s *stubRestaurantStore) UpdateDiscoveryURLs(_ context.Context, camis, websiteURL string, menuURLs []string, source, address, phone string) error {
 	if s.updateErr != nil {
 		return s.updateErr
@@ -240,6 +274,9 @@ func TestRestaurantListHandler(t *testing.T) {
 		if _, ok := resp["restaurants"]; !ok {
 			t.Error("response missing 'restaurants' key")
 		}
+		if total, ok := resp["total"].(float64); !ok || total != 1 {
+			t.Errorf("total = %v, want 1", resp["total"])
+		}
 	})
 
 	t.Run("store error", func(t *testing.T) {
@@ -250,6 +287,66 @@ func TestRestaurantListHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/restaurants", nil)
 		w := httptest.NewRecorder()
 		s.restaurantListHandler(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", w.Code)
+		}
+	})
+}
+
+func TestRestaurantStatsHandler(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		store := newStubRestaurantStore()
+		_, _ = store.Upsert(context.Background(), Restaurant{
+			CAMIS: strPtr("1"), DBA: "A", Status: "scraped",
+			ExtractionTier: strPtr("jsonld"), ItemCount: 10,
+		})
+		_, _ = store.Upsert(context.Background(), Restaurant{
+			CAMIS: strPtr("2"), DBA: "B", Status: "scraped",
+			ExtractionTier: strPtr("html_llm"), ItemCount: 5,
+		})
+		_, _ = store.Upsert(context.Background(), Restaurant{
+			CAMIS: strPtr("3"), DBA: "C", Status: "failed_scrape",
+			LastError: strPtr("no menu items found"),
+		})
+		s := newRestaurantServer(store, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/restaurants/stats", nil)
+		w := httptest.NewRecorder()
+		s.restaurantStatsHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		var resp PipelineStats
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Total != 3 {
+			t.Errorf("total = %d, want 3", resp.Total)
+		}
+		if resp.TotalItems != 15 {
+			t.Errorf("total_items = %d, want 15", resp.TotalItems)
+		}
+		if resp.StatusCounts["scraped"] != 2 || resp.StatusCounts["failed_scrape"] != 1 {
+			t.Errorf("status_counts = %+v", resp.StatusCounts)
+		}
+		if got := resp.TierCounts["jsonld"]; got.Count != 1 || got.Items != 10 {
+			t.Errorf("tier_counts[jsonld] = %+v", got)
+		}
+		if resp.FailureCounts["no menu items found"] != 1 {
+			t.Errorf("failure_counts = %+v", resp.FailureCounts)
+		}
+	})
+
+	t.Run("store error", func(t *testing.T) {
+		store := newStubRestaurantStore()
+		store.listErr = errors.New("db down")
+		s := newRestaurantServer(store, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/restaurants/stats", nil)
+		w := httptest.NewRecorder()
+		s.restaurantStatsHandler(w, req)
 
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500", w.Code)

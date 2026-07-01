@@ -99,6 +99,8 @@ go run . restaurants scrape 50012345
 If a restaurant fails at any point in the pipeline (e.g., website 404, LLM extraction error, connection timeout), you can reset its status and requeue it.
 
 ```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+
 go run . restaurants retry 50012345
 ```
   

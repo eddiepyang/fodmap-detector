@@ -472,6 +472,7 @@ func (s *Server) Handler() http.Handler {
 	if s.restaurantStore != nil {
 		mux.Handle("POST /api/v1/restaurants", adminMid(s.restaurantCreateHandler))
 		mux.Handle("GET /api/v1/restaurants", adminMid(s.restaurantListHandler))
+		mux.Handle("GET /api/v1/restaurants/stats", adminMid(s.restaurantStatsHandler))
 		mux.Handle("GET /api/v1/restaurants/{camis}", adminMid(s.restaurantGetHandler))
 		mux.Handle("POST /api/v1/restaurants/{camis}/discover", adminMid(s.restaurantTriggerDiscoverHandler))
 		mux.Handle("POST /api/v1/restaurants/{camis}/scrape", adminMid(s.restaurantTriggerScrapeHandler))
