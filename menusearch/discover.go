@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -128,6 +129,23 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		}
 	}
 
+	httpClient := w.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 8 * time.Second}
+	}
+
+	// Harvest first-party ordering-platform links from the primary website's
+	// homepage HTML. Gemini frequently returns the homepage but misses the
+	// ordering SPA it links to (e.g. swick2go.com links swick2go.dine.online),
+	// and those SPAs carry the only complete menu for many restaurants.
+	if result.WebsiteURL != "" {
+		if harvested := harvestOrderingLinks(ctx, httpClient, result.WebsiteURL); len(harvested) > 0 {
+			logger.Info("harvested ordering-platform links from homepage",
+				"url", result.WebsiteURL, "links", harvested)
+			rawURLs = append(rawURLs, harvested...)
+		}
+	}
+
 	// Remove hard-blocked non-menu hosts (grounding redirects, real-estate, hotels, directories).
 	var dedupedURLs []string
 	for _, u := range dedup(rawURLs) {
@@ -140,10 +158,6 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 
 	// Probe reachability: drop only genuinely dead domains (DNS failure, ECONNREFUSED, TLS errors).
 	// Keep any URL that returns an HTTP response (even 403/429/5xx) or times out.
-	httpClient := w.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 8 * time.Second}
-	}
 	candidates := reachableMenuURLs(ctx, httpClient, dedupedURLs)
 	for _, u := range dedupedURLs {
 		found := false
@@ -491,6 +505,8 @@ var orderingPlatformHosts = []string{
 	"getbento.com",
 	"orderahead-app.com",
 	"popmenu.com",
+	"dine.online",
+	"order.store",
 }
 
 // isOrderingPlatform returns true when the URL's host is a known first-party
@@ -507,6 +523,50 @@ func isOrderingPlatform(u string) bool {
 		}
 	}
 	return false
+}
+
+// orderingHrefRe matches absolute http(s) URLs in href attributes.
+var orderingHrefRe = regexp.MustCompile(`href=["']?(https?://[^"'\s>]+)`)
+
+// harvestOrderingLinks fetches websiteURL and returns the ordering-platform
+// links found in its HTML (deduplicated, document order). Ordering SPAs serve
+// only a JS shell on a plain GET, so they can never satisfy the menu-signal
+// check on their own — the homepage link is the reliable way to find them.
+// Best-effort: any fetch problem returns nil.
+func harvestOrderingLinks(ctx context.Context, client *http.Client, websiteURL string) []string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, websiteURL, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+
+	const maxBodyBytes = 2 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return nil
+	}
+
+	var out []string
+	seen := make(map[string]struct{})
+	for _, m := range orderingHrefRe.FindAllSubmatch(body, -1) {
+		u := html.UnescapeString(string(m[1]))
+		if !isOrderingPlatform(u) {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	return out
 }
 
 // menuKeywords are words that, when co-occurring with price patterns, indicate

@@ -164,7 +164,9 @@ func TestRunScrapeWith_PDFServicePath_EmptyResultIsNotAnError(t *testing.T) {
 type htmlFetcher struct{}
 
 func (f *htmlFetcher) Fetch(_ context.Context, _ string) (scraper.FetchResult, error) {
-	body := "<html><body><h1>Menu</h1><ul><li>Pizza</li></ul></body></html>"
+	body := "<html><body><h1>Joe's Pizza Menu</h1><ul>" +
+		"<li>Margherita Pizza $12 — tomato, mozzarella, basil</li>" +
+		"<li>Pepperoni Pizza $14 — tomato, mozzarella, pepperoni</li></ul></body></html>"
 	return scraper.FetchResult{
 		Body:        io.NopCloser(bytes.NewReader([]byte(body))),
 		ContentType: "text/html",
