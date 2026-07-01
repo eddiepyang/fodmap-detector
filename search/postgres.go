@@ -118,9 +118,13 @@ func (c *PostgresClient) BatchUpsert(ctx context.Context, items []IndexItem) err
 	defer func() { _ = stmtChunk.Close() }()
 
 	for _, item := range items {
+		var businessID any
+		if item.BusinessUUID != nil {
+			businessID = *item.BusinessUUID
+		}
 		if _, err := stmtReview.ExecContext(ctx,
 			item.Review.ReviewID,
-			item.Review.BusinessID,
+			businessID,
 			item.BusinessName,
 			item.City,
 			item.State,
@@ -476,7 +480,7 @@ func (c *PostgresClient) BatchUpsertMenu(ctx context.Context, items []MenuItem) 
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO menu_items (menu_item_id, business_id, menu_section, restaurant_name, city, state, dish_name, description, price, stated_ingredients, has_full_ingredients, modifiers, source_url, address, phone_number, scraped_at, embedding, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
 		ON CONFLICT (menu_item_id) DO UPDATE SET
 			business_id = EXCLUDED.business_id,
 			menu_section = EXCLUDED.menu_section,

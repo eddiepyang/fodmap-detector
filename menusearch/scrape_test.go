@@ -259,3 +259,77 @@ func TestScrapeMenuWorker_Timeout(t *testing.T) {
 		t.Errorf("Timeout() = %v, want 5m", got)
 	}
 }
+
+func TestWriteNYCRestaurantAvro_Roundtrip_WithID(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "nyc.avro")
+
+	records := []NYCRestaurantRecord{
+		{
+			ID:                 "550e8400-e29b-41d4-a716-446655440000",
+			CAMIS:              "50012345",
+			DBA:                "Test Diner",
+			Boro:               "Manhattan",
+			Building:           "100",
+			Street:             "Main St",
+			Zipcode:            "10001",
+			Phone:              "212-555-0100",
+			CuisineDescription: "American",
+			Latitude:           40.7128,
+			Longitude:          -74.0060,
+			NTA:                "MN01",
+		},
+	}
+
+	if err := WriteNYCRestaurantAvro(context.Background(), dest, records); err != nil {
+		t.Fatalf("WriteNYCRestaurantAvro: %v", err)
+	}
+
+	got, err := ReadNYCRestaurantAvro(dest)
+	if err != nil {
+		t.Fatalf("ReadNYCRestaurantAvro: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(got))
+	}
+	rec := got[0]
+	if rec.ID != records[0].ID {
+		t.Errorf("ID = %q, want %q", rec.ID, records[0].ID)
+	}
+	if rec.CAMIS != records[0].CAMIS {
+		t.Errorf("CAMIS = %q, want %q", rec.CAMIS, records[0].CAMIS)
+	}
+	if rec.DBA != records[0].DBA {
+		t.Errorf("DBA = %q, want %q", rec.DBA, records[0].DBA)
+	}
+}
+
+// TestWriteNYCRestaurantAvro_EmptyID verifies that a record with an empty ID
+// (the raw CSV / pre-upsert state) round-trips correctly — the Avro schema's
+// "default": "" ensures old files without the id field decode too.
+func TestWriteNYCRestaurantAvro_EmptyID(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "nyc.avro")
+
+	records := []NYCRestaurantRecord{
+		{CAMIS: "50099999", DBA: "No ID Yet"},
+	}
+
+	if err := WriteNYCRestaurantAvro(context.Background(), dest, records); err != nil {
+		t.Fatalf("WriteNYCRestaurantAvro: %v", err)
+	}
+
+	got, err := ReadNYCRestaurantAvro(dest)
+	if err != nil {
+		t.Fatalf("ReadNYCRestaurantAvro: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(got))
+	}
+	if got[0].ID != "" {
+		t.Errorf("ID = %q, want empty", got[0].ID)
+	}
+	if got[0].CAMIS != "50099999" {
+		t.Errorf("CAMIS = %q, want 50099999", got[0].CAMIS)
+	}
+}

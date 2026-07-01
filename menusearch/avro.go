@@ -37,6 +37,7 @@ func WriteNYCRestaurantAvro(ctx context.Context, destPath string, records []NYCR
 
 	for _, rec := range records {
 		record := map[string]any{
+			"id":                    rec.ID,
 			"camis":                 rec.CAMIS,
 			"dba":                   rec.DBA,
 			"boro":                  rec.Boro,
@@ -230,6 +231,7 @@ func ReadNYCRestaurantAvro(path string) ([]NYCRestaurantRecord, error) {
 		}
 
 		rec := NYCRestaurantRecord{
+			ID:                   safeString(record["id"]),
 			CAMIS:                safeString(record["camis"]),
 			DBA:                  safeString(record["dba"]),
 			Boro:                 safeString(record["boro"]),

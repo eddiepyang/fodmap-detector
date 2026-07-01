@@ -62,7 +62,7 @@ embed-backend: "ollama"
 
 # Target LLM for extraction (HTML-to-markdown structured parsing)
 llm-url: "http://localhost:8000/v1"
-llm-model: "mlx-community/Qwen3-VL-8B-Instruct-8bit"
+llm-model: "qwen3-vl"
 llm-api-key: ""
 llm-reasoning-effort: "none" # none | low | medium | high (none = fastest, cost-optimal for Gemini)
 
@@ -92,11 +92,11 @@ discovery-gemini-model: "gemini-3-flash-preview"
 scrape-max-attempts: 3
 
 # Avro archiving directories
-discovery-avro-dir: "data/bronze/gemini_discovery"
-extraction-avro-dir: "data/silver/menus"
+discovery-avro-dir: "../data/bronze/gemini_discovery"
+extraction-avro-dir: "../data/silver/menus"
 
 # Bronze HTML storage directory
-restaurant-bronze-dir: "data/bronze/restaurants"
+restaurant-bronze-dir: "../data/bronze/restaurants"
 
 
 # ---- Chat Command Settings ----

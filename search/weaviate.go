@@ -124,6 +124,13 @@ type IndexItem struct {
 	Categories   string
 	Vector       []float32 // legacy: used when Chunks is empty
 	Chunks       []Chunk   // chunked text with per-chunk vectors
+
+	// BusinessUUID is the restaurants.id surrogate UUID for this review's
+	// business. Populated by the Yelp indexer (cli/index.go) via the
+	// UpsertByYelp union step; nil when no matching restaurants row exists.
+	// The Postgres backend writes this to reviews.business_id (UUID FK);
+	// Weaviate/Pinecone still use Review.BusinessID (string) for storage.
+	BusinessUUID *uuid.UUID
 }
 
 // RankedReview pairs a review with its certainty score.

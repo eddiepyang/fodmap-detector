@@ -616,7 +616,7 @@ This codifies the contract that `OllamaEmbedder` already satisfies and that
 - `go test ./search/...` — new `embedder_tei_test.go` + `embedder_factory_test.go`.
 - Run `go run . scrape <url> --embedder=tei --tei-url <tei> --menu-store=postgres`
   against a real TEI URL; confirm vectors land in `menu_items.embedding`
-  with `len == 768` (query: `SELECT menu_item_id, vector_dims(embedding) FROM menu_items ORDER BY scraped_at_utc DESC LIMIT 5;`).
+  with `len == 768` (query: `SELECT menu_item_id, vector_dims(embedding) FROM menu_items ORDER BY scraped_at DESC LIMIT 5;`).
 
 **B (dual-write):**
 - `go test ./search/... ./pipeline/... ./cli/... ./server/...` — new

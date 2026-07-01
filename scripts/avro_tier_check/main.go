@@ -98,6 +98,10 @@ func main() {
 		failf("decode existing %s: %v", oldPath, err)
 	}
 	_, hasField := oldRec["extraction_tier"]
-	fmt.Printf("ok: existing file decodes (%s); camis=%v extraction_tier present=%v\n",
-		filepath.Base(oldPath), oldRec["camis"], hasField)
+	bizID, hasBizKey := oldRec["business_id"]
+	if !hasBizKey {
+		bizID, _ = oldRec["camis"] // backward compat: old files use "camis"
+	}
+	fmt.Printf("ok: existing file decodes (%s); business_id=%v extraction_tier present=%v\n",
+		filepath.Base(oldPath), bizID, hasField)
 }

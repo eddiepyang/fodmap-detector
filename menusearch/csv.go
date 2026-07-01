@@ -10,6 +10,7 @@ import (
 )
 
 type NYCRestaurantRecord struct {
+	ID                   string // surrogate UUID (restaurants.id), populated after upsert; empty in raw CSV
 	CAMIS                string
 	DBA                  string
 	Boro                 string

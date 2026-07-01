@@ -61,10 +61,14 @@ ALTER TABLE menu_items ADD COLUMN business_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE menu_items ADD CONSTRAINT menu_items_business_id_fkey
     FOREIGN KEY (business_id) REFERENCES restaurants(camis) ON DELETE CASCADE;
 
--- Revert restaurants: drop yelp_id, restore camis as NOT NULL PK, drop surrogate id
--- Must drop the surrogate PK constraint first, then restore camis as PK, then drop id.
+-- Revert restaurants: drop yelp_id, restore camis as NOT NULL PK, drop surrogate id.
+-- Order matters: menu_items_business_id_fkey (re-created above) references
+-- restaurants(camis) via restaurants_camis_unique, so we must NOT drop that
+-- unique constraint directly. Instead, drop the surrogate PK on id, then ADD
+-- PRIMARY KEY (camis) — PostgreSQL converts the existing restaurants_camis_unique
+-- constraint into the PK in place, preserving the FK dependency. Only then is
+-- it safe to DROP COLUMN id.
 ALTER TABLE restaurants DROP COLUMN IF EXISTS yelp_id;
-ALTER TABLE restaurants DROP CONSTRAINT IF EXISTS restaurants_camis_unique;
 ALTER TABLE restaurants DROP CONSTRAINT IF EXISTS restaurants_pkey;
 ALTER TABLE restaurants ALTER COLUMN camis SET NOT NULL;
 ALTER TABLE restaurants ADD PRIMARY KEY (camis);
