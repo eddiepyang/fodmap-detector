@@ -114,7 +114,7 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 	prepRev.ExpectExec().
 		WithArgs(
 			"rev1",
-			"bus1",
+			nil,
 			"Tasty Bites",
 			"New York",
 			"NY",
@@ -141,6 +141,74 @@ func TestPostgresClient_BatchUpsert(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+// TestPostgresClient_BatchUpsert_WithBusinessUUID verifies that when
+// IndexItem.BusinessUUID is populated (the Yelp union step), the UUID is
+// passed to the reviews.business_id column instead of the raw string
+// Review.BusinessID.
+func TestPostgresClient_BatchUpsert_WithBusinessUUID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	client := &PostgresClient{db: db, embedder: nil}
+
+	bizUUID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	items := []IndexItem{
+		{
+			Review: schemas.Review{
+				ReviewID:   "rev1",
+				BusinessID: "yelp-bus-1",
+				Stars:      5.0,
+				Text:       "Amazing!",
+			},
+			BusinessUUID: &bizUUID,
+			BusinessName: "Tasty Bites",
+			City:         "Brooklyn",
+			State:        "NY",
+			Categories:   "Restaurant",
+			Vector:       []float32{0.1, 0.2, 0.3},
+		},
+	}
+
+	mock.ExpectBegin()
+	prepRev := mock.ExpectPrepare("INSERT INTO reviews")
+	mock.ExpectPrepare("DELETE FROM review_chunks")
+	mock.ExpectPrepare("INSERT INTO review_chunks")
+
+	prepRev.ExpectExec().
+		WithArgs(
+			"rev1",
+			bizUUID,
+			"Tasty Bites",
+			"Brooklyn",
+			"NY",
+			"Restaurant",
+			5.0,
+			"Amazing!",
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectExec("DELETE FROM review_chunks").
+		WithArgs("rev1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	mock.ExpectExec("INSERT INTO review_chunks").
+		WithArgs("rev1", "Amazing!", pgvector.NewHalfVector([]float32{0.1, 0.2, 0.3})).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectCommit()
+
+	if err := client.BatchUpsert(context.Background(), items); err != nil {
+		t.Errorf("BatchUpsert returned error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
 	}
 }
 

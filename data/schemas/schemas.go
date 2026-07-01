@@ -42,6 +42,7 @@ var NYCRestaurantSchema = `{
     "type": "record",
     "name": "nyc_restaurant",
     "fields": [
+        {"name": "id", "type": "string", "default": ""},
         {"name": "camis", "type": "string"},
         {"name": "dba", "type": "string"},
         {"name": "boro", "type": "string"},

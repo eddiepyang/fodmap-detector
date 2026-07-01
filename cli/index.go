@@ -16,9 +16,12 @@ import (
 
 	"fodmap/data"
 	"fodmap/data/schemas"
+	"fodmap/menusearch"
 	"fodmap/search"
 	"fodmap/server"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -133,6 +136,20 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 	}
 	slog.Info("business metadata loaded", "count", len(businessMap))
 
+	// Yelp union step (Postgres only): upsert each distinct Yelp business_id
+	// into restaurants (with yelp_id) to get the surrogate UUID, then map
+	// review.business_id (Yelp string) → restaurants.id (UUID) so the
+	// reviews.business_id FK is satisfied. Weaviate/Pinecone store the raw
+	// Yelp string and skip this step.
+	var yelpToUUID map[string]uuid.UUID
+	if postgresSearch && postgresDSN != "" {
+		yelpToUUID, err = buildYelpUUIDMap(ctx, postgresDSN, businessMap)
+		if err != nil {
+			return fmt.Errorf("building yelp→uuid map: %w", err)
+		}
+		slog.Info("yelp union complete", "mapped", len(yelpToUUID))
+	}
+
 	offset := 0
 	if startOffset > 0 {
 		offset = startOffset
@@ -209,6 +226,11 @@ func runIndex(cmd *cobra.Command, _ []string) error {
 					item.City = biz.City
 					item.State = biz.State
 					item.Categories = biz.Categories
+				}
+				if yelpToUUID != nil {
+					if uid, ok := yelpToUUID[r.BusinessID]; ok {
+						item.BusinessUUID = &uid
+					}
 				}
 				if filterCity != "" && !strings.EqualFold(filterCity, item.City) {
 					continue
@@ -414,4 +436,29 @@ func writeCheckpoint(path string, n int64) error {
 		return fmt.Errorf("rename checkpoint: %w", err)
 	}
 	return nil
+}
+
+// buildYelpUUIDMap upserts every Yelp business into the restaurants table
+// (keyed by yelp_id) and returns a map from Yelp business_id string to the
+// surrogate restaurants.id UUID. This is the union step that lets
+// reviews.business_id (UUID FK) reference restaurants.id even though Yelp
+// reviews carry the Yelp string ID, not a UUID.
+func buildYelpUUIDMap(ctx context.Context, dsn string, businessMap map[string]schemas.Business) (map[string]uuid.UUID, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect to postgres: %w", err)
+	}
+	defer pool.Close()
+
+	store := menusearch.NewStore(pool)
+	m := make(map[string]uuid.UUID, len(businessMap))
+	for yelpID, biz := range businessMap {
+		id, err := store.UpsertByYelp(ctx, yelpID, biz.Name)
+		if err != nil {
+			slog.Warn("yelp union: upsert business, skipping", "yelp_id", yelpID, "error", err)
+			continue
+		}
+		m[yelpID] = id
+	}
+	return m, nil
 }

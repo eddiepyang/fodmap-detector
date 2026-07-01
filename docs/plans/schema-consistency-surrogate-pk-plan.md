@@ -1,6 +1,6 @@
 # Plan: Schema consistency + surrogate UUID PK on `restaurants`
 
-**Status:** Draft (2026-06-30). Ready for implementation.
+**Status:** Implemented (2026-07-01). Migration `000010` applied; all Go code, SQL, Avro, and test changes landed. Two follow-up gaps from the original implementation were closed in the same session: (1) `NYCRestaurantSchema` / `NYCRestaurantRecord` gained the `id` field; (2) the Yelp union step in `cli/index.go` (`buildYelpUUIDMap` via `UpsertByYelp`) now populates `IndexItem.BusinessUUID` so `reviews.business_id` satisfies the UUID FK to `restaurants(id)`.
 
 ## Why
 
