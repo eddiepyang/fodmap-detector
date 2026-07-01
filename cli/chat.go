@@ -103,17 +103,38 @@ func runChat(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	project := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if project == "" {
+		return fmt.Errorf("GOOGLE_CLOUD_PROJECT environment variable is not set (Vertex AI / ADC)")
+	}
+	location := os.Getenv("GOOGLE_CLOUD_LOCATION")
+	if location == "" {
+		location = "global"
 	}
 	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		Backend:  genai.BackendVertexAI,
+		Project:  project,
+		Location: location,
+		// Credentials left nil → SDK uses Application Default Credentials.
 	})
 	if err != nil {
-		return fmt.Errorf("creating Gemini client: %w", err)
+		return fmt.Errorf("creating vertex ai gemini client: %w", err)
 	}
+
+	// Legacy Gemini Developer API path (API key). Kept for reference; the CLI
+	// now uses Vertex AI / ADC above. Restore this block to revert.
+	//
+	// apiKey := os.Getenv("GEMINI_API_KEY")
+	// if apiKey == "" {
+	// 	return fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	// }
+	// geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+	// 	APIKey:  apiKey,
+	// 	Backend: genai.BackendGeminiAPI,
+	// })
+	// if err != nil {
+	// 	return fmt.Errorf("creating Gemini client: %w", err)
+	// }
 
 	backend := chat.NewGeminiBackend(geminiClient, chatModel)
 

@@ -108,12 +108,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "build extractor: %v\n", err)
 		os.Exit(2)
 	}
-	fetcher := scraper.NewHTTPFetcher(true)                // ignore robots for the probe
-	gem, err := genai.NewClient(context.Background(), nil) // uses GEMINI_API_KEY
+	fetcher := scraper.NewHTTPFetcher(true) // ignore robots for the probe
+	gem, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		Backend:  genai.BackendVertexAI,
+		Project:  os.Getenv("GOOGLE_CLOUD_PROJECT"),
+		Location: os.Getenv("GOOGLE_CLOUD_LOCATION"),
+	}) // Vertex AI, ADC auth (gcloud auth login --update-adc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gemini client: %v\n", err)
 		os.Exit(2)
 	}
+	// Legacy Gemini Developer API path (API key). Kept for reference; the
+	// spike now uses Vertex AI / ADC above. Restore to revert.
+	//
+	// gem, err := genai.NewClient(context.Background(), nil) // uses GEMINI_API_KEY
 	cf := scraper.NewChromeRenderedFetcher(context.Background(), true)
 	defer func() { cf.Close() }()
 

@@ -125,18 +125,23 @@ type Config struct {
 	MenuStoreType string
 
 	// Chat endpoint configuration.
-	GeminiAPIKey       string  // Gemini API key; omit to disable /chat
-	ChatModel          string  // Gemini model ID for chat (default: gemini-3-flash-preview)
-	FilterModel        string  // Gemini model ID for filtering (default: gemini-3.1-flash-lite-preview)
-	ChatAPIKey         string  // Bearer token clients must present for /chat
-	ChatRateLimit      float64 // requests per second per IP (default: 2)
-	ChatRateBurst      int     // burst allowance (default: 5)
-	ChatMaxConcurrent  int     // max simultaneous chat requests (default: 10)
-	CORSAllowedOrigins []string
-	UserStore          auth.AdminStore
-	JWTSecret          string
-	AdminEmail         string
-	MenutrackingAdmin  http.Handler // nil when menutracking is not configured
+	// Vertex AI auth uses Application Default Credentials (ADC), not an API key.
+	// Run `gcloud auth login --update-adc` once; the Google Cloud SDK reads
+	// GOOGLE_CLOUD_PROJECT from the env. Set GoogleCloudProject (or the env var)
+	// to enable /chat; leave empty to disable.
+	GoogleCloudProject  string  // GCP project id for Vertex AI; omit to disable /chat
+	GoogleCloudLocation string  // Vertex AI location (default: "global")
+	ChatModel           string  // Gemini model ID for chat (default: gemini-3-flash-preview)
+	FilterModel         string  // Gemini model ID for filtering (default: gemini-3.1-flash-lite-preview)
+	ChatAPIKey          string  // Bearer token clients must present for /chat
+	ChatRateLimit       float64 // requests per second per IP (default: 2)
+	ChatRateBurst       int     // burst allowance (default: 5)
+	ChatMaxConcurrent   int     // max simultaneous chat requests (default: 10)
+	CORSAllowedOrigins  []string
+	UserStore           auth.AdminStore
+	JWTSecret           string
+	AdminEmail          string
+	MenutrackingAdmin   http.Handler // nil when menutracking is not configured
 }
 
 // New initialises the server and Searcher client.
@@ -221,8 +226,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		s.chatMaxConcurrent = 10
 	}
 
-	// Chat endpoint setup.
-	if cfg.GeminiAPIKey != "" && (cfg.ChatAPIKey != "" || cfg.JWTSecret != "") {
+	// Chat endpoint setup (Vertex AI, ADC auth).
+	if cfg.GoogleCloudProject != "" && (cfg.ChatAPIKey != "" || cfg.JWTSecret != "") {
 		chatModel := cfg.ChatModel
 		if chatModel == "" {
 			chatModel = "gemini-3-flash-preview"
@@ -231,22 +236,57 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		if filterModel == "" {
 			filterModel = "gemini-3.1-flash-lite-preview"
 		}
-		s.geminiAPIKey = cfg.GeminiAPIKey
+		location := cfg.GoogleCloudLocation
+		if location == "" {
+			location = "global"
+		}
 		s.chatModel = chatModel
 		s.filterModel = filterModel
 		s.chatAPIKey = cfg.ChatAPIKey
 
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			APIKey:  cfg.GeminiAPIKey,
-			Backend: genai.BackendGeminiAPI,
+			Backend:  genai.BackendVertexAI,
+			Project:  cfg.GoogleCloudProject,
+			Location: location,
+			// Credentials left nil → SDK uses Application Default Credentials.
 		})
 		if err != nil {
-			return nil, fmt.Errorf("creating gemini client: %w", err)
+			return nil, fmt.Errorf("creating vertex ai gemini client: %w", err)
 		}
 		s.genaiClient = client
 		s.chatBackend = chat.NewGeminiBackend(client, chatModel)
-		slog.Info("chat endpoint enabled", "model", chatModel)
+		slog.Info("chat endpoint enabled", "model", chatModel, "project", cfg.GoogleCloudProject, "location", location)
 	}
+
+	// Legacy Gemini Developer API path (API key). Kept for reference; the
+	// service now uses Vertex AI / ADC above. Restore this block (and the
+	// GeminiAPIKey Config field) to revert.
+	//
+	// if cfg.GeminiAPIKey != "" && (cfg.ChatAPIKey != "" || cfg.JWTSecret != "") {
+	// 	chatModel := cfg.ChatModel
+	// 	if chatModel == "" {
+	// 		chatModel = "gemini-3-flash-preview"
+	// 	}
+	// 	filterModel := cfg.FilterModel
+	// 	if filterModel == "" {
+	// 		filterModel = "gemini-3.1-flash-lite-preview"
+	// 	}
+	// 	s.geminiAPIKey = cfg.GeminiAPIKey
+	// 	s.chatModel = chatModel
+	// 	s.filterModel = filterModel
+	// 	s.chatAPIKey = cfg.ChatAPIKey
+	//
+	// 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+	// 		APIKey:  cfg.GeminiAPIKey,
+	// 		Backend: genai.BackendGeminiAPI,
+	// 	})
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("creating gemini client: %w", err)
+	// 	}
+	// 	s.genaiClient = client
+	// 	s.chatBackend = chat.NewGeminiBackend(client, chatModel)
+	// 	slog.Info("chat endpoint enabled", "model", chatModel)
+	// }
 
 	return s, nil
 }

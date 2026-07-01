@@ -118,26 +118,27 @@ var serveCmd = &cobra.Command{
 		}
 
 		srv, err := server.New(context.Background(), server.Config{
-			Port:               port,
-			WeaviateHost:       weaviateHost,
-			WeaviateScheme:     weaviateScheme,
-			WeaviateAPIKey:     weaviateAPIKey,
-			PostgresSearch:     postgresSearch,
-			PostgresDSN:        postgresDSN,
-			CatalogStore:       catalogStore,
-			GeminiAPIKey:       os.Getenv("GEMINI_API_KEY"),
-			ChatModel:          chatModel,
-			FilterModel:        filterModel,
-			ChatAPIKey:         chatAPIKey,
-			CORSAllowedOrigins: corsOrigins,
-			UserStore:          userStore,
-			JWTSecret:          jwtSecret,
-			AdminEmail:         adminEmail,
-			PineconeAPIKey:     pineconeAPIKey,
-			PineconeIndexHost:  pineconeIndexHost,
-			VectorizerURL:      vectorizerURL,
-			Embedder:           embedder,
-			MenuStoreType:      viper.GetString("menu-store"),
+			Port:                port,
+			WeaviateHost:        weaviateHost,
+			WeaviateScheme:      weaviateScheme,
+			WeaviateAPIKey:      weaviateAPIKey,
+			PostgresSearch:      postgresSearch,
+			PostgresDSN:         postgresDSN,
+			CatalogStore:        catalogStore,
+			GoogleCloudProject:  os.Getenv("GOOGLE_CLOUD_PROJECT"),
+			GoogleCloudLocation: os.Getenv("GOOGLE_CLOUD_LOCATION"),
+			ChatModel:           chatModel,
+			FilterModel:         filterModel,
+			ChatAPIKey:          chatAPIKey,
+			CORSAllowedOrigins:  corsOrigins,
+			UserStore:           userStore,
+			JWTSecret:           jwtSecret,
+			AdminEmail:          adminEmail,
+			PineconeAPIKey:      pineconeAPIKey,
+			PineconeIndexHost:   pineconeIndexHost,
+			VectorizerURL:       vectorizerURL,
+			Embedder:            embedder,
+			MenuStoreType:       viper.GetString("menu-store"),
 		})
 		if err != nil {
 			return fmt.Errorf("initializing server: %w", err)
@@ -167,10 +168,27 @@ var serveCmd = &cobra.Command{
 
 			// Menu search dependencies
 			var genAIClient *genai.Client
-			if os.Getenv("GEMINI_API_KEY") != "" {
-				genAIClient, err = genai.NewClient(cmd.Context(), nil)
+			// Legacy Gemini Developer API path (API key). The service now uses
+			// Vertex AI / ADC; this block is kept for reference.
+			//
+			// if os.Getenv("GEMINI_API_KEY") != "" {
+			// 	genAIClient, err = genai.NewClient(cmd.Context(), nil)
+			// 	if err != nil {
+			// 		return fmt.Errorf("creating genai client: %w", err)
+			// 	}
+			// }
+			if project := os.Getenv("GOOGLE_CLOUD_PROJECT"); project != "" {
+				location := os.Getenv("GOOGLE_CLOUD_LOCATION")
+				if location == "" {
+					location = "global"
+				}
+				genAIClient, err = genai.NewClient(cmd.Context(), &genai.ClientConfig{
+					Backend:  genai.BackendVertexAI,
+					Project:  project,
+					Location: location,
+				})
 				if err != nil {
-					return fmt.Errorf("creating genai client: %w", err)
+					return fmt.Errorf("creating vertex ai genai client: %w", err)
 				}
 			}
 
