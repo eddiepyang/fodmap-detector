@@ -66,7 +66,7 @@ func (s *Server) restaurantCreateHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if s.restaurantJobQueue != nil {
-		if err := s.restaurantJobQueue.EnqueueDiscover(ctx, *upserted); err != nil {
+		if err := s.restaurantJobQueue.EnqueueDiscover(ctx, *upserted); err != nil && !errors.Is(err, ErrJobKindNotRegistered) {
 			slog.Error("restaurants: enqueue discover", "camis", req.CAMIS, "err", err)
 			// Non-fatal: row was saved; caller can trigger manually.
 		}
@@ -165,6 +165,10 @@ func (s *Server) restaurantTriggerDiscoverHandler(w http.ResponseWriter, r *http
 			respondError(w, "discovery job already queued", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, ErrJobKindNotRegistered) {
+			respondError(w, "discovery worker not configured", http.StatusServiceUnavailable)
+			return
+		}
 		slog.Error("restaurants: enqueue discover", "camis", camis, "err", err)
 		respondError(w, "failed to enqueue discovery", http.StatusInternalServerError)
 		return
@@ -205,6 +209,10 @@ func (s *Server) restaurantTriggerScrapeHandler(w http.ResponseWriter, r *http.R
 			respondError(w, "scrape job already queued", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, ErrJobKindNotRegistered) {
+			respondError(w, "scrape worker not configured", http.StatusServiceUnavailable)
+			return
+		}
 		slog.Error("restaurants: enqueue scrape", "camis", camis, "err", err)
 		respondError(w, "failed to enqueue scrape", http.StatusInternalServerError)
 		return
@@ -237,6 +245,10 @@ func (s *Server) restaurantRetryHandler(w http.ResponseWriter, r *http.Request) 
 	var action string
 	if restaurantStatusNeedsRescrape(row.Status) && len(row.MenuURLs) > 0 {
 		if err := s.restaurantJobQueue.EnqueueScrape(ctx, *row); err != nil && !errors.Is(err, ErrJobAlreadyQueued) {
+			if errors.Is(err, ErrJobKindNotRegistered) {
+				respondError(w, "scrape worker not configured", http.StatusServiceUnavailable)
+				return
+			}
 			slog.Error("restaurants: retry enqueue scrape", "camis", camis, "err", err)
 			respondError(w, "failed to enqueue scrape", http.StatusInternalServerError)
 			return
@@ -247,6 +259,10 @@ func (s *Server) restaurantRetryHandler(w http.ResponseWriter, r *http.Request) 
 		action = "scrape"
 	} else {
 		if err := s.restaurantJobQueue.EnqueueDiscover(ctx, *row); err != nil && !errors.Is(err, ErrJobAlreadyQueued) {
+			if errors.Is(err, ErrJobKindNotRegistered) {
+				respondError(w, "discovery worker not configured", http.StatusServiceUnavailable)
+				return
+			}
 			slog.Error("restaurants: retry enqueue discover", "camis", camis, "err", err)
 			respondError(w, "failed to enqueue discovery", http.StatusInternalServerError)
 			return

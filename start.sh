@@ -152,7 +152,7 @@ if [ -n "$SCRAPER_PID" ]; then
 fi
 echo ""
 echo " Run the chat app in another terminal:"
-echo "   GOOGLE_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
+echo "   GEMINI_API_KEY=\$GEMINI_KEY go run . chat \"noodles\" --city Philadelphia --state PA"
 if [ -n "$SCRAPER_PID" ]; then
     echo ""
     echo " Scrape via the scraper service:"

@@ -12,14 +12,26 @@ import (
 )
 
 // JobQueue implements server.RestaurantJobQueue using the River client.
+//
+// DiscoverEnabled and ScrapeEnabled reflect whether the corresponding River
+// worker is registered in the running pipeline. When false, the matching
+// Enqueue method returns server.ErrJobKindNotRegistered instead of inserting
+// a job that no worker can process (which River would reject with "Unhandled
+// job kind").
 type JobQueue struct {
-	Client      *river.Client[pgx.Tx]
-	MaxAttempts int
+	Client          *river.Client[pgx.Tx]
+	MaxAttempts     int
+	DiscoverEnabled bool
+	ScrapeEnabled   bool
 }
 
 // EnqueueDiscover inserts a discover_menu_url job for the given restaurant.
-// Returns server.ErrJobAlreadyQueued (wrapped) if River deduplication prevents it.
+// Returns server.ErrJobAlreadyQueued (wrapped) if River deduplication prevents it,
+// or ErrJobKindNotRegistered if no discover worker is registered.
 func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) error {
+	if !q.DiscoverEnabled {
+		return server.ErrJobKindNotRegistered
+	}
 	args := DiscoverMenuURLArgs{
 		CAMIS:    safeDeref(r.CAMIS),
 		DBA:      r.DBA,
@@ -48,7 +60,11 @@ func (q *JobQueue) EnqueueDiscover(ctx context.Context, r server.Restaurant) err
 
 // EnqueueScrape inserts a scrape_menu job for the given restaurant.
 // The restaurant must have a non-empty MenuURL.
+// Returns ErrJobKindNotRegistered if no scrape worker is registered.
 func (q *JobQueue) EnqueueScrape(ctx context.Context, r server.Restaurant) error {
+	if !q.ScrapeEnabled {
+		return server.ErrJobKindNotRegistered
+	}
 	if len(r.MenuURLs) == 0 {
 		return fmt.Errorf("restaurant %s has no menu_urls", safeDeref(r.CAMIS))
 	}

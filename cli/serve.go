@@ -125,7 +125,7 @@ var serveCmd = &cobra.Command{
 			PostgresSearch:     postgresSearch,
 			PostgresDSN:        postgresDSN,
 			CatalogStore:       catalogStore,
-			GeminiAPIKey:       os.Getenv("GOOGLE_API_KEY"),
+			GeminiAPIKey:       os.Getenv("GEMINI_API_KEY"),
 			ChatModel:          chatModel,
 			FilterModel:        filterModel,
 			ChatAPIKey:         chatAPIKey,
@@ -167,7 +167,7 @@ var serveCmd = &cobra.Command{
 
 			// Menu search dependencies
 			var genAIClient *genai.Client
-			if os.Getenv("GOOGLE_API_KEY") != "" {
+			if os.Getenv("GEMINI_API_KEY") != "" {
 				genAIClient, err = genai.NewClient(cmd.Context(), nil)
 				if err != nil {
 					return fmt.Errorf("creating genai client: %w", err)

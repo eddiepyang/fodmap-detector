@@ -63,3 +63,7 @@ type RestaurantJobQueue interface {
 // ErrJobAlreadyQueued is returned by RestaurantJobQueue methods when River
 // deduplication prevents inserting a duplicate job within the uniqueness window.
 var ErrJobAlreadyQueued = errors.New("job already queued")
+
+// ErrJobKindNotRegistered is returned by RestaurantJobQueue methods when the
+// worker for the requested job kind is not registered in the running pipeline.
+var ErrJobKindNotRegistered = errors.New("job kind not registered in this pipeline")

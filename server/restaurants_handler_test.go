@@ -353,6 +353,21 @@ func TestRestaurantTriggerDiscoverHandler(t *testing.T) {
 			t.Errorf("status = %d, want 409", w.Code)
 		}
 	})
+
+	t.Run("worker not registered", func(t *testing.T) {
+		store := newStubRestaurantStore()
+		_, _ = store.Upsert(context.Background(), Restaurant{CAMIS: strPtr("1"), DBA: "A"})
+		q := &stubRestaurantJobQueue{discoverErr: ErrJobKindNotRegistered}
+		s := newRestaurantServer(store, q)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/discover", nil)
+		req.SetPathValue("camis", "1")
+		w := httptest.NewRecorder()
+		s.restaurantTriggerDiscoverHandler(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503", w.Code)
+		}
+	})
 }
 
 func TestRestaurantTriggerScrapeHandler(t *testing.T) {
@@ -412,6 +427,22 @@ func TestRestaurantTriggerScrapeHandler(t *testing.T) {
 		s.restaurantTriggerScrapeHandler(w, req)
 		if w.Code != http.StatusConflict {
 			t.Errorf("status = %d, want 409", w.Code)
+		}
+	})
+
+	t.Run("worker not registered", func(t *testing.T) {
+		store := newStubRestaurantStore()
+		r := Restaurant{CAMIS: strPtr("1"), DBA: "A", MenuURLs: menuURLs}
+		_, _ = store.Upsert(context.Background(), r)
+		q := &stubRestaurantJobQueue{scrapeErr: ErrJobKindNotRegistered}
+		s := newRestaurantServer(store, q)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/restaurants/1/scrape", nil)
+		req.SetPathValue("camis", "1")
+		w := httptest.NewRecorder()
+		s.restaurantTriggerScrapeHandler(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503", w.Code)
 		}
 	})
 }

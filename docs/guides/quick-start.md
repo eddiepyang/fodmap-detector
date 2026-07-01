@@ -6,7 +6,7 @@ The fastest way to get everything running:
 
 ```sh
 make setup                        # installs Go deps, Ollama, model, Weaviate
-export GOOGLE_API_KEY=your_key    # required for chat
+export GEMINI_API_KEY=your_key    # required for chat
 make run                          # starts the server on :8081
 ```
 
@@ -26,9 +26,9 @@ make run                          # starts the server on :8081
   ```sh
   sudo apt-get install docker-compose-v2
   ```
-- **`GOOGLE_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
+- **`GEMINI_API_KEY`** — required to start the interactive chat agent. Get one from [Google AI Studio](https://aistudio.google.com/app/apikey):
   ```sh
-  export GOOGLE_API_KEY=your_key_here
+  export GEMINI_API_KEY=your_key_here
   ```
 
 ### Configuration

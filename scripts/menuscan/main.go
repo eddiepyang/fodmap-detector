@@ -5,7 +5,7 @@
 // using the REAL detector cascade (text → image → JS-render), plus platform
 // detection. It writes a JSON results file + prints a histogram.
 //
-// Prerequisites: GOOGLE_API_KEY (Gemini GoogleSearch for URL discovery),
+// Prerequisites: GEMINI_API_KEY (Gemini GoogleSearch for URL discovery),
 // vLLM at --llm-url (qwen3-vl for extraction), Google Chrome (chromedp for the
 // JS-render probe). No Weaviate, no Python service, no indexing — read-only.
 //
@@ -85,7 +85,7 @@ func main() {
 	samplePath := flag.String("sample", "/tmp/spike_sample.json", "Path to the restaurant sample JSON")
 	llmURL := flag.String("llm-url", "https://generativelanguage.googleapis.com/v1beta/openai", "OpenAI-compatible LLM endpoint (Gemini's /v1beta/openai by default for speed)")
 	llmModel := flag.String("llm-model", "gemini-3-flash-preview", "Vision LLM model name")
-	llmAPIKey := flag.String("llm-api-key", os.Getenv("GOOGLE_API_KEY"), "API key for the LLM endpoint (defaults to GOOGLE_API_KEY)")
+	llmAPIKey := flag.String("llm-api-key", os.Getenv("GEMINI_API_KEY"), "API key for the LLM endpoint (defaults to GEMINI_API_KEY)")
 	timeout := flag.Duration("timeout", 90*time.Minute, "Overall spike deadline")
 	verbose := flag.Bool("v", false, "Print one line per restaurant as it runs")
 	geminiModel := flag.String("gemini-model", "gemini-2.5-flash", "Gemini model for GoogleSearch discovery")
@@ -109,7 +109,7 @@ func main() {
 		os.Exit(2)
 	}
 	fetcher := scraper.NewHTTPFetcher(true)                // ignore robots for the probe
-	gem, err := genai.NewClient(context.Background(), nil) // uses GOOGLE_API_KEY
+	gem, err := genai.NewClient(context.Background(), nil) // uses GEMINI_API_KEY
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gemini client: %v\n", err)
 		os.Exit(2)

@@ -188,7 +188,7 @@ func TestProfileHandler_Update_ChatServiceNotConfigured(t *testing.T) {
 	store := newStubStore()
 	store.users["test@example.com"] = &auth.User{ID: "u1", Email: "test@example.com", Status: "active"}
 
-	// genaiClient is nil — simulates missing GOOGLE_API_KEY
+	// genaiClient is nil — simulates missing GEMINI_API_KEY
 	s := &Server{userStore: store}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"input": "I am vegan"}`))
 	ctx := context.WithValue(req.Context(), userContextKey, "u1")

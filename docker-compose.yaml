@@ -27,7 +27,7 @@ services:
       CLUSTER_HOSTNAME: "node1"
     volumes:
       - weaviate_data:/var/lib/weaviate
-
+    
   # Python scraper service for PDF/OCR + webagent (Phase A/B).
   # Disabled by default — uncomment to enable routed PDF/OCR extraction.
   # Requires the scraper repo at ../scraper with a built image, or run it

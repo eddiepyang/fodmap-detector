@@ -317,6 +317,8 @@ extractor-url: "http://localhost:8765"
 ```
 Then restart the server with `--enable-pipeline`.
 
+When the scrape worker is not registered, `POST /api/v1/restaurants/{camis}/scrape` and the retry endpoint return `503` with `"scrape worker not configured"` instead of enqueuing an unhandled job. Likewise, if `GOOGLE_API_KEY` is unset, the discover worker is not registered and `POST /api/v1/restaurants/{camis}/discover` returns `503` with `"discovery worker not configured"`.
+
 **Cause C: Discovery jobs stopped retrying (no URL found)**
 
 Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `no_url_found`. This is intentional — it means the restaurant has no discoverable web presence.

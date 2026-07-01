@@ -142,7 +142,7 @@ owned by the service's `SCRAPER_LLM_*` / OCR backend config — the detector's
 
 ```sh
 # Find the top Thai restaurant in Las Vegas and start a chat about its dishes
-GOOGLE_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
+GEMINI_API_KEY=${GEMINI_KEY} go run . chat "pad thai" --city "Las Vegas" --state NV
 ```
 
 See [chat.md](chat.md) for design decisions and tradeoffs.

@@ -41,7 +41,7 @@ OR (nta='QN31' AND zipcode IN ('11101','11109'))
 ### Key decisions (confirmed with user)
 
 - **Discovery agent:** Gemini + `GoogleSearch` tool (built-in web search
-  grounding). Reuses existing `GOOGLE_API_KEY` / `genai.Client`.
+  grounding). Reuses existing `GEMINI_API_KEY` / `genai.Client`.
 - **Two-phase:** `discover` job (find menu URL) → `scrape` job (extract +
   embed + upsert). Separate River job kinds.
 - **Package:** new `menusearch` package (clean separation from

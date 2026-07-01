@@ -14,7 +14,7 @@ setup: setup-deps setup-ollama setup-docker
 	@echo "✅ Setup complete!"
 	@echo ""
 	@echo "  Next steps:"
-	@echo "    1. Export your Gemini key:  export GOOGLE_API_KEY=<your_key>"
+	@echo "    1. Export your Gemini key:  export GEMINI_API_KEY=<your_key>"
 	@echo "    2. Start all services:      make start"
 	@echo "    3. Or server only:          make run"
 	@echo ""

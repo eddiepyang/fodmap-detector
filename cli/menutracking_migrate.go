@@ -229,7 +229,8 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 			},
 		},
 	}
-	if cfg.GenAIClient != nil {
+	discoverEnabled := cfg.GenAIClient != nil
+	if discoverEnabled {
 		river.AddWorker(workers, discoverWorker)
 		if cfg.MenuStore == nil || cfg.Embedder == nil || cfg.Extractor == nil {
 			slog.Warn("menusearch: discover worker registered but scrape worker is not — discovered URLs will be queued but not processed",
@@ -237,6 +238,8 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 				"has_embedder", cfg.Embedder != nil,
 				"has_extractor", cfg.Extractor != nil)
 		}
+	} else {
+		slog.Warn("menusearch: discover worker not registered (GenAIClient nil); EnqueueDiscover will return ErrJobKindNotRegistered")
 	}
 
 	scrapeMenuWorker := &menusearch.ScrapeMenuWorker{
@@ -251,8 +254,14 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		WebagentAdapter: cfg.WebagentAdapter,
 		BronzeDir:       cfg.BronzeDir,
 	}
-	if cfg.MenuStore != nil && cfg.Embedder != nil && cfg.Extractor != nil {
+	scrapeEnabled := cfg.MenuStore != nil && cfg.Embedder != nil && cfg.Extractor != nil
+	if scrapeEnabled {
 		river.AddWorker(workers, scrapeMenuWorker)
+	} else {
+		slog.Warn("menusearch: scrape worker not registered (missing MenuStore/Embedder/Extractor); EnqueueScrape will return ErrJobKindNotRegistered",
+			"has_menu_store", cfg.MenuStore != nil,
+			"has_embedder", cfg.Embedder != nil,
+			"has_extractor", cfg.Extractor != nil)
 	}
 
 	// Build periodic jobs from sources.
@@ -294,7 +303,12 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 	scrapeWorker.RiverClient = riverClient
 	discoverWorker.RiverClient = riverClient
 
-	jobQueue := &menusearch.JobQueue{Client: riverClient, MaxAttempts: cfg.ScrapeMaxAttempts}
+	jobQueue := &menusearch.JobQueue{
+		Client:          riverClient,
+		MaxAttempts:     cfg.ScrapeMaxAttempts,
+		DiscoverEnabled: discoverEnabled,
+		ScrapeEnabled:   scrapeEnabled,
+	}
 
 	if err := riverClient.Start(ctx); err != nil {
 		pool.Close()
