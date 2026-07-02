@@ -319,6 +319,28 @@ tier1Done:
 
 // StoreMenu embeds the extracted items and upserts them into the menu store (Weaviate).
 // Returns the item count.
+// renderToMarkdown renders rawURL in the headless browser and converts the
+// hydrated HTML to Markdown. Shared by the JS-shell pre-render (trivial
+// static text) and the post-extract re-cascade (0 items from static text).
+func renderToMarkdown(ctx context.Context, renderer scraper.HTMLRenderer, rawURL string) (string, []byte, error) {
+	// Scroll defeats lazy-loading AND list virtualization (Grubhub-style
+	// menus unmount sections that scroll out of a normal viewport).
+	renderRes, err := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true, Scroll: true})
+	if err != nil {
+		return "", nil, fmt.Errorf("rendered-fetch: %w", err)
+	}
+	hydratedBytes, err := io.ReadAll(renderRes.Body)
+	_ = renderRes.Body.Close()
+	if err != nil {
+		return "", nil, fmt.Errorf("reading rendered body: %w", err)
+	}
+	md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(hydratedBytes), renderRes.ContentType)
+	if err != nil {
+		return "", nil, fmt.Errorf("converting rendered HTML: %w", err)
+	}
+	return md, hydratedBytes, nil
+}
+
 func StoreMenu(
 	ctx context.Context,
 	result *scraper.MenuExtractionResult,

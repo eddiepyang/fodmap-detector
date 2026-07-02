@@ -334,3 +334,46 @@ func (s *Server) adminConversationActivityHandler(w http.ResponseWriter, r *http
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(activity)
 }
+
+func (s *Server) adminListMenuItemsHandler(w http.ResponseWriter, r *http.Request) {
+	var ms MenuStore
+	if s.menuStore != nil {
+		ms = s.menuStore
+	} else if cast, ok := s.searcher.(MenuStore); ok {
+		ms = cast
+	}
+
+	if ms == nil {
+		respondError(w, "menu store not configured", http.StatusNotImplemented)
+		return
+	}
+
+	search := r.URL.Query().Get("search")
+	pageStr := r.URL.Query().Get("page")
+	limitStr := r.URL.Query().Get("limit")
+
+	page := 1
+	limit := 50
+	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+	offset := (page - 1) * limit
+
+	items, total, err := ms.ListMenuItems(r.Context(), search, limit, offset)
+	if err != nil {
+		slog.Error("admin list menu items", "err", err)
+		respondError(w, "failed to list menu items", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"items": items,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
+}

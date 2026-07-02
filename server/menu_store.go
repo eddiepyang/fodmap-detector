@@ -64,6 +64,11 @@ func (d *DualMenuStore) SearchMenu(ctx context.Context, query string, limit int)
 	return d.primary.SearchMenu(ctx, query, limit)
 }
 
+// ListMenuItems reads from the primary only.
+func (d *DualMenuStore) ListMenuItems(ctx context.Context, search string, limit, offset int) ([]search.MenuItem, int, error) {
+	return d.primary.ListMenuItems(ctx, search, limit, offset)
+}
+
 // Compile-time check: DualMenuStore satisfies MenuStore.
 var _ MenuStore = (*DualMenuStore)(nil)
 

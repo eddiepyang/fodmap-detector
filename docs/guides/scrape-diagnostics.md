@@ -106,6 +106,16 @@ $PSQL -c "SELECT camis, dba, last_error FROM restaurants
             AND (last_error LIKE '%status 403%' OR last_error LIKE '%status 429%');"
 ```
 
+**`page text too short … refusing LLM call (hallucination risk)`** — the
+refusal floor: the page yielded < 60 runes of text and the pipeline refused to
+send it to the LLM (near-empty input makes the model *invent* a menu instead
+of returning zero items). Usually a JS-shell page that could not be rendered:
+check that the Python service is up with `SCRAPER_WEBAGENT_ENABLED=true` and
+that the Go server was started with `--extractor-url` — with both in place the
+shell is rendered in the headless browser before the text pass and this error
+does not occur. The Python service enforces the same floor on
+`extractions:structure` (422 for bodies under 60 non-whitespace chars).
+
 ## 3. Tier mix (`extraction_tier`)
 
 Which cascade tier produced each success is persisted per scrape (see

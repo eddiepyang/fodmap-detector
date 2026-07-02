@@ -261,6 +261,10 @@ func (s *stubMenuStore) SearchMenu(_ context.Context, _ string, _ int) ([]search
 	return nil, nil
 }
 
+func (s *stubMenuStore) ListMenuItems(_ context.Context, _ string, _, _ int) ([]search.MenuItem, int, error) {
+	return nil, 0, nil
+}
+
 var _ server.MenuStore = (*stubMenuStore)(nil)
 
 func TestStoreMenu_EmptyItems(t *testing.T) {

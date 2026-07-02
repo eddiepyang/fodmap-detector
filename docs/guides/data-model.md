@@ -70,6 +70,13 @@ Fetch (HTTPFetcher: robots.txt check, body cap, charset decode)
     +-- Tier 1.5: trafilatura fallback
     |   If Markdown is noisy (IsTooNoisy), try go-trafilatura boilerplate removal.
     |
+    +-- JS-shell pre-render (--extractor-url required)
+    |   If IsJSShell() flags the static HTML as an SPA shell AND the visible
+    |   text is trivial (<200 runes), render the URL in the headless browser
+    |   BEFORE the text pass and extract from the hydrated HTML instead. The
+    |   LLM must never see a near-empty shell: it invents a plausible menu
+    |   rather than returning zero items (hallucination guard).
+    |
     +-- Phase C: Image-embedded menu (--extractor-url required)
     |   If content is still noisy/empty/too-short, FindMenuImage() scans the
     |   HTML for a large <img> likely to be a menu photo (size, filename,
@@ -80,6 +87,18 @@ Fetch (HTTPFetcher: robots.txt check, body cap, charset decode)
     |   If no menu image found, route to the service's webagent endpoint
     |   (scrape/{site}/{target} → serialize records → extractions:structure).
     |
+    +-- Refusal floor (minExtractRunes = 60)
+    |   Page text under 60 runes is NEVER sent to the LLM — the job fails with
+    |   "page text too short … refusing LLM call (hallucination risk)" instead
+    |   of storing invented items. The Python service enforces the same floor
+    |   on extractions:structure (422).
+    |
+    +-- JS-shell re-cascade (post-extract)
+    |   If the text pass returns 0 items AND the static HTML was a JS shell,
+    |   render via the webagent and re-run extraction on the hydrated HTML.
+    |   Covers shells with real static text (header/hours) but a client-side
+    |   menu; gated on 0 items so it never dilutes a working extraction.
+    |
     +-- PDF service path (--extractor-url)
     |   PDFs without a text layer route to the service (inspect → per-page
     |   extract → structure). Pure-Go ExtractPDFVision is the 503 fallback.
@@ -87,6 +106,18 @@ Fetch (HTTPFetcher: robots.txt check, body cap, charset decode)
     v
 MenuExtractionResult → EmbedBatch → BatchUpsertMenu → Weaviate
 ```
+
+**JS-shell detection** (`scraper.IsJSShell`) uses two rules, either flags a shell:
+- *Ratio rule*: raw HTML ≥ 50KB but < 500 visible runes and a byte-to-rune ratio
+  > 500× — the classic Wix shape with inlined JS bundles.
+- *Trivial rule*: < 60 visible runes and any `<script>` tag — external-bundle
+  SPAs (e.g. `dine.online` serves a ~20KB shell whose bundles load via
+  `<script src>`, invisible to the ratio rule).
+
+**`<button>` text is kept** by `ConvertHTMLToMarkdown` (emitted as list items):
+ordering SPAs render each menu item card — name, description, price — as a
+`<button>`, so skipping them erased whole menus. Stray UI labels ("Add to
+cart") are cheap noise the extractor prompt ignores.
 
 **Key types** (`scraper/scraper.go`):
 
