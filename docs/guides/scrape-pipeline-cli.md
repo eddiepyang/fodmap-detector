@@ -122,7 +122,7 @@ export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disa
 go run . restaurants replay-restaurants
 
 # Replay a single specific avro file
-go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-06-29.avro
+go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-07-01.avro
 
 # Replay only records 20..39 (across all files), and skip enqueuing discovery jobs
 go run . restaurants replay-restaurants --limit 20 --offset 20 --skip-discovery
