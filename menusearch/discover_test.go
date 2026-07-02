@@ -273,6 +273,73 @@ func TestCheckMenuSignal_OrderingPlatformKept(t *testing.T) {
 	}
 }
 
+func TestIsOrderingPlatform(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://order.toasttab.com/online/my-place", true},
+		{"https://swick2go.dine.online/locations/375770?fulfillment=pickup", true},
+		{"https://swick2go.dine.online", true},
+		{"https://www.order.store/store/swick2/abc", true},
+		{"https://myrestaurant.square.site", true},
+		// Suffix match must not fire on lookalike hosts.
+		{"https://notdine.online.example.com", false},
+		{"https://myrestaurant.com/menu", false},
+		{"https://doordash.com/store/my-restaurant", false},
+	}
+	for _, tc := range cases {
+		if got := isOrderingPlatform(tc.url); got != tc.want {
+			t.Errorf("isOrderingPlatform(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+}
+
+func TestHarvestOrderingLinks(t *testing.T) {
+	// Homepage links a dine.online ordering SPA (with an HTML-escaped query
+	// string), a duplicate of it, and non-platform links that must be ignored.
+	body := []byte(`<html><body>
+<a href="https://swick2go.dine.online?fulfillment=pickup&amp;x=1">Order Online</a>
+<a href="https://swick2go.dine.online?fulfillment=pickup&amp;x=1">Order Again</a>
+<a href="https://www.facebook.com/Swick2go">Facebook</a>
+<a href="/about">About</a>
+<a href='https://order.toasttab.com/online/other-place'>Toast</a>
+</body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	got := harvestOrderingLinks(context.Background(), client, srv.URL)
+
+	want := []string{
+		"https://swick2go.dine.online?fulfillment=pickup&x=1",
+		"https://order.toasttab.com/online/other-place",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("harvestOrderingLinks = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("harvestOrderingLinks[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestHarvestOrderingLinks_Non2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	if got := harvestOrderingLinks(context.Background(), client, srv.URL); got != nil {
+		t.Errorf("harvestOrderingLinks on 403 = %v, want nil", got)
+	}
+}
+
 func TestCheckMenuSignal_2xxWithSignalKept(t *testing.T) {
 	// 2xx response with menu JSON-LD → kept.
 	body := []byte(`<html><head>

@@ -1,0 +1,1 @@
+SELECT kind, state::text, count(*)::int FROM river.river_job WHERE kind IN ('menusearch.discover_menu_url', 'menusearch.scrape_menu') AND (finalized_at IS NULL OR finalized_at > now() - interval '24 hours') GROUP BY kind, state

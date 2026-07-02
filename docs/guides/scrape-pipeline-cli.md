@@ -65,7 +65,7 @@ You can use the `--limit` and `--offset` flags to paginate through the dataset. 
 ```sh
 # Import the first 10 restaurants in the Astoria-LIC area
 go run . restaurants --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap" import --area astoria-lic --limit 10 --offset 0
-
+p
 # Import the next 20 new restaurants in the Astoria-LIC area
 go run . restaurants import --area astoria-lic --limit 20 --offset 10
 ```
@@ -99,6 +99,8 @@ go run . restaurants scrape 50012345
 If a restaurant fails at any point in the pipeline (e.g., website 404, LLM extraction error, connection timeout), you can reset its status and requeue it.
 
 ```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+
 go run . restaurants retry 50012345
 ```
   
@@ -120,7 +122,7 @@ export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disa
 go run . restaurants replay-restaurants
 
 # Replay a single specific avro file
-go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-06-29.avro
+go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-07-01.avro
 
 # Replay only records 20..39 (across all files), and skip enqueuing discovery jobs
 go run . restaurants replay-restaurants --limit 20 --offset 20 --skip-discovery

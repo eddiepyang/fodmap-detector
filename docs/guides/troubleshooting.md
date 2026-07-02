@@ -285,7 +285,7 @@ docker compose exec postgres psql -U fodmap -d fodmap -c \
   "SELECT status, count(*) FROM restaurants GROUP BY 1 ORDER BY 1;"
 ```
 
-Common statuses: `pending_discovery`, `pending_scrape`, `scraped`, `failed_scrape`, `no_url_found`.
+Common statuses: `pending_discovery`, `pending_scrape`, `scraped`, `failed_scrape`, `failed_permanently`.
 
 To see which restaurants are stuck:
 
@@ -321,7 +321,7 @@ When the scrape worker is not registered, `POST /api/v1/restaurants/{camis}/scra
 
 **Cause C: Discovery jobs stopped retrying (no URL found)**
 
-Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `no_url_found`. This is intentional — it means the restaurant has no discoverable web presence.
+Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `failed_permanently`. This is intentional — it means the restaurant has no discoverable web presence.
 
 To re-run discovery for a specific restaurant:
 ```bash

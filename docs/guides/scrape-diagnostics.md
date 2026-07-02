@@ -63,7 +63,7 @@ To output all raw metrics as a single JSON object for integration with other too
 ## 1. Outcome overview (Postgres)
 
 Start with the status distribution across all restaurants. `status` is one of
-`pending_discovery | url_found | scraping | scraped | failed_scrape | no_url_found`
+`pending_discovery | url_found | scraping | scraped | failed_scrape | failed_permanently`
 (see [menusearch/restaurant.go](../../menusearch/restaurant.go)).
 
 ```bash

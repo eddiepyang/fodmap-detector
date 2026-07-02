@@ -30,6 +30,14 @@ const (
 	TierDirectoryFanout = "directory_fanout" // directory page: items aggregated from multiple sub-URLs
 )
 
+// minExtractRunes is the refusal floor for the LLM text pass: page text
+// shorter than this is never sent to the extractor. Near-empty input makes
+// the model invent a plausible menu rather than return zero items — a safety
+// hazard for a dietary tool. 60 runes is well below any real menu (name +
+// one dish + price) but above JS-shell remnants ("You need to enable
+// JavaScript to run this app." is 46).
+const minExtractRunes = 60
+
 // fetchWithFallback attempts a normal HTTP fetch and, on a 403 or 429 status
 // error, falls back to the webagent rendered-fetch endpoint if ex implements
 // scraper.HTMLRenderer. Returns (bodyBytes, contentType, error).
@@ -159,6 +167,30 @@ func ExtractMenu(
 
 			menuImgCandidates, _ = scraper.FindMenuImages(bodyBytes, ct, rawURL)
 
+			// JS shell with near-trivial static text: render BEFORE the text
+			// pass. Sending a shell to the LLM invites hallucination (observed:
+			// a 1-rune page produced 34 invented menu items), and the
+			// post-extract re-cascade below cannot catch that because it only
+			// fires on 0 items.
+			preRendered := false
+			if jsShell && tooShort {
+				if renderer, ok := ex.(scraper.HTMLRenderer); ok {
+					hydratedMD, hydratedBytes, renderErr := renderToMarkdown(ctx, renderer, rawURL)
+					if renderErr != nil {
+						slog.Warn("JS shell pre-render failed", "url", rawURL, "error", renderErr)
+					} else {
+						slog.Info("JS shell with trivial static text; using rendered HTML for text pass",
+							"url", rawURL,
+							"static_runes", len([]rune(strings.TrimSpace(md))),
+							"rendered_runes", len([]rune(strings.TrimSpace(hydratedMD))))
+						md = hydratedMD
+						bodyBytes = hydratedBytes
+						preRendered = true
+						needsFallback = false
+					}
+				}
+			}
+
 			if needsFallback {
 				if len(menuImgCandidates) > 0 {
 					if iex, ok := ex.(scraper.ImageExtractor); ok {
@@ -211,11 +243,23 @@ func ExtractMenu(
 			}
 			pageText = md
 			tier = TierHTMLLLM
+			if preRendered {
+				tier = TierWebagent
+			}
 		}
 
 		if pdfResult != nil {
 			result = *pdfResult
 		} else {
+			// Refusal floor: never send near-empty text to the LLM. With no
+			// real page content the model invents a menu instead of returning
+			// zero items, and invented ingredient data is a safety hazard for
+			// a dietary tool.
+			if runes := len([]rune(strings.TrimSpace(pageText))); runes < minExtractRunes {
+				return nil, bodyBytes, fmt.Errorf(
+					"page text too short for extraction (%d runes < %d): refusing LLM call (hallucination risk)",
+					runes, minExtractRunes)
+			}
 			slog.Info("Tier 1: sending to LLM extractor", "chars", len([]rune(pageText)))
 			var err error
 			result, err = ex.Extract(ctx, pageText)
@@ -253,42 +297,27 @@ func ExtractMenu(
 				if renderer, ok := ex.(scraper.HTMLRenderer); ok {
 					slog.Info("text pass empty; JS shell re-cascade via rendered-fetch",
 						"url", rawURL, "static_runes", len([]rune(strings.TrimSpace(pageText))))
-					renderRes, renderErr := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true})
+					hydratedMD, hydratedBytes, renderErr := renderToMarkdown(ctx, renderer, rawURL)
 					if renderErr != nil {
-						slog.Warn("JS shell re-cascade: rendered-fetch failed",
-							"url", rawURL, "error", renderErr)
+						slog.Warn("JS shell re-cascade failed", "url", rawURL, "error", renderErr)
 					} else {
-						hydratedBytes, readErr := io.ReadAll(renderRes.Body)
-						_ = renderRes.Body.Close()
-						if readErr != nil {
-							slog.Warn("JS shell re-cascade: reading rendered body failed",
-								"url", rawURL, "error", readErr)
+						slog.Info("JS shell re-cascade: re-running LLM on rendered HTML",
+							"url", rawURL,
+							"static_runes", len([]rune(strings.TrimSpace(pageText))),
+							"rendered_runes", len([]rune(strings.TrimSpace(hydratedMD))))
+						renderedResult, renderExtractErr := ex.Extract(ctx, hydratedMD)
+						if renderExtractErr != nil {
+							slog.Warn("JS shell re-cascade: LLM extraction on rendered HTML failed",
+								"url", rawURL, "error", renderExtractErr)
+						} else if len(renderedResult.Items) > 0 {
+							slog.Info("JS shell re-cascade: extracted items from rendered HTML",
+								"url", rawURL, "items", len(renderedResult.Items))
+							result = renderedResult
+							bodyBytes = hydratedBytes
+							tier = TierWebagent
 						} else {
-							hydratedMD, convErr := scraper.ConvertHTMLToMarkdown(
-								bytes.NewReader(hydratedBytes), renderRes.ContentType)
-							if convErr != nil {
-								slog.Warn("JS shell re-cascade: converting rendered HTML failed",
-									"url", rawURL, "error", convErr)
-							} else {
-								slog.Info("JS shell re-cascade: re-running LLM on rendered HTML",
-									"url", rawURL,
-									"static_runes", len([]rune(strings.TrimSpace(pageText))),
-									"rendered_runes", len([]rune(strings.TrimSpace(hydratedMD))))
-								renderedResult, renderExtractErr := ex.Extract(ctx, hydratedMD)
-								if renderExtractErr != nil {
-									slog.Warn("JS shell re-cascade: LLM extraction on rendered HTML failed",
-										"url", rawURL, "error", renderExtractErr)
-								} else if len(renderedResult.Items) > 0 {
-									slog.Info("JS shell re-cascade: extracted items from rendered HTML",
-										"url", rawURL, "items", len(renderedResult.Items))
-									result = renderedResult
-									bodyBytes = hydratedBytes
-									tier = TierWebagent
-								} else {
-									slog.Info("JS shell re-cascade: rendered HTML also yielded 0 items",
-										"url", rawURL)
-								}
-							}
+							slog.Info("JS shell re-cascade: rendered HTML also yielded 0 items",
+								"url", rawURL)
 						}
 					}
 				}
@@ -322,24 +351,22 @@ tier1Done:
 // renderToMarkdown renders rawURL in the headless browser and converts the
 // hydrated HTML to Markdown. Shared by the JS-shell pre-render (trivial
 // static text) and the post-extract re-cascade (0 items from static text).
-// func renderToMarkdown(ctx context.Context, renderer scraper.HTMLRenderer, rawURL string) (string, []byte, error) {
-// 	// Scroll defeats lazy-loading AND list virtualization (Grubhub-style
-// 	// menus unmount sections that scroll out of a normal viewport).
-// 	renderRes, err := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true, Scroll: true})
-// 	if err != nil {
-// 		return "", nil, fmt.Errorf("rendered-fetch: %w", err)
-// 	}
-// 	hydratedBytes, err := io.ReadAll(renderRes.Body)
-// 	_ = renderRes.Body.Close()
-// 	if err != nil {
-// 		return "", nil, fmt.Errorf("reading rendered body: %w", err)
-// 	}
-// 	md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(hydratedBytes), renderRes.ContentType)
-// 	if err != nil {
-// 		return "", nil, fmt.Errorf("converting rendered HTML: %w", err)
-// 	}
-// 	return md, hydratedBytes, nil
-// }
+func renderToMarkdown(ctx context.Context, renderer scraper.HTMLRenderer, rawURL string) (string, []byte, error) {
+	renderRes, err := renderer.FetchRenderedHTML(ctx, rawURL, scraper.RenderOptions{NetworkIdle: true})
+	if err != nil {
+		return "", nil, fmt.Errorf("rendered-fetch: %w", err)
+	}
+	hydratedBytes, err := io.ReadAll(renderRes.Body)
+	_ = renderRes.Body.Close()
+	if err != nil {
+		return "", nil, fmt.Errorf("reading rendered body: %w", err)
+	}
+	md, err := scraper.ConvertHTMLToMarkdown(bytes.NewReader(hydratedBytes), renderRes.ContentType)
+	if err != nil {
+		return "", nil, fmt.Errorf("converting rendered HTML: %w", err)
+	}
+	return md, hydratedBytes, nil
+}
 
 func StoreMenu(
 	ctx context.Context,

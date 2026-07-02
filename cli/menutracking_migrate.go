@@ -327,10 +327,13 @@ func StartMenutrackingPipeline(ctx context.Context, cfg PipelineConfig) (*Pipeli
 		return nil
 	}
 
+	restaurantStore := menusearch.NewStore(pool)
+	restaurantStore.SetRiverSchema(riverSchemaName())
+
 	return &PipelineResult{
 		Stop:               stop,
 		Pool:               pool,
-		RestaurantStore:    menusearch.NewStore(pool),
+		RestaurantStore:    restaurantStore,
 		RestaurantJobQueue: jobQueue,
 	}, nil
 }

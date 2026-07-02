@@ -6,6 +6,6 @@ SET website_url = NULLIF($2::text, ''),
     phone = COALESCE(NULLIF($6::text, ''), phone),
     status = CASE 
         WHEN NULLIF($2::text, '') IS NOT NULL OR array_length($3::text[], 1) > 0 THEN 'url_found' 
-        ELSE 'no_url_found' 
+        ELSE 'failed_permanently' 
     END
 WHERE camis = $1;

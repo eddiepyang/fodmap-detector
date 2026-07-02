@@ -11,7 +11,7 @@ import (
 
 // restaurantStatusNeedsRescrape returns true if a retry should re-scrape.
 func restaurantStatusNeedsRescrape(status string) bool {
-	return status == "failed_scrape" || status == "scraped" || status == "url_found" || status == "scraping"
+	return status == "failed_scrape" || status == "scraped" || status == "url_found" || status == "scraping" || status == "failed_permanently"
 }
 
 // restaurantsCreateRequest is the body for POST /api/v1/restaurants.
@@ -114,12 +114,32 @@ func (s *Server) restaurantListHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	total, err := s.restaurantStore.Count(ctx, status, search)
+	if err != nil {
+		slog.Error("restaurants: count", "err", err)
+		respondError(w, "failed to list restaurants", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"restaurants": rows,
+		"total":       total,
 		"limit":       limit,
 		"offset":      offset,
 	})
+}
+
+func (s *Server) restaurantStatsHandler(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.restaurantStore.PipelineStats(r.Context())
+	if err != nil {
+		slog.Error("restaurants: pipeline stats", "err", err)
+		respondError(w, "failed to load pipeline stats", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(stats)
 }
 
 func (s *Server) restaurantGetHandler(w http.ResponseWriter, r *http.Request) {
