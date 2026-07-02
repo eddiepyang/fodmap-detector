@@ -65,7 +65,7 @@ You can use the `--limit` and `--offset` flags to paginate through the dataset. 
 ```sh
 # Import the first 10 restaurants in the Astoria-LIC area
 go run . restaurants --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap" import --area astoria-lic --limit 10 --offset 0
-
+p
 # Import the next 20 new restaurants in the Astoria-LIC area
 go run . restaurants import --area astoria-lic --limit 20 --offset 10
 ```
