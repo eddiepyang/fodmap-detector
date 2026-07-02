@@ -180,6 +180,7 @@ func TestRestaurantStatusNeedsRescrape(t *testing.T) {
 		want   bool
 	}{
 		{"failed_scrape", true},
+		{"failed_permanently", true},
 		{"scraped", true},
 		{"url_found", true},
 		{"scraping", true},

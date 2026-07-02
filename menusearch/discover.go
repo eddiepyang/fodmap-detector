@@ -49,10 +49,23 @@ type DiscoverMenuURLWorker struct {
 	MaxAttempts          int
 }
 
-func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
+func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) (err error) {
 	args := job.Args
 	logger := slog.With("job", job.ID, "camis", args.CAMIS, "dba", args.DBA)
 	logger.Info("starting discovery job")
+
+	defer func() {
+		if err != nil {
+			maxAttempts := w.MaxAttempts
+			if maxAttempts <= 0 {
+				maxAttempts = 3 // default from config/insertion
+			}
+			if job.Attempt >= maxAttempts {
+				logger.Info("discovery failed after max attempts, marking permanently failed", "error", err)
+				_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedPermanently, 0, err.Error())
+			}
+		}
+	}()
 
 	// If a previous attempt already stored URLs (Gemini succeeded but the
 	// subsequent DB write or enqueue failed), skip the expensive Gemini call
@@ -255,6 +268,10 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	return nil
+}
+
+func (w *DiscoverMenuURLWorker) Timeout(job *river.Job[DiscoverMenuURLArgs]) time.Duration {
+	return 5 * time.Minute
 }
 
 func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args DiscoverMenuURLArgs, restaurantID uuid.UUID, menuURLs []string, eventID string) error {

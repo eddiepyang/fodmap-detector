@@ -11,7 +11,7 @@ import (
 
 // restaurantStatusNeedsRescrape returns true if a retry should re-scrape.
 func restaurantStatusNeedsRescrape(status string) bool {
-	return status == "failed_scrape" || status == "scraped" || status == "url_found" || status == "scraping"
+	return status == "failed_scrape" || status == "scraped" || status == "url_found" || status == "scraping" || status == "failed_permanently"
 }
 
 // restaurantsCreateRequest is the body for POST /api/v1/restaurants.

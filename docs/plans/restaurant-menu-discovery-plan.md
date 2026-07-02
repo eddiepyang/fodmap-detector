@@ -350,8 +350,8 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_nta ON restaurants(nta);
 ```
 pending_discovery ──(discover job)──► url_found ──(scrape job)──► scraped
                      │                                              │
-                     ├──(no URL found)──► no_url_found              │
-                     └──(error)──► failed_discovery                │
+                     ├──(no URL found)──► failed_permanently        │
+                     └──(error)──► failed_permanently               │
                                                                     │
                      scraping ──(error)──► failed_scrape ◄──────────┘
 
@@ -390,7 +390,7 @@ func (DiscoverMenuURLJobArgs) Kind() string { return "menusearch.discover_menu_u
   on failure, does not abort).
 - If URL found: `UPDATE restaurants SET menu_url=$1, status='url_found'`,
   enqueue `ScrapeMenuJobArgs` with `DiscoveryEventID` set.
-- If no URL: `status='no_url_found'`.
+- If no URL: `status='failed_permanently'`.
 - On error: River retries (status stays `pending_discovery`).
 
 **Unique opts:** `UniqueOpts{ByArgs: true, ByPeriod: 30 * 24 * time.Hour}`
@@ -945,7 +945,7 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 - `menusearch/discover_test.go` — `DiscoverMenuURLWorker.Work` with a
   `stubSearcher` returning canned URLs; verify row updated to `url_found`,
   scrape job enqueued with `DiscoveryEventID`. No-URL case →
-  `no_url_found`. Error case → status unchanged (River retries). Verify
+  `failed_permanently`. Error case → status unchanged (River retries). Verify
   Avro record written.
 - `menusearch/scrape_test.go` — `ScrapeMenuWorker.Work` with a
   `stubExtractor` + `stubMenuStore` + `stubEmbedder`; verify
@@ -983,7 +983,7 @@ Per `.rules/testing.md`: TDD, stubs not mocks, `make check` = lint + test + buil
 - **URL quality.** Gemini may return a Yelp/DoorDash URL instead of the
   restaurant's own site. The URL filter drops known delivery/review
   domains, but if the restaurant has no website, discovery yields
-  `no_url_found`. This is expected — not every NYC restaurant has an
+  `failed_permanently`. This is expected — not every NYC restaurant has an
   online menu.
 
 - **Scrape jobs are long-running.** `pipeline.ExtractMenu` + `StoreMenu`

@@ -73,7 +73,11 @@ func (w *ScrapeMenuWorker) Work(ctx context.Context, job *river.Job[ScrapeMenuAr
 		// must not clobber the restaurant status — River will retry the job up to
 		// MaxAttempts times. Write StatusFailedScrape only for permanent failures.
 		if !scraper.IsRenderTransient(err) {
-			_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, err.Error())
+			if isDeadDomainErr(err) {
+				_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedPermanently, 0, err.Error())
+			} else {
+				_ = w.Store.UpdateScrapeResult(ctx, camis, StatusFailedScrape, 0, err.Error())
+			}
 		} else {
 			logger.Warn("transient render error; skipping failed_scrape write for retry", "error", err)
 		}
