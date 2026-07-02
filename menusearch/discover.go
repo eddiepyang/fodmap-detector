@@ -655,9 +655,7 @@ func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, p
 // checkMenuSignal performs the keep/drop decision for a single URL.
 // Returns (keep, reason) where reason is non-empty only for interesting keep paths.
 func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, primaryURL string) (bool, string) {
-	if primaryURL != "" && strings.TrimSuffix(rawURL, "/") == strings.TrimSuffix(primaryURL, "/") {
-		return true, "primary website URL (always keep)"
-	}
+	isPrimary := primaryURL != "" && strings.TrimSuffix(rawURL, "/") == strings.TrimSuffix(primaryURL, "/")
 
 	// Always keep ordering platforms — JS SPAs don't expose menus on plain GET.
 	if isOrderingPlatform(rawURL) {
@@ -684,7 +682,21 @@ func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, pr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Non-2xx (403/429/5xx) → anti-bot protected; keep always.
+	// 404/410 → the page genuinely does not exist (bot walls use 403/429,
+	// not 404). Dropped even for the primary website URL: keeping dead links
+	// blocks the delivery-platform fallback — one dead "direct" URL counts
+	// as a direct result, so a live Grubhub/Seamless menu Gemini also found
+	// is discarded.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return false, ""
+	}
+
+	// The live primary website URL is kept regardless of body content.
+	if isPrimary {
+		return true, "primary website URL (always keep)"
+	}
+
+	// Other non-2xx (403/429/5xx) → anti-bot protected; keep always.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return true, fmt.Sprintf("non-2xx status %d; keeping (anti-bot)", resp.StatusCode)
 	}

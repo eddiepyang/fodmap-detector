@@ -255,4 +255,50 @@ curl -H 'Authorization: Bearer <admin_access_token>' \
   "localhost:8081/api/v1/admin/analytics/activity?days=30"
 ```
 
+##### Scraper Pipeline Administration (Restaurants)
+
+Admin-gated (same JWT + admin middleware). Registered only when the server
+runs with the menusearch pipeline configured (`--enable-pipeline`). Backs the
+admin console's **Scraper Pipeline** page.
+
+```sh
+# List restaurants with status filter, name search, and offset pagination
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  "localhost:8081/api/v1/restaurants?status=failed_scrape&search=swick&limit=50&offset=0"
+# → {"restaurants": [...], "total": 123, "limit": 50, "offset": 0}
+
+# Pipeline stats rollup: status counts, tier mix, failure taxonomy, queue depth
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/restaurants/stats
+# → {
+#     "total": 123, "total_items": 4567,
+#     "status_counts": {"scraped": 80, "failed_scrape": 20, ...},
+#     "tier_counts": {"jsonld": {"count": 12, "items": 340}, ...},
+#     "failure_counts": {"extract menu": 10, "no menu items found": 5, ...},
+#     "job_counts": {"menusearch.scrape_menu": {"retryable": 2, ...}, ...}
+#   }
+# failure_counts buckets last_error by its stage prefix with digit runs
+# collapsed; job_counts limits finalized River jobs to the last 24h.
+
+# Create a restaurant and enqueue discovery
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"camis": "50012345", "dba": "Test Diner"}' \
+  localhost:8081/api/v1/restaurants
+
+# Get one restaurant by CAMIS
+curl -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/restaurants/50012345
+
+# Trigger jobs: discovery, scrape (requires menu_urls), or retry (auto-picks)
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/restaurants/50012345/discover
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/restaurants/50012345/scrape
+curl -X POST -H 'Authorization: Bearer <admin_access_token>' \
+  localhost:8081/api/v1/restaurants/50012345/retry
+# → {"status": "queued"} (retry also returns "action": "discover"|"scrape")
+# 409 if the job is already queued; 503 if the worker is not registered
+```
+
 

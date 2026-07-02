@@ -23,7 +23,7 @@ This script handles starting Docker dependencies (PostgreSQL, Weaviate), migrati
 
 Alternatively, if you are running services manually:
 
-**Python scraper service** — the webagent (headless-browser) path must be enabled, otherwise blocked sites (403/429) and JS-rendered directory pages cannot be rendered and will silently fail:
+**Python scraper service** — the webagent (headless-browser) path must be enabled, otherwise blocked sites (403/429) and JS-rendered pages cannot be rendered: JS-shell pages then fail loudly with `page text too short … refusing LLM call (hallucination risk)` (the refusal floor — a near-empty shell is never sent to the LLM), and directory fanout on JS sites fails too:
 ```sh
 # from the scraper repo
 SCRAPER_WEBAGENT_ENABLED=true \
@@ -42,7 +42,7 @@ go run . serve --enable-pipeline \
   --enable-vision \
   --webagent-adapter <site/target>   # optional; see below
 ```
-- `--extractor-url` is what wires up the webagent. With it set, the server's extractor implements the rendered-fetch fallback: blocked pages (403/429) and directory pages on JS sites are rendered via the Python webagent's `POST /fetch` automatically — **no extra Go flag needed**. (The webagent must be enabled on the Python side; see above.)
+- `--extractor-url` is what wires up the webagent. With it set, the server's extractor implements the rendered-fetch fallback: blocked pages (403/429), JS-shell pages (pre-rendered *before* the LLM text pass — see [troubleshooting §8](troubleshooting.md#8-wix-spa-sites-homepage-yields-0-items-js-shell)), and directory pages on JS sites are rendered via the Python webagent's `POST /fetch` automatically — **no extra Go flag needed**. (The webagent must be enabled on the Python side; see above.)
 - `--webagent-adapter <site/target>` is **optional** and routes empty/too-noisy HTML to the per-site `ScrapeJS` path instead. It must name a registered adapter; omit it to rely on the generic rendered-fetch fallback, which is sufficient for the directory-fanout and 403/429 paths.
 
 ### 3. Directory / paginated menus

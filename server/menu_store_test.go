@@ -38,6 +38,10 @@ func (s *menuStoreStub) SearchMenu(_ context.Context, _ string, _ int) ([]search
 	return []search.MenuItem{{DishName: "from-primary"}}, nil
 }
 
+func (s *menuStoreStub) ListMenuItems(_ context.Context, _ string, _, _ int) ([]search.MenuItem, int, error) {
+	return nil, 0, nil
+}
+
 func TestDualMenuStore_PrimaryOK_SecondaryOK(t *testing.T) {
 	primary := &menuStoreStub{}
 	secondary := &menuStoreStub{}

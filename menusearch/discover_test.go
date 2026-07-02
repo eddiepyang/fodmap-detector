@@ -383,11 +383,26 @@ func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
 
 // ── checkMenuSignal: primaryURL pin ──────────────────────────────────────────
 
+// noSignalServer serves a 200 page with no menu signal, so only the
+// primary-URL rule can keep a URL pointing at it.
+func noSignalServer(t *testing.T) *http.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><body><h1>About Us</h1><p>Family owned since 1990.</p></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+	return &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+}
+
 func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
-	// The primary-URL check fires before any network call, so no server is needed.
-	client := &http.Client{Timeout: time.Second}
+	// A live primary URL is kept even when its body has no menu signal.
+	client := noSignalServer(t)
 	keep, reason := checkMenuSignal(context.Background(), client,
-		"https://restaurant.example.com", "https://restaurant.example.com")
+		"http://restaurant.test", "http://restaurant.test")
 	if !keep {
 		t.Errorf("primary URL must always be kept, got keep=false reason=%q", reason)
 	}
@@ -397,14 +412,38 @@ func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
 }
 
 func TestCheckMenuSignal_PrimaryURLTrailingSlash(t *testing.T) {
-	client := &http.Client{Timeout: time.Second}
+	client := noSignalServer(t)
 	keep, reason := checkMenuSignal(context.Background(), client,
-		"https://restaurant.example.com/", "https://restaurant.example.com")
+		"http://restaurant.test/", "http://restaurant.test")
 	if !keep {
 		t.Errorf("trailing-slash variant must match primary URL, got keep=false reason=%q", reason)
 	}
 	if reason != "primary website URL (always keep)" {
 		t.Errorf("unexpected reason %q", reason)
+	}
+}
+
+func TestCheckMenuSignal_404Dropped(t *testing.T) {
+	// 404/410 are genuinely dead pages (bot walls use 403/429) and must be
+	// dropped — even for the primary URL. A kept dead "direct" URL blocks the
+	// delivery-platform fallback (observed: a dead joe.coffee page shadowed a
+	// live Grubhub menu).
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+		client := &http.Client{
+			Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+			Timeout:   5 * time.Second,
+		}
+
+		if keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu", ""); keep {
+			t.Errorf("status %d must be dropped, got keep=true reason=%q", status, reason)
+		}
+		if keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test", "http://restaurant.test"); keep {
+			t.Errorf("status %d on the primary URL must be dropped, got keep=true reason=%q", status, reason)
+		}
+		srv.Close()
 	}
 }
 

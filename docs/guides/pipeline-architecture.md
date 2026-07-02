@@ -4,7 +4,7 @@ The menu pipeline is split across two services:
 
 ## Go Service (`fodmap-detector`)
 Responsible for orchestration, fetching standard content, and database interactions:
-- **Discovery** — Gemini API call to find menu URLs for each restaurant.
+- **Discovery** — Gemini API call to find menu URLs for each restaurant, plus a deterministic harvest of ordering-platform links (`dine.online`, Toast, `order.store`, …) from the primary website's HTML — Gemini frequently misses the ordering SPA the homepage links to, and those carry the only complete menu for many restaurants.
 - **Fetching** — HTTP GET of plain HTML and PDF menu pages.
 - **JSON-LD extraction (Tier 0)** — structured menu data embedded in the page is extracted directly in Go, skipping the Python service entirely.
 - **Job orchestration** — River queue, retries, status tracking in Postgres.
