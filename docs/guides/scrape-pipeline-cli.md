@@ -23,7 +23,7 @@ This script handles starting Docker dependencies (PostgreSQL, Weaviate), migrati
 
 Alternatively, if you are running services manually:
 
-**Python scraper service** — the webagent (headless-browser) path must be enabled, otherwise blocked sites (403/429) and JS-rendered directory pages cannot be rendered and will silently fail:
+**Python scraper service** — the webagent (headless-browser) path must be enabled, otherwise blocked sites (403/429) and JS-rendered pages cannot be rendered: JS-shell pages then fail loudly with `page text too short … refusing LLM call (hallucination risk)` (the refusal floor — a near-empty shell is never sent to the LLM), and directory fanout on JS sites fails too:
 ```sh
 # from the scraper repo
 SCRAPER_WEBAGENT_ENABLED=true \
@@ -42,7 +42,7 @@ go run . serve --enable-pipeline \
   --enable-vision \
   --webagent-adapter <site/target>   # optional; see below
 ```
-- `--extractor-url` is what wires up the webagent. With it set, the server's extractor implements the rendered-fetch fallback: blocked pages (403/429) and directory pages on JS sites are rendered via the Python webagent's `POST /fetch` automatically — **no extra Go flag needed**. (The webagent must be enabled on the Python side; see above.)
+- `--extractor-url` is what wires up the webagent. With it set, the server's extractor implements the rendered-fetch fallback: blocked pages (403/429), JS-shell pages (pre-rendered *before* the LLM text pass — see [troubleshooting §8](troubleshooting.md#8-wix-spa-sites-homepage-yields-0-items-js-shell)), and directory pages on JS sites are rendered via the Python webagent's `POST /fetch` automatically — **no extra Go flag needed**. (The webagent must be enabled on the Python side; see above.)
 - `--webagent-adapter <site/target>` is **optional** and routes empty/too-noisy HTML to the per-site `ScrapeJS` path instead. It must name a registered adapter; omit it to rely on the generic rendered-fetch fallback, which is sufficient for the directory-fanout and 403/429 paths.
 
 ### 3. Directory / paginated menus
@@ -65,7 +65,7 @@ You can use the `--limit` and `--offset` flags to paginate through the dataset. 
 ```sh
 # Import the first 10 restaurants in the Astoria-LIC area
 go run . restaurants --postgres-dsn "postgres://fodmap:fodmap@localhost:5432/fodmap" import --area astoria-lic --limit 10 --offset 0
-
+p
 # Import the next 20 new restaurants in the Astoria-LIC area
 go run . restaurants import --area astoria-lic --limit 20 --offset 10
 ```
@@ -99,6 +99,8 @@ go run . restaurants scrape 50012345
 If a restaurant fails at any point in the pipeline (e.g., website 404, LLM extraction error, connection timeout), you can reset its status and requeue it.
 
 ```sh
+export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disable"
+
 go run . restaurants retry 50012345
 ```
   
@@ -120,7 +122,7 @@ export POSTGRES_DSN="postgres://fodmap:fodmap@localhost:5432/fodmap?sslmode=disa
 go run . restaurants replay-restaurants
 
 # Replay a single specific avro file
-go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-06-29.avro
+go run . restaurants replay-restaurants --avro-file data/bronze/restaurants/astoria-lic-2026-07-01.avro
 
 # Replay only records 20..39 (across all files), and skip enqueuing discovery jobs
 go run . restaurants replay-restaurants --limit 20 --offset 20 --skip-discovery

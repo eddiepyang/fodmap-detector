@@ -63,7 +63,7 @@ To output all raw metrics as a single JSON object for integration with other too
 ## 1. Outcome overview (Postgres)
 
 Start with the status distribution across all restaurants. `status` is one of
-`pending_discovery | url_found | scraping | scraped | failed_scrape | no_url_found`
+`pending_discovery | url_found | scraping | scraped | failed_scrape | failed_permanently`
 (see [menusearch/restaurant.go](../../menusearch/restaurant.go)).
 
 ```bash
@@ -105,6 +105,16 @@ $PSQL -c "SELECT camis, dba, last_error FROM restaurants
           WHERE status='failed_scrape'
             AND (last_error LIKE '%status 403%' OR last_error LIKE '%status 429%');"
 ```
+
+**`page text too short … refusing LLM call (hallucination risk)`** — the
+refusal floor: the page yielded < 60 runes of text and the pipeline refused to
+send it to the LLM (near-empty input makes the model *invent* a menu instead
+of returning zero items). Usually a JS-shell page that could not be rendered:
+check that the Python service is up with `SCRAPER_WEBAGENT_ENABLED=true` and
+that the Go server was started with `--extractor-url` — with both in place the
+shell is rendered in the headless browser before the text pass and this error
+does not occur. The Python service enforces the same floor on
+`extractions:structure` (422 for bodies under 60 non-whitespace chars).
 
 ## 3. Tier mix (`extraction_tier`)
 

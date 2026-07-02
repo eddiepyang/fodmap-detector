@@ -1429,7 +1429,3 @@ func extractParent(obj map[string]any) (map[string]any, bool) {
 	}
 	return nil, false
 }
-
-func (c *Client) ListMenuItems(ctx context.Context, search string, limit, offset int) ([]MenuItem, int, error) {
-	return nil, 0, fmt.Errorf("ListMenuItems not implemented for Weaviate yet")
-}

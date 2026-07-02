@@ -285,7 +285,7 @@ docker compose exec postgres psql -U fodmap -d fodmap -c \
   "SELECT status, count(*) FROM restaurants GROUP BY 1 ORDER BY 1;"
 ```
 
-Common statuses: `pending_discovery`, `pending_scrape`, `scraped`, `failed_scrape`, `no_url_found`.
+Common statuses: `pending_discovery`, `pending_scrape`, `scraped`, `failed_scrape`, `failed_permanently`.
 
 To see which restaurants are stuck:
 
@@ -321,7 +321,7 @@ When the scrape worker is not registered, `POST /api/v1/restaurants/{camis}/scra
 
 **Cause C: Discovery jobs stopped retrying (no URL found)**
 
-Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `no_url_found`. This is intentional — it means the restaurant has no discoverable web presence.
+Discovery retries are capped by `discovery-max-no-url-attempts` (default 3). After that, the job returns `nil` and the restaurant is marked `failed_permanently`. This is intentional — it means the restaurant has no discoverable web presence.
 
 To re-run discovery for a specific restaurant:
 ```bash
@@ -437,28 +437,41 @@ the `/menu` route, not the homepage. Even with `network_idle: true` on the
 rendered-fetch, `page.content()` returns the same ~320 runes — the menu is on
 a different page, not lazily loaded into the homepage.
 
-### The `IsJSShell` detector and re-cascade
+### The `IsJSShell` detector, pre-render, and re-cascade
 
-The pipeline has a JS-shell detector (`scraper.IsJSShell`) that flags pages
-where the raw HTML is large (≥50KB) but yields <500 runes of visible text at a
-raw-to-visible ratio >500×. The detector is **framework-agnostic** — it uses
-the raw-bytes-to-visible-runes ratio rather than a list of framework markers,
-so it does not rot when Wix renames an asset host or a new SPA framework
-appears. Real content pages cluster at 1–200×; JS shells at >1000×. The 500×
-threshold sits in a wide empty gap with no observed overlap.
+The pipeline has a JS-shell detector (`scraper.IsJSShell`) with two rules,
+either of which flags a shell:
 
-When the text pass returns 0 items on a detected JS shell, the pipeline
-attempts a **render-and-re-cascade**: it renders the URL via the webagent's
-`FetchRenderedHTML` (with `network_idle: true`), re-converts to Markdown, and
-re-runs the LLM extractor on the hydrated HTML.
+- **Ratio rule**: raw HTML is large (≥50KB) but yields <500 runes of visible
+  text at a raw-to-visible ratio >500× — the classic Wix shape with inlined
+  JS bundles. Real content pages cluster at 1–200×; JS shells at >1000×.
+- **Trivial rule**: <60 visible runes and any `<script>` tag — external-bundle
+  SPAs (e.g. `dine.online` serves a ~20KB shell whose bundles load via
+  `<script src>`, invisible to the ratio rule). Safe because pages under 60
+  runes are rejected by the LLM refusal floor anyway, so a render attempt is
+  strictly better.
 
-**Important: the re-cascade runs only AFTER the text pass returns 0 items.**
-It does not preempt the text pass. This prevents a regression where a JS shell
-that has real static menu content (e.g. a small Wix cafe with ~300 runes of
-visible menu text) would have its working text extraction replaced by a
-potentially worse hydrated one (dilution). The `jsShell` flag gates only the
-post-empty re-cascade, not the preemptive image-OCR or `ScrapeJS` adapter
-paths — those still fire only on `IsTooNoisy`/`tooShort`/empty.
+The detector is **framework-agnostic** — no list of framework markers, so it
+does not rot when Wix renames an asset host or a new SPA framework appears.
+
+A detected shell takes one of two render paths:
+
+- **Pre-render (trivial static text, <200 runes)**: the URL is rendered via
+  the webagent's `FetchRenderedHTML` (with `network_idle: true`) **before**
+  the text pass, and extraction runs on the hydrated HTML. The LLM must never
+  see a near-empty shell — it invents a plausible menu instead of returning
+  zero items (observed: a 1-rune page produced 34 fabricated items for a
+  different restaurant). If no renderer is available or the render fails, the
+  refusal floor rejects the trivial text with `page text too short …
+  refusing LLM call (hallucination risk)` rather than calling the LLM.
+- **Re-cascade (real static text, 200–500 runes)**: the text pass runs first;
+  only if it returns 0 items does the pipeline render and re-run extraction
+  on the hydrated HTML. This ordering prevents a regression where a JS shell
+  with real static menu content (e.g. a small Wix cafe with ~300 runes of
+  visible menu text) would have its working text extraction replaced by a
+  potentially worse hydrated one (dilution). The `jsShell` flag gates only
+  the pre-render and post-empty re-cascade, not the preemptive image-OCR or
+  `ScrapeJS` adapter paths — those still fire on `IsTooNoisy`/`tooShort`/empty.
 
 This re-cascade is valuable for SPAs where the menu *does* hydrate client-side
 (e.g. Toast, Square, custom React apps). For Wix sites specifically, the
@@ -627,3 +640,59 @@ a specific widget to mount. Wix's `restaurant-menus-showcase-ooi` widget
 loads on the `/menu` route, not the homepage — no amount of waiting on the
 homepage will produce the menu. See [Section 8](#8-wix-spa-sites-homepage-yields-0-items-js-shell)
 for why Wix homepages are a dead end and the `/menu` route is the fix.
+
+---
+
+## 11. Ordering-Platform SPAs: Menu Lives on an External Ordering Site
+
+### The Problem
+
+Many restaurants keep only a brochure homepage (often Wix) and host their real
+menu on a first-party ordering SPA — `swick2go.com` links to
+`swick2go.dine.online`, which carries the full 250-item menu. Case study
+(SWICK 2 GO, camis 50059447): discovery stored only the homepage plus guessed
+`/menu`/`/menus` paths, and the scrape "succeeded" via `image_ocr` with 1 junk
+item OCR'd from a homepage photo. The actual menu was never fetched.
+
+### Why discovery missed it
+
+Two independent failures:
+
+1. **Gemini never returned the ordering URL** even though the
+   `https://swick2go.dine.online` link sits in the homepage's static HTML as a
+   plain `href` — nothing harvested links from the page itself.
+2. **`menuSignalFilter` would have dropped it anyway**: ordering SPAs serve a
+   JS shell on a plain GET (200, no menu signal), so any host missing from the
+   `orderingPlatformHosts` allowlist in `menusearch/discover.go` is discarded.
+
+### The Fix
+
+- `dine.online` and `order.store` were added to `orderingPlatformHosts`
+  (always kept regardless of body content).
+- Discovery now runs `harvestOrderingLinks()`: it fetches the primary website
+  and adds every href pointing at a known ordering platform to the candidate
+  set. This is deterministic and catches the whole class — the ordering link
+  on the homepage is the reliable way to find these menus, not the LLM.
+
+When adding a new platform to the allowlist, also confirm the scrape side can
+extract it: ordering SPAs render each menu item card as a `<button>`, and
+`ConvertHTMLToMarkdown` keeps button text (as list items) for exactly this
+reason — re-skipping buttons would silently erase these menus again.
+
+### Diagnosis
+
+```bash
+# Does the homepage link a known ordering platform that menu_urls is missing?
+curl -sL "https://www.example-restaurant.com" \
+  | grep -oE 'href="https?://[^"]+"' \
+  | grep -E 'dine\.online|order\.store|toasttab|square\.site|popmenu|chownow'
+
+# Compare against what discovery stored
+$PSQL -c "SELECT dba, menu_urls, extraction_tier, item_count
+          FROM restaurants WHERE camis='<camis>';"
+```
+
+A restaurant with `extraction_tier = image_ocr` and a suspiciously low
+`item_count` (1–3) on a site that links an ordering platform is this failure:
+re-run discovery (the harvest picks up the link) or append the ordering URL to
+`menu_urls` and enqueue a scrape.

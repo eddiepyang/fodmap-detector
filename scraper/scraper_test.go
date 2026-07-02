@@ -148,6 +148,34 @@ func TestIsJSShell_EmptyMarkdownWithLargeRawIsShell(t *testing.T) {
 		"empty markdown + large raw bundle must be detected as a JS shell")
 }
 
+func TestIsJSShell_SmallExternalBundleShell(t *testing.T) {
+	// The dine.online shape: a small (~20KB real-world, tiny here) shell whose
+	// bundles load via external <script src> tags. The raw-size floor never
+	// triggers for these, but near-zero visible text + a script tag must
+	// still flag it as a shell.
+	raw := `<html><head><title>Order Online</title>` +
+		`<script defer="defer" src="/static/js/main.d988aea8.js"></script>` +
+		`</head><body><div id="root"></div>` +
+		`<noscript>You need to enable JavaScript to run this app.</noscript></body></html>`
+	md, err := ConvertHTMLToMarkdown(strings.NewReader(raw), "text/html")
+	require.NoError(t, err)
+	assert.True(t, IsJSShell(md, raw),
+		"small external-bundle SPA shell must be detected as a JS shell")
+}
+
+func TestIsJSShell_ShortStaticPageWithScriptTagNotTrivial(t *testing.T) {
+	// A short static page with a script tag but real visible text (above the
+	// trivial floor) must not be flagged — the analytics snippet doesn't make
+	// a real content page a shell.
+	raw := `<html><body><h1>Closed for renovation</h1>` +
+		`<p>We are closed until spring. Follow us for updates on our reopening date and new menu.</p>` +
+		`<script src="/analytics.js"></script></body></html>`
+	md, err := ConvertHTMLToMarkdown(strings.NewReader(raw), "text/html")
+	require.NoError(t, err)
+	assert.False(t, IsJSShell(md, raw),
+		"short static page with real text must not be flagged by the script-tag rule")
+}
+
 // --- truncateText ---
 
 func TestTruncateText_ShortInput(t *testing.T) {

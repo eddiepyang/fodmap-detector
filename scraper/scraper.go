@@ -247,7 +247,7 @@ func ConvertHTMLToMarkdown(r io.Reader, contentType string) (string, error) {
 var skipTags = map[string]bool{
 	"script": true, "style": true, "noscript": true,
 	"head": true, "nav": true, "footer": true, "iframe": true,
-	"button": true, "svg": true, "img": true,
+	"svg": true, "img": true,
 }
 
 func walkHTML(b *strings.Builder, n *html.Node, depth int) {
@@ -264,7 +264,12 @@ func walkHTML(b *strings.Builder, n *html.Node, depth int) {
 			b.WriteString("\n### ")
 		case "h4", "h5", "h6":
 			b.WriteString("\n#### ")
-		case "li":
+		case "li", "button":
+			// Ordering SPAs (dine.online, Toast, etc.) render each menu item
+			// card — name, description, price — as a <button>. Skipping
+			// buttons erased whole menus, so emit their text as list items;
+			// stray UI labels ("Add to cart") are cheap noise the extractor
+			// prompt already ignores.
 			b.WriteString("\n- ")
 		case "p", "div", "section", "article", "tr":
 			b.WriteString("\n")
@@ -286,7 +291,7 @@ func walkHTML(b *strings.Builder, n *html.Node, depth int) {
 	// Add newline after block-level closing tags.
 	if n.Type == html.ElementNode {
 		switch n.Data {
-		case "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr":
+		case "h1", "h2", "h3", "h4", "h5", "h6", "li", "button", "p", "tr":
 			b.WriteString("\n")
 		}
 	}
@@ -344,6 +349,12 @@ const jsShellMinRawBytes = 50_000
 // wide empty gap with no observed overlap in either direction.
 const jsShellMinRatio = 500
 
+// jsShellTrivialRunes is the visible-text floor below which a page containing
+// any <script> tag is treated as a JS shell regardless of raw size. Matches
+// the pipeline's LLM refusal floor: such pages would be refused for text
+// extraction anyway, so a render attempt is strictly better.
+const jsShellTrivialRunes = 60
+
 // IsJSShell reports whether the page is a JS-framework shell whose menu
 // content is injected client-side and therefore missing from the static HTML.
 //
@@ -359,6 +370,14 @@ func IsJSShell(md, rawHTML string) bool {
 	visible := utf8.RuneCountInString(strings.TrimSpace(md))
 	if visible >= 500 {
 		return false
+	}
+	// Near-empty visible text plus any script tag: an external-bundle SPA
+	// shell. Modern SPAs (e.g. dine.online) serve a ~20KB shell whose bundles
+	// load via <script src>, so the raw-size floor below never triggers. A
+	// scripted page with almost no visible text either hydrates client-side
+	// or has nothing to lose by rendering.
+	if visible < jsShellTrivialRunes && strings.Contains(rawHTML, "<script") {
+		return true
 	}
 	if len(rawHTML) < jsShellMinRawBytes {
 		return false

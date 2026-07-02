@@ -74,7 +74,9 @@ func (m *mockExtractor) Extract(_ context.Context, _ string) (scraper.MenuExtrac
 }
 
 func TestExtractMenu_FallbackToExtractor(t *testing.T) {
-	plainHTML := `<html><body><p>Menu: Burger $5</p></body></html>`
+	plainHTML := `<html><body><h1>Joe's Burger Bar Menu</h1>
+<p>Classic Burger $5 — beef patty, lettuce, tomato, onion</p>
+<p>Cheese Fries $4 — crispy fries with cheddar</p></body></html>`
 
 	fetcher := &stubFetcher{
 		result: scraper.FetchResult{
@@ -259,6 +261,10 @@ func (s *stubMenuStore) BatchUpsertMenu(_ context.Context, _ []search.MenuItem) 
 }
 func (s *stubMenuStore) SearchMenu(_ context.Context, _ string, _ int) ([]search.MenuItem, error) {
 	return nil, nil
+}
+
+func (s *stubMenuStore) ListMenuItems(_ context.Context, _ string, _, _ int) ([]search.MenuItem, int, error) {
+	return nil, 0, nil
 }
 
 var _ server.MenuStore = (*stubMenuStore)(nil)

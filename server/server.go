@@ -76,6 +76,7 @@ type MenuStore interface {
 	EnsureMenuSchema(ctx context.Context) error
 	BatchUpsertMenu(ctx context.Context, items []search.MenuItem) error
 	SearchMenu(ctx context.Context, query string, limit int) ([]search.MenuItem, error)
+	ListMenuItems(ctx context.Context, search string, limit, offset int) ([]search.MenuItem, int, error)
 }
 
 type Server struct {
@@ -419,6 +420,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/admin/users/{id}/reset-password", adminMid(s.adminResetPasswordHandler))
 	mux.Handle("GET /api/v1/admin/conversations", adminMid(s.adminListConversationsHandler))
 	mux.Handle("GET /api/v1/admin/conversations/{id}", adminMid(s.adminGetConversationHandler))
+	mux.Handle("GET /api/v1/admin/menu-items", adminMid(s.adminListMenuItemsHandler))
 	mux.Handle("GET /api/v1/admin/ingredients", adminMid(s.adminListIngredientsHandler))
 	mux.Handle("GET /api/v1/admin/ingredients/stats", adminMid(s.adminIngredientStatsHandler))
 	mux.Handle("GET /api/v1/admin/ingredients/search-test", adminMid(s.adminIngredientSearchTestHandler))
@@ -472,6 +474,7 @@ func (s *Server) Handler() http.Handler {
 	if s.restaurantStore != nil {
 		mux.Handle("POST /api/v1/restaurants", adminMid(s.restaurantCreateHandler))
 		mux.Handle("GET /api/v1/restaurants", adminMid(s.restaurantListHandler))
+		mux.Handle("GET /api/v1/restaurants/stats", adminMid(s.restaurantStatsHandler))
 		mux.Handle("GET /api/v1/restaurants/{camis}", adminMid(s.restaurantGetHandler))
 		mux.Handle("POST /api/v1/restaurants/{camis}/discover", adminMid(s.restaurantTriggerDiscoverHandler))
 		mux.Handle("POST /api/v1/restaurants/{camis}/scrape", adminMid(s.restaurantTriggerScrapeHandler))

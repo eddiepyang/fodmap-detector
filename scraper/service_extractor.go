@@ -464,6 +464,11 @@ type RenderOptions struct {
 	// DOM is ready. Best-effort: if networkidle never fires, returns whatever
 	// content is available.
 	NetworkIdle bool
+	// Scroll renders with a tall viewport and a progressive scroll pass so
+	// lazy-loaded and virtualized menus (Grubhub loads each section when it
+	// scrolls into view, and unmounts sections that scroll out) are fully
+	// present in the serialized HTML.
+	Scroll bool
 }
 
 // HTMLRenderer is implemented by extractors that can render an arbitrary URL
@@ -479,6 +484,7 @@ type HTMLRenderer interface {
 type renderFetchRequest struct {
 	URL         string `json:"url"`
 	NetworkIdle bool   `json:"network_idle"`
+	Scroll      bool   `json:"scroll"`
 }
 
 // renderFetchResponse mirrors the Python response model for /v1/webagent/fetch.
@@ -494,7 +500,7 @@ type renderFetchResponse struct {
 // FetchTimeout 504, WafBlocked 503) surface as *serviceError so callers can
 // apply retryable-error classification via IsBackendUnavailable.
 func (s *ServiceExtractor) FetchRenderedHTML(ctx context.Context, rawURL string, opts RenderOptions) (FetchResult, error) {
-	body, err := json.Marshal(renderFetchRequest{URL: rawURL, NetworkIdle: opts.NetworkIdle})
+	body, err := json.Marshal(renderFetchRequest{URL: rawURL, NetworkIdle: opts.NetworkIdle, Scroll: opts.Scroll})
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("marshal render request: %w", err)
 	}

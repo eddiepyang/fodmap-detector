@@ -273,6 +273,73 @@ func TestCheckMenuSignal_OrderingPlatformKept(t *testing.T) {
 	}
 }
 
+func TestIsOrderingPlatform(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://order.toasttab.com/online/my-place", true},
+		{"https://swick2go.dine.online/locations/375770?fulfillment=pickup", true},
+		{"https://swick2go.dine.online", true},
+		{"https://www.order.store/store/swick2/abc", true},
+		{"https://myrestaurant.square.site", true},
+		// Suffix match must not fire on lookalike hosts.
+		{"https://notdine.online.example.com", false},
+		{"https://myrestaurant.com/menu", false},
+		{"https://doordash.com/store/my-restaurant", false},
+	}
+	for _, tc := range cases {
+		if got := isOrderingPlatform(tc.url); got != tc.want {
+			t.Errorf("isOrderingPlatform(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+}
+
+func TestHarvestOrderingLinks(t *testing.T) {
+	// Homepage links a dine.online ordering SPA (with an HTML-escaped query
+	// string), a duplicate of it, and non-platform links that must be ignored.
+	body := []byte(`<html><body>
+<a href="https://swick2go.dine.online?fulfillment=pickup&amp;x=1">Order Online</a>
+<a href="https://swick2go.dine.online?fulfillment=pickup&amp;x=1">Order Again</a>
+<a href="https://www.facebook.com/Swick2go">Facebook</a>
+<a href="/about">About</a>
+<a href='https://order.toasttab.com/online/other-place'>Toast</a>
+</body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	got := harvestOrderingLinks(context.Background(), client, srv.URL)
+
+	want := []string{
+		"https://swick2go.dine.online?fulfillment=pickup&x=1",
+		"https://order.toasttab.com/online/other-place",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("harvestOrderingLinks = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("harvestOrderingLinks[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestHarvestOrderingLinks_Non2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	if got := harvestOrderingLinks(context.Background(), client, srv.URL); got != nil {
+		t.Errorf("harvestOrderingLinks on 403 = %v, want nil", got)
+	}
+}
+
 func TestCheckMenuSignal_2xxWithSignalKept(t *testing.T) {
 	// 2xx response with menu JSON-LD → kept.
 	body := []byte(`<html><head>
@@ -316,11 +383,26 @@ func TestCheckMenuSignal_2xxNoSignalDropped(t *testing.T) {
 
 // ── checkMenuSignal: primaryURL pin ──────────────────────────────────────────
 
+// noSignalServer serves a 200 page with no menu signal, so only the
+// primary-URL rule can keep a URL pointing at it.
+func noSignalServer(t *testing.T) *http.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><body><h1>About Us</h1><p>Family owned since 1990.</p></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+	return &http.Client{
+		Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+		Timeout:   5 * time.Second,
+	}
+}
+
 func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
-	// The primary-URL check fires before any network call, so no server is needed.
-	client := &http.Client{Timeout: time.Second}
+	// A live primary URL is kept even when its body has no menu signal.
+	client := noSignalServer(t)
 	keep, reason := checkMenuSignal(context.Background(), client,
-		"https://restaurant.example.com", "https://restaurant.example.com")
+		"http://restaurant.test", "http://restaurant.test")
 	if !keep {
 		t.Errorf("primary URL must always be kept, got keep=false reason=%q", reason)
 	}
@@ -330,14 +412,38 @@ func TestCheckMenuSignal_PrimaryURLAlwaysKept(t *testing.T) {
 }
 
 func TestCheckMenuSignal_PrimaryURLTrailingSlash(t *testing.T) {
-	client := &http.Client{Timeout: time.Second}
+	client := noSignalServer(t)
 	keep, reason := checkMenuSignal(context.Background(), client,
-		"https://restaurant.example.com/", "https://restaurant.example.com")
+		"http://restaurant.test/", "http://restaurant.test")
 	if !keep {
 		t.Errorf("trailing-slash variant must match primary URL, got keep=false reason=%q", reason)
 	}
 	if reason != "primary website URL (always keep)" {
 		t.Errorf("unexpected reason %q", reason)
+	}
+}
+
+func TestCheckMenuSignal_404Dropped(t *testing.T) {
+	// 404/410 are genuinely dead pages (bot walls use 403/429) and must be
+	// dropped — even for the primary URL. A kept dead "direct" URL blocks the
+	// delivery-platform fallback (observed: a dead joe.coffee page shadowed a
+	// live Grubhub menu).
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+		client := &http.Client{
+			Transport: &mockTransport{backendAddr: srv.Listener.Addr().String(), inner: http.DefaultTransport},
+			Timeout:   5 * time.Second,
+		}
+
+		if keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test/menu", ""); keep {
+			t.Errorf("status %d must be dropped, got keep=true reason=%q", status, reason)
+		}
+		if keep, reason := checkMenuSignal(context.Background(), client, "http://restaurant.test", "http://restaurant.test"); keep {
+			t.Errorf("status %d on the primary URL must be dropped, got keep=true reason=%q", status, reason)
+		}
+		srv.Close()
 	}
 }
 

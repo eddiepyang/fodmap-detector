@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -48,10 +49,23 @@ type DiscoverMenuURLWorker struct {
 	MaxAttempts          int
 }
 
-func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) error {
+func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[DiscoverMenuURLArgs]) (err error) {
 	args := job.Args
 	logger := slog.With("job", job.ID, "camis", args.CAMIS, "dba", args.DBA)
 	logger.Info("starting discovery job")
+
+	defer func() {
+		if err != nil {
+			maxAttempts := w.MaxAttempts
+			if maxAttempts <= 0 {
+				maxAttempts = 3 // default from config/insertion
+			}
+			if job.Attempt >= maxAttempts {
+				logger.Info("discovery failed after max attempts, marking permanently failed", "error", err)
+				_ = w.Store.UpdateScrapeResult(ctx, args.CAMIS, StatusFailedPermanently, 0, err.Error())
+			}
+		}
+	}()
 
 	// If a previous attempt already stored URLs (Gemini succeeded but the
 	// subsequent DB write or enqueue failed), skip the expensive Gemini call
@@ -128,6 +142,23 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 		}
 	}
 
+	httpClient := w.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 8 * time.Second}
+	}
+
+	// Harvest first-party ordering-platform links from the primary website's
+	// homepage HTML. Gemini frequently returns the homepage but misses the
+	// ordering SPA it links to (e.g. swick2go.com links swick2go.dine.online),
+	// and those SPAs carry the only complete menu for many restaurants.
+	if result.WebsiteURL != "" {
+		if harvested := harvestOrderingLinks(ctx, httpClient, result.WebsiteURL); len(harvested) > 0 {
+			logger.Info("harvested ordering-platform links from homepage",
+				"url", result.WebsiteURL, "links", harvested)
+			rawURLs = append(rawURLs, harvested...)
+		}
+	}
+
 	// Remove hard-blocked non-menu hosts (grounding redirects, real-estate, hotels, directories).
 	var dedupedURLs []string
 	for _, u := range dedup(rawURLs) {
@@ -140,10 +171,6 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 
 	// Probe reachability: drop only genuinely dead domains (DNS failure, ECONNREFUSED, TLS errors).
 	// Keep any URL that returns an HTTP response (even 403/429/5xx) or times out.
-	httpClient := w.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 8 * time.Second}
-	}
 	candidates := reachableMenuURLs(ctx, httpClient, dedupedURLs)
 	for _, u := range dedupedURLs {
 		found := false
@@ -241,6 +268,10 @@ func (w *DiscoverMenuURLWorker) Work(ctx context.Context, job *river.Job[Discove
 	}
 
 	return nil
+}
+
+func (w *DiscoverMenuURLWorker) Timeout(job *river.Job[DiscoverMenuURLArgs]) time.Duration {
+	return 5 * time.Minute
 }
 
 func (w *DiscoverMenuURLWorker) enqueueScrapeJobs(ctx context.Context, args DiscoverMenuURLArgs, restaurantID uuid.UUID, menuURLs []string, eventID string) error {
@@ -491,6 +522,8 @@ var orderingPlatformHosts = []string{
 	"getbento.com",
 	"orderahead-app.com",
 	"popmenu.com",
+	"dine.online",
+	"order.store",
 }
 
 // isOrderingPlatform returns true when the URL's host is a known first-party
@@ -507,6 +540,50 @@ func isOrderingPlatform(u string) bool {
 		}
 	}
 	return false
+}
+
+// orderingHrefRe matches absolute http(s) URLs in href attributes.
+var orderingHrefRe = regexp.MustCompile(`href=["']?(https?://[^"'\s>]+)`)
+
+// harvestOrderingLinks fetches websiteURL and returns the ordering-platform
+// links found in its HTML (deduplicated, document order). Ordering SPAs serve
+// only a JS shell on a plain GET, so they can never satisfy the menu-signal
+// check on their own — the homepage link is the reliable way to find them.
+// Best-effort: any fetch problem returns nil.
+func harvestOrderingLinks(ctx context.Context, client *http.Client, websiteURL string) []string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, websiteURL, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+
+	const maxBodyBytes = 2 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return nil
+	}
+
+	var out []string
+	seen := make(map[string]struct{})
+	for _, m := range orderingHrefRe.FindAllSubmatch(body, -1) {
+		u := html.UnescapeString(string(m[1]))
+		if !isOrderingPlatform(u) {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	return out
 }
 
 // menuKeywords are words that, when co-occurring with price patterns, indicate
@@ -578,9 +655,7 @@ func menuSignalFilter(ctx context.Context, client *http.Client, urls []string, p
 // checkMenuSignal performs the keep/drop decision for a single URL.
 // Returns (keep, reason) where reason is non-empty only for interesting keep paths.
 func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, primaryURL string) (bool, string) {
-	if primaryURL != "" && strings.TrimSuffix(rawURL, "/") == strings.TrimSuffix(primaryURL, "/") {
-		return true, "primary website URL (always keep)"
-	}
+	isPrimary := primaryURL != "" && strings.TrimSuffix(rawURL, "/") == strings.TrimSuffix(primaryURL, "/")
 
 	// Always keep ordering platforms — JS SPAs don't expose menus on plain GET.
 	if isOrderingPlatform(rawURL) {
@@ -607,7 +682,21 @@ func checkMenuSignal(ctx context.Context, client *http.Client, rawURL string, pr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Non-2xx (403/429/5xx) → anti-bot protected; keep always.
+	// 404/410 → the page genuinely does not exist (bot walls use 403/429,
+	// not 404). Dropped even for the primary website URL: keeping dead links
+	// blocks the delivery-platform fallback — one dead "direct" URL counts
+	// as a direct result, so a live Grubhub/Seamless menu Gemini also found
+	// is discarded.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return false, ""
+	}
+
+	// The live primary website URL is kept regardless of body content.
+	if isPrimary {
+		return true, "primary website URL (always keep)"
+	}
+
+	// Other non-2xx (403/429/5xx) → anti-bot protected; keep always.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return true, fmt.Sprintf("non-2xx status %d; keeping (anti-bot)", resp.StatusCode)
 	}
